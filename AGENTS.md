@@ -7,7 +7,7 @@
 ## Read first (before acting)
 
 1. `docs/planning/prd.md` — the approved product contract (v2.0). **Do not re-open product decisions**; ambiguities → ask; decisions → ADR.
-2. `docs/design/` — the technical design: `tech-design.md` (architecture + data spine + M1 slice), `delivery-plan.md` (deliverable units), `test-strategy.md` (three test tiers + CI), `agent-ops.md` (how we run evolving agents). *(Being written now — some may be stubs.)*
+2. `docs/design/` — the design: `tech-design.md` (architecture + data spine + M1 slice), `delivery-plan.md` (deliverable units), `test-strategy.md` (three test tiers + CI), `agent-ops.md` (evolving agents), and `ux-handoff/` (the authoritative UX spec "The Field Atlas" + `INTEGRATION.md` mapping it to the data model & milestones).
 3. `docs/planning/methods-ramp-up-standards.md` — the process standard (28-step ramp-up checklist, §7). `methods-stack-reference.md` — pinned components/versions/licenses.
 4. `RAMP-UP-PROMPT.md` — the bootstrap instruction for the full ramp-up (executed after the design docs + discovery spike).
 

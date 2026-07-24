@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Libre+Caslon+Text:ital,wght@0,400;0,700;1,400&amp;family=Work+Sans:wght@400;500;600;700&amp;family=IBM+Plex+Mono:wght@400;500&amp;family=Caveat:wght@500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#e7e2d5;font-family:'Work Sans',system-ui,sans-serif;color:#2b2117}
+a{color:#3f6a5a}a:hover{color:#b3542e}
+@keyframes dashmove{to{stroke-dashoffset:-24}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.dstamp{font-family:'IBM Plex Mono',monospace;font-size:7.5px;padding:2px 5px;border:1px solid #6d5f4c;border-radius:2px;color:#9a8a72;white-space:nowrap}
+.gbtn{display:flex;align-items:center;gap:7px;border-radius:8px;padding:10px 12px;font:600 12px 'Work Sans',sans-serif;cursor:pointer;user-select:none}
+.gbtn:hover{filter:brightness(1.12)}
+.glogo{width:16px;height:16px;border-radius:3px;background:conic-gradient(#4285F4 0 25%,#34A853 0 50%,#FBBC05 0 75%,#EA4335 0);flex:none}
+.mtog{font:600 9px 'IBM Plex Mono',monospace;padding:4px 10px;border-radius:99px;cursor:pointer;user-select:none}
+</style>
+</helmet>
+
+<div style="min-height:100vh;display:flex;align-items:flex-start;justify-content:center;gap:38px;padding:34px 20px">
+<div style="width:240px;padding-top:26px;display:flex;flex-direction:column;gap:13px">
+  <div style="font-family:'Libre Caslon Text',serif;font-size:22px;line-height:1.25">Street Duet<br><span style="font-size:12.5px;font-family:'Work Sans',sans-serif;color:#8a7a63">Working prototype of <b>1a</b> — offline street nav with maneuver banner.</span></div>
+  <div style="font-size:12px;color:#5c503f;line-height:1.65">Try it:<br>· <b>▶ Simulate walk</b> — GPS dot walks the leg, banner &amp; distance update, heading cone turns<br>· <b>STREET ⇄ SCHEMATIC</b> toggle<br>· On arrival the story sheet slides up<br>· <b>Google Maps</b> opens a real walking deep-link (online)</div>
+  <div style="display:flex;flex-direction:column;gap:6px">
+    <span class="dstamp" style="color:#5c503f;border-color:#8a7a63">MANEUVERS FROM PRECOMPUTED LEG</span>
+    <span class="dstamp" style="color:#5c503f;border-color:#8a7a63">NO NETWORK NEEDED FOR NAV</span>
+  </div>
+</div>
+
+<div style="width:375px;background:#1e1812;border-radius:38px;padding:10px;box-shadow:0 18px 60px rgba(43,33,23,.4);flex:none">
+<div style="border-radius:30px;overflow:hidden;background:#241d15;display:flex;flex-direction:column;height:740px;position:relative">
+  <div style="display:flex;justify-content:space-between;padding:12px 22px 6px;font-family:'IBM Plex Mono',monospace;font-size:10px;color:#9a8a72;flex:none"><span>{{ clock }}</span><span style="color:#d9a441">✈ GUIDE OFFLINE · G-MAPS ONLINE ✓</span><span>▮▮▯</span></div>
+
+  <div style="flex:none;margin:6px 12px;background:#3a3125;border:1px solid #6d5f4c;border-radius:12px;padding:12px 14px;display:flex;align-items:center;gap:12px">
+    <span style="font-size:30px;color:#e08b5e;flex:none;width:34px;text-align:center">{{ manIcon }}</span>
+    <div style="flex:1"><div style="font:700 16.5px 'Work Sans',sans-serif;color:#f4efe4">{{ manTitle }}</div><div style="font-size:11.5px;color:#9a8a72">{{ manSub }}</div></div>
+    <span class="dstamp">IN-BUNDLE ✓</span>
+  </div>
+
+  <div style="position:relative;flex:1;overflow:hidden;margin:6px 12px;border-radius:12px;background:#2a2218">
+    <sc-if value="{{ isStreet }}" hint-placeholder-val="{{ true }}">
+    <svg width="100%" height="100%" viewBox="0 0 351 470" preserveAspectRatio="xMidYMid slice" style="position:absolute;inset:0">
+      <rect width="351" height="470" fill="#2a2218"></rect>
+      <path d="M0,392 Q88,375 175,385 T351,378 L351,470 L0,470 Z" fill="#31404d"></path>
+      <g stroke="#4a3f30" stroke-width="11" fill="none" stroke-linecap="round">
+        <path d="M33,470 L66,288 L100,157 L166,52"></path>
+        <path d="M0,314 L133,275 L288,196 L351,183"></path>
+        <path d="M133,470 L166,327 L188,236 L233,118"></path>
+        <path d="M222,470 L255,340 L310,262"></path>
+      </g>
+      <g stroke="#3a3125" stroke-width="5" fill="none"><path d="M66,288 L166,327"></path><path d="M100,157 L188,236"></path><path d="M255,340 L166,327"></path></g>
+      <g fill="#3a3125"><rect x="78" y="196" width="38" height="29" rx="2" transform="rotate(-18 97 210)"></rect><rect x="200" y="157" width="33" height="26" rx="2" transform="rotate(-18 216 170)"></rect><rect x="127" y="353" width="42" height="31" rx="2" transform="rotate(-8 148 368)"></rect><rect x="260" y="242" width="33" height="24" rx="2" transform="rotate(-22 276 254)"></rect></g>
+      <path d="M166,432 C164,392 168,360 175,298 C180,262 194,229 217,196" fill="none" stroke="#e08b5e" stroke-width="4" stroke-dasharray="9 6" stroke-linecap="round" style="animation:dashmove 1.4s linear infinite"></path>
+      <circle cx="217" cy="196" r="10" fill="#e08b5e"></circle><text x="217" y="200" text-anchor="middle" fill="#241d15" font-family="IBM Plex Mono" font-size="9" font-weight="bold">3</text>
+      <g transform="{{ dotT }}">
+        <path d="M0,0 L-13,-27 A29,29 0 0 1 13,-27 Z" fill="#e08b5e" opacity="0.35" transform="{{ coneT }}"></path>
+        <circle r="12" fill="#f4efe4" stroke="#e08b5e" stroke-width="3.5"></circle>
+        <circle r="4.5" fill="#241d15"></circle>
+      </g>
+    </svg>
+    <div style="position:absolute;left:20%;top:56%;font-family:'Caveat',cursive;font-size:14px;color:#9a8a72;text-shadow:0 0 4px #2a2218,0 0 4px #2a2218;transform:rotate(-17deg);white-space:nowrap">Yefet St</div>
+    <div style="position:absolute;left:41%;top:37%;font-family:'Caveat',cursive;font-size:14px;color:#9a8a72;text-shadow:0 0 4px #2a2218,0 0 4px #2a2218;transform:rotate(-14deg);white-space:nowrap">Mifratz Shlomo</div>
+    <div style="position:absolute;left:59%;top:29%;font-family:'Caveat',cursive;font-size:15px;color:#e08b5e;text-shadow:0 0 4px #2a2218,0 0 4px #2a2218;white-space:nowrap">St. Peter's ⤴</div>
+    </sc-if>
+    <sc-if value="{{ isSchematic }}" hint-placeholder-val="{{ false }}">
+    <svg width="100%" height="100%" viewBox="0 0 351 470" preserveAspectRatio="xMidYMid slice" style="position:absolute;inset:0">
+      <rect width="351" height="470" fill="#2a2218"></rect>
+      <path d="M0,392 Q88,368 175,382 T351,372 L351,470 L0,470 Z" fill="#31404d"></path>
+      <ellipse cx="280" cy="130" rx="52" ry="32" fill="#33413a"></ellipse>
+      <path d="M166,432 C164,392 168,360 175,298 C180,262 194,229 217,196" fill="none" stroke="#e08b5e" stroke-width="4" stroke-dasharray="9 6" stroke-linecap="round" style="animation:dashmove 1.4s linear infinite"></path>
+      <path d="M36,398 C90,380 130,410 166,432" fill="none" stroke="#6d5f4c" stroke-width="2.5" stroke-dasharray="7 5" opacity="0.6"></path>
+      <circle cx="36" cy="398" r="8" fill="#6d5f4c"></circle>
+      <circle cx="217" cy="196" r="10" fill="#e08b5e"></circle><text x="217" y="200" text-anchor="middle" fill="#241d15" font-family="IBM Plex Mono" font-size="9" font-weight="bold">3</text>
+      <g transform="{{ dotT }}">
+        <path d="M0,0 L-13,-27 A29,29 0 0 1 13,-27 Z" fill="#e08b5e" opacity="0.35" transform="{{ coneT }}"></path>
+        <circle r="12" fill="#f4efe4" stroke="#e08b5e" stroke-width="3.5"></circle>
+        <circle r="4.5" fill="#241d15"></circle>
+      </g>
+    </svg>
+    <div style="position:absolute;left:56%;top:20%;font-family:'Caveat',cursive;font-size:16px;color:#e08b5e;text-shadow:0 0 4px #2a2218,0 0 4px #2a2218;white-space:nowrap">St. Peter's ⤴</div>
+    <div style="position:absolute;left:8%;top:78%;font-family:'Caveat',cursive;font-size:13px;color:#9a8a72;text-shadow:0 0 4px #2a2218,0 0 4px #2a2218;white-space:nowrap">✓ Flea Market</div>
+    <div style="position:absolute;left:62%;top:60%;font-family:'Caveat',cursive;font-size:13px;color:#9a8a72;text-shadow:0 0 4px #2a2218,0 0 4px #2a2218;white-space:nowrap">the sea →</div>
+    </sc-if>
+    <div style="position:absolute;top:10px;inset-inline-start:10px;display:flex;gap:5px">
+      <span class="mtog" style="background:{{ tS_bg }};color:{{ tS_fg }};border:1px solid #6d5f4c" onClick="{{ setStreet }}">STREET</span>
+      <span class="mtog" style="background:{{ tC_bg }};color:{{ tC_fg }};border:1px solid #6d5f4c" onClick="{{ setSchematic }}">SCHEMATIC</span>
+    </div>
+    <div style="position:absolute;top:10px;inset-inline-end:10px;width:32px;height:32px;border-radius:50%;background:rgba(36,29,21,.85);border:1px solid #6d5f4c;display:flex;align-items:center;justify-content:center;color:#e08b5e;font-size:14px">◮</div>
+    <div style="position:absolute;bottom:8px;inset-inline-end:10px;font-family:'IBM Plex Mono',monospace;font-size:6.5px;color:#6d5f4c">© OpenStreetMap</div>
+    <div style="position:absolute;bottom:8px;inset-inline-start:10px;font-family:'IBM Plex Mono',monospace;font-size:8px;color:#9a8a72;background:rgba(36,29,21,.85);border:1px solid #4a3f30;border-radius:5px;padding:3px 8px">{{ distLabel }}</div>
+  </div>
+
+  <div style="flex:none;padding:10px 14px 14px;display:flex;flex-direction:column;gap:8px">
+    <div style="display:flex;justify-content:space-between;align-items:baseline">
+      <span style="font:600 12.5px 'Work Sans',sans-serif;color:#f4efe4">St. Peter's Church · {{ etaLabel }}</span>
+      <span class="dstamp" style="color:#d9a441;border-color:#d9a441">{{ paceLabel }}</span>
+    </div>
+    <div style="display:flex;gap:7px">
+      <div class="gbtn" style="flex:1.1;background:#f4efe4;color:#241d15;justify-content:center" onClick="{{ togglePlay }}">{{ playLabel }}</div>
+      <div class="gbtn" style="flex:.6;border:1.5px solid #6d5f4c;color:#f4efe4;justify-content:center" onClick="{{ reset }}">↺</div>
+      <div class="gbtn" style="flex:1.5;border:1.5px solid #6d5f4c;color:#f4efe4" onClick="{{ openGmaps }}"><span class="glogo"></span>Google Maps ↗</div>
+    </div>
+  </div>
+
+  <div style="position:absolute;left:0;right:0;bottom:0;background:#f4efe4;border-radius:18px 18px 0 0;padding:14px 18px 18px;display:flex;flex-direction:column;gap:10px;transform:{{ sheetT }};transition:transform .5s cubic-bezier(.3,1,.35,1);box-shadow:0 -8px 30px rgba(0,0,0,.4)">
+    <div style="width:36px;height:4px;border-radius:2px;background:#c8bda6;margin:0 auto"></div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:8px;letter-spacing:.14em;color:#b3542e">YOU'VE ARRIVED · STOP 3 OF 5</div>
+    <div style="font-family:'Libre Caslon Text',serif;font-size:24px;font-weight:700">St. Peter's Church</div>
+    <div style="font-family:'Libre Caslon Text',serif;font-size:13.5px;font-style:italic;line-height:1.65;color:#3d3225">“Napoleon is said to have stayed here in 1799; the bell tower above you was rebuilt a century later, and still rings the hour…”</div>
+    <div style="display:flex;gap:6px"><span class="dstamp" style="color:#5c503f;border-color:#8a7a63">WIKIPEDIA · CC BY-SA 4.0</span><span class="dstamp" style="color:#5c503f;border-color:#8a7a63">30 MIN HERE</span></div>
+    <div style="display:flex;gap:7px">
+      <div class="gbtn" style="flex:1.2;background:#2b2117;color:#f4efe4;justify-content:center">▶ Play story</div>
+      <div class="gbtn" style="flex:1;border:1.5px solid #2b2117;color:#2b2117;justify-content:center">Facts</div>
+      <div class="gbtn" style="flex:1;border:1.5px solid #b3542e;color:#b3542e;justify-content:center" onClick="{{ reset }}">Next leg →</div>
+    </div>
+  </div>
+</div>
+</div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:720,&quot;height&quot;:820},&quot;simSeconds&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:15,&quot;min&quot;:4,&quot;max&quot;:60,&quot;step&quot;:1,&quot;unit&quot;:&quot;s&quot;,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Simulation&quot;},&quot;autoStory&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Simulation&quot;}}">
+class Component extends DCLogic {
+  state = { mode: 'street', t: 0, playing: false, arrived: false };
+  componentWillUnmount() { clearInterval(this._iv); }
+  _start() {
+    clearInterval(this._iv);
+    const dur = (this.props.simSeconds ?? 15) * 1000, step = 50;
+    this._iv = setInterval(() => {
+      this.setState(s => {
+        let t = s.t + step / dur;
+        if (t >= 1) { clearInterval(this._iv); return { t: 1, playing: false, arrived: true }; }
+        return { t };
+      });
+    }, step);
+  }
+  renderVals() {
+    // route polyline in viewBox coords (351x470)
+    const pts = [[166,432],[164,392],[168,352],[175,298],[181,262],[196,228],[217,196]];
+    const segLens = []; let total = 0;
+    for (let i = 0; i < pts.length - 1; i++) { const d = Math.hypot(pts[i+1][0]-pts[i][0], pts[i+1][1]-pts[i][1]); segLens.push(d); total += d; }
+    const { t, mode, playing, arrived } = this.state;
+    let dist = t * total, x = pts[0][0], y = pts[0][1], ang = 0;
+    for (let i = 0; i < segLens.length; i++) {
+      if (dist <= segLens[i] || i === segLens.length - 1) {
+        const f = Math.min(1, dist / segLens[i]);
+        x = pts[i][0] + (pts[i+1][0]-pts[i][0]) * f; y = pts[i][1] + (pts[i+1][1]-pts[i][1]) * f;
+        ang = Math.atan2(pts[i+1][1]-pts[i][1], pts[i+1][0]-pts[i][0]) * 180 / Math.PI + 90;
+        break;
+      }
+      dist -= segLens[i];
+    }
+    const man = arrived ? { i: '◉', t: 'You have arrived', s: "St. Peter's Church is on your left" }
+      : t < 0.3 ? { i: '⇧', t: 'Head north on Yefet St', s: 'stay on the promenade side' }
+      : t < 0.55 ? { i: '↰', t: 'In 40 m, turn left', s: 'Mifratz Shlomo Promenade · uphill' }
+      : t < 0.85 ? { i: '⇧', t: 'Continue uphill', s: 'stairs on your right · ~30 steps' }
+      : { i: '◉', t: 'Almost there', s: 'the bell tower is straight ahead' };
+    const mLeft = Math.round(450 * (1 - t)), minLeft = Math.max(0, Math.ceil(6 * (1 - t)));
+    const clockMin = 24 + Math.floor(t * 6);
+    return {
+      isStreet: mode === 'street', isSchematic: mode === 'schematic',
+      tS_bg: mode === 'street' ? '#f4efe4' : 'transparent', tS_fg: mode === 'street' ? '#241d15' : '#9a8a72',
+      tC_bg: mode === 'schematic' ? '#f4efe4' : 'transparent', tC_fg: mode === 'schematic' ? '#241d15' : '#9a8a72',
+      setStreet: () => this.setState({ mode: 'street' }), setSchematic: () => this.setState({ mode: 'schematic' }),
+      dotT: `translate(${x.toFixed(1)},${y.toFixed(1)})`, coneT: `rotate(${ang.toFixed(1)})`,
+      manIcon: man.i, manTitle: man.t, manSub: man.s,
+      distLabel: arrived ? 'ARRIVED · 0 M' : `${mLeft} M LEFT · GPS ±4 M`,
+      etaLabel: arrived ? 'here' : `${minLeft} min walk`,
+      paceLabel: arrived ? 'STORY UNLOCKED' : 'ON PACE ✓',
+      clock: `14:${clockMin}`,
+      playLabel: playing ? '⏸ Pause' : (t > 0 && !arrived ? '▶ Resume' : '▶ Simulate walk'),
+      togglePlay: () => { if (this.state.arrived) return; if (this.state.playing) { clearInterval(this._iv); this.setState({ playing: false }); } else { this.setState({ playing: true }); this._start(); } },
+      reset: () => { clearInterval(this._iv); this.setState({ t: 0, playing: false, arrived: false }); },
+      openGmaps: () => window.open('https://www.google.com/maps/dir/?api=1&destination=32.05437,34.75174&travelmode=walking', '_blank'),
+      sheetT: (arrived && (this.props.autoStory ?? true)) ? 'translateY(0)' : 'translateY(105%)'
+    };
+  }
+}
+</script>
+</body>
+</html>
