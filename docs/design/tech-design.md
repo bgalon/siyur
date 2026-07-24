@@ -79,7 +79,7 @@ FieldConflict:
 
 **i18n findings (discovery spike §7) baked into the schema:**
 - `names` keys are **BCP-47 subtags**, not bare language codes — the spike found `ja-Hira` (hiragana) and `ja-Latn` (romaji) alongside `ja`.
-- **Local-script names are sparse in sources** (Overture `names.common` mostly null; Greek/Japanese names came mainly from OSM `name:xx`) → **transliteration/translation of names & addresses is an M1-relevant capability, not an M3 afterthought** (at least for the record's display name). *Scope flag for Ben — this pulls a sliver of i18n earlier than PRD §12's M3.*
+- **Local-script names are sparse in sources** (Overture `names.common` mostly null; Greek/Japanese names came mainly from OSM `name:xx`) → **transliteration/translation of names & addresses is an M1-relevant capability, not an M3 afterthought** (at least for the record's display name). **Accepted by Ben 2026-07-24:** a name/address transliteration sliver moves into M1; the exact extent is pinned in the Spec 001 interview and formalized as an ADR at ramp-up.
 - **Source scripts are untrustworthy** — the spike found a Hebrew Jaffa address stored in Cyrillic (`Сгула` for `סגולה`). Never trust a value's script from its source; normalize/validate.
 - The `bundleable` stamp reads the **per-source** license: Overture places mix CDLA-Permissive-2.0 (Meta) and **Apache-2.0** (Foursquare) *within one theme*.
 
@@ -258,7 +258,7 @@ Ran against **Rhodes/Ρόδος** (Greek), **Jaffa/יפו** (Hebrew+Arabic, RTL)
 
 - **Overture places are commercial-POI-sourced** (Meta/Foursquare, per-record licenses incl. Apache-2.0), **not OSM** → no shared id; joins are fuzzy. Datasets are ~27–40 % overlapping (complementary) → merge is enrichment-first.
 - **ε = 25 m, τ = 0.6 same-language, name-signal-required** — derived, not guessed (named-pair coordinate offset p90 ≈ 12–20 m; name-sim among <20 m pairs ≈ 0.1).
-- **i18n is harder and earlier than assumed:** local-script names are sparse in sources and need transliteration/translation; BCP-47 subtags (`ja-Hira`/`ja-Latn`); source scripts untrustworthy (Cyrillic-rendered Hebrew address). → a name/address transliteration sliver moves into M1 (scope flag for Ben).
+- **i18n is harder and earlier than assumed:** local-script names are sparse in sources and need transliteration/translation; BCP-47 subtags (`ja-Hira`/`ja-Latn`); source scripts untrustworthy (Cyrillic-rendered Hebrew address). → a name/address transliteration sliver moves into M1 (**accepted by Ben 2026-07-24**; exact scope in Spec 001).
 - **Overpass is flaky (504s)** → the commons cache is a reliability mechanism, not just cost.
 
 **Spec 001 demo area → Rhodes:** richest data, compact walkable medieval old town, Greek exercises non-Latin *without* requiring RTL (M1 is English-first). **Jaffa** → held for M3 RTL/Hebrew validation; **Takayama** → the unrehearsed-city eval (CJK). *(Discovery-spike code discarded per plan; `spike/` is gitignored.)*

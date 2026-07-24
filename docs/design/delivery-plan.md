@@ -45,6 +45,8 @@ The discovery spike (`tech-design.md` §7) precedes DU-00 and hardens the schema
 - **EARS:** "delimits an area already covered → reuse existing cited data + offer refresh."
 - **Tests:** T1 polygon/bbox geometry + resolve logic (mocked); T2 component `POST /areas` over PostGIS coverage query. **Artifacts:** tile-source schema card, devlog, `exhibit/U4-area-resolution`.
 
+> **i18n sliver in M1 (accepted 2026-07-24):** DU-02/DU-03 include transliteration of the display **name/address** to the presentation language (source scripts are untrustworthy — FAIL-001). Full multi-language + RTL stays M3; exact extent pinned in Spec 001.
+
 ### DU-02 · Research (one source)
 - **Scope:** DuckDB over Overture → `SiteRecordV1`s stamped with provenance, persisted (single source, no merge yet).
 - **Demo:** research the area → cited sites appear on the map, each with a source chip.
