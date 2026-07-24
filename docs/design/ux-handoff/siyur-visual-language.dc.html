@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Libre+Caslon+Text:ital,wght@0,400;0,700;1,400&amp;family=Frank+Ruhl+Libre:wght@400;500;700&amp;family=Work+Sans:wght@400;500;600;700&amp;family=Heebo:wght@400;500;600;700&amp;family=Archivo:wght@400;500;600;700;800&amp;family=Rubik:wght@400;500;600;700&amp;family=IBM+Plex+Mono:wght@400;500&amp;family=Caveat:wght@500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#ece9e2;font-family:'Work Sans',system-ui,sans-serif}
+a{color:#365b4e}a:hover{color:#1f3a30}
+.dv-turn{padding:40px 44px 32px;border-bottom:1px solid rgba(0,0,0,.08);scroll-margin-top:16px}
+.dv-thd{display:flex;align-items:baseline;gap:10px;margin:0 0 6px}
+.dv-tid{font:600 10px 'IBM Plex Mono',monospace;padding:3px 7px;background:#1a1a1a;color:#fff;border-radius:4px;text-decoration:none}
+.dv-tname{font:600 14px/1.2 'Work Sans',sans-serif;color:#1a1a1a}
+.dv-intro{max-width:760px;font:400 12.5px/1.6 'Work Sans',sans-serif;color:rgba(0,0,0,.6);margin:0 0 24px}
+.dv-opts{display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start}
+.dv-opt{flex:none;display:flex;flex-direction:column;gap:9px;scroll-margin-top:16px}
+.dv-oid{font:600 10.5px 'IBM Plex Mono',monospace;padding:3px 7px;background:rgba(0,0,0,.08);color:#1a1a1a;border-radius:5px;text-decoration:none}
+.dv-olabel{display:flex;align-items:baseline;gap:8px;font:400 11.5px/1.3 'Work Sans',sans-serif;color:rgba(0,0,0,.6)}
+.dv-card{max-width:100%;background:#fff;border:1px solid rgba(0,0,0,.1);border-radius:10px;box-shadow:0 1px 4px rgba(0,0,0,.07);overflow:hidden}
+.dv-opt:target .dv-oid{background:#2a78d6;color:#fff}
+.dv-next{margin:24px 0 0;font:12px/1.5 'Work Sans',sans-serif;color:rgba(0,0,0,.5)}
+.sw{display:flex;height:44px;border-radius:6px;overflow:hidden}
+.sw div{flex:1;display:flex;align-items:flex-end;padding:4px 0 3px 6px;font:500 8.5px 'IBM Plex Mono',monospace}
+.seclab{font:600 9.5px 'IBM Plex Mono',monospace;letter-spacing:.12em;text-transform:uppercase;opacity:.45;margin:0 0 8px}
+</style>
+</helmet>
+
+<section class="dv-turn" id="t1">
+<div class="dv-thd"><a class="dv-tid" href="#t1">1</a><span class="dv-tname">Siyur · Visual language — three directions</span></div>
+<p class="dv-intro">Each direction shows: wordmark, palette, EN+HE type pairing, provenance-chip motif, a schematic-map vignette (the soul), and a travel-mode (high-contrast, outdoor) sample. All three keep provenance visible and are designed to mirror cleanly for RTL. Assumptions: MapLibre base underneath, so map colors here are style-layer intents, not raster art.</p>
+<div class="dv-opts">
+
+<!-- ============ 1a THE FIELD ATLAS ============ -->
+<div class="dv-opt" id="1a">
+<div class="dv-olabel"><a class="dv-oid" href="#1a">1a</a>The Field Atlas — vintage hand-drawn, ink &amp; paper, warm nostalgic</div>
+<div class="dv-card" style="width:420px;background:#f4efe4">
+  <div style="padding:26px 28px 20px;border-bottom:1px solid rgba(60,45,25,.15)">
+    <div style="display:flex;align-items:baseline;justify-content:space-between">
+      <div style="font-family:'Libre Caslon Text',serif;font-size:34px;font-weight:700;letter-spacing:.01em;color:#2b2117">Siyur<span style="color:#b3542e">.</span></div>
+      <div style="font-family:'Frank Ruhl Libre',serif;font-size:26px;font-weight:700;color:#2b2117" dir="rtl">סיור</div>
+    </div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.18em;text-transform:uppercase;color:#8a7a63;margin-top:2px">Your day, hand-drawn</div>
+  </div>
+  <div style="padding:18px 28px 8px">
+    <p class="seclab" style="color:#2b2117">Palette</p>
+    <div class="sw">
+      <div style="background:#f4efe4;color:#8a7a63">paper</div>
+      <div style="background:#2b2117;color:#f4efe4">ink</div>
+      <div style="background:#b3542e;color:#f4efe4">route</div>
+      <div style="background:#3f6a5a;color:#f4efe4">park</div>
+      <div style="background:#7d9bb0;color:#2b2117">water</div>
+      <div style="background:#d9a441;color:#2b2117">meal</div>
+    </div>
+  </div>
+  <div style="padding:14px 28px 6px;display:flex;gap:20px">
+    <div style="flex:1">
+      <p class="seclab" style="color:#2b2117">Type · EN</p>
+      <div style="font-family:'Libre Caslon Text',serif;font-size:19px;color:#2b2117;line-height:1.25">The Old City in an afternoon</div>
+      <div style="font-family:'Work Sans',sans-serif;font-size:11.5px;color:#5c503f;margin-top:5px;line-height:1.5">Libre Caslon for titles &amp; stories; Work Sans for UI and facts.</div>
+    </div>
+    <div style="flex:1" dir="rtl">
+      <p class="seclab" style="color:#2b2117">HE · עברית</p>
+      <div style="font-family:'Frank Ruhl Libre',serif;font-size:19px;color:#2b2117;line-height:1.3">העיר העתיקה באחר־צהריים</div>
+      <div style="font-family:'Heebo',sans-serif;font-size:11.5px;color:#5c503f;margin-top:5px;line-height:1.6">פרנק־רוהל לכותרות וסיפורים; Heebo לממשק.</div>
+    </div>
+  </div>
+  <div style="padding:14px 28px 4px">
+    <p class="seclab" style="color:#2b2117">Provenance — footnote stamps</p>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+      <span style="font-family:'Libre Caslon Text',serif;font-size:13px;color:#2b2117">Open Tue–Sun 9:00–17:00</span>
+      <span style="font-family:'IBM Plex Mono',monospace;font-size:8.5px;padding:2px 6px;border:1px solid #8a7a63;border-radius:2px;color:#5c503f;background:#efe7d5">¹ WIKIVOYAGE</span>
+      <span style="font-family:'IBM Plex Mono',monospace;font-size:8.5px;padding:2px 6px;border:1px solid #8a7a63;border-radius:2px;color:#5c503f;background:#efe7d5">² OSM</span>
+      <span style="font-family:'IBM Plex Mono',monospace;font-size:8.5px;padding:2px 6px;border:1px dashed #b3542e;border-radius:2px;color:#b3542e">GOOGLE 4.7★ ↗</span>
+    </div>
+  </div>
+  <div style="padding:16px 28px 6px">
+    <p class="seclab" style="color:#2b2117">Schematic map vignette</p>
+    <div style="position:relative;height:180px;background:#efe7d5;border:1px solid rgba(60,45,25,.25);border-radius:4px;overflow:hidden;box-shadow:inset 0 0 30px rgba(120,95,60,.12)">
+      <svg width="100%" height="100%" viewBox="0 0 360 180" preserveAspectRatio="xMidYMid slice">
+        <defs><filter id="rough1" x="-5%" y="-5%" width="110%" height="110%"><feTurbulence type="fractalNoise" baseFrequency="0.04" numOctaves="2" result="n"></feTurbulence><feDisplacementMap in="SourceGraphic" in2="n" scale="2.5"></feDisplacementMap></filter></defs>
+        <path d="M0,140 Q90,120 180,138 T360,128 L360,180 L0,180 Z" fill="#7d9bb0" opacity="0.45" filter="url(#rough1)"></path>
+        <path d="M0,140 Q90,120 180,138 T360,128" fill="none" stroke="#5c7d94" stroke-width="1.5" filter="url(#rough1)"></path>
+        <ellipse cx="290" cy="52" rx="46" ry="28" fill="#3f6a5a" opacity="0.3" filter="url(#rough1)"></ellipse>
+        <path d="M30,120 C80,95 130,105 165,78 S250,60 292,52" fill="none" stroke="#b3542e" stroke-width="2.5" stroke-dasharray="7 5" stroke-linecap="round" filter="url(#rough1)"></path>
+        <path d="M165,78 C185,95 210,100 235,112" fill="none" stroke="#8a7a63" stroke-width="1.8" stroke-dasharray="3 5" stroke-linecap="round" filter="url(#rough1)"></path>
+        <g font-family="IBM Plex Mono" font-size="7" fill="#5c503f">
+          <circle cx="30" cy="120" r="9" fill="#2b2117"></circle><text x="30" y="123" text-anchor="middle" fill="#f4efe4" font-size="9" font-weight="bold">1</text>
+          <circle cx="165" cy="78" r="9" fill="#2b2117"></circle><text x="165" y="81" text-anchor="middle" fill="#f4efe4" font-size="9" font-weight="bold">2</text>
+          <circle cx="292" cy="52" r="9" fill="#b3542e"></circle><text x="292" y="55" text-anchor="middle" fill="#f4efe4" font-size="9" font-weight="bold">3</text>
+          <circle cx="235" cy="112" r="7" fill="none" stroke="#8a7a63" stroke-width="1.5" stroke-dasharray="2 2"></circle><text x="235" y="115" text-anchor="middle" fill="#8a7a63" font-size="8" font-weight="bold">B</text>
+        </g>
+        <text x="44" y="112" font-family="Caveat" font-size="15" fill="#2b2117">Spice market</text>
+        <text x="178" y="72" font-family="Caveat" font-size="15" fill="#2b2117">The citadel</text>
+        <text x="248" y="40" font-family="Caveat" font-size="15" fill="#b3542e">Garden café ☕</text>
+        <text x="205" y="132" font-family="Caveat" font-size="13" fill="#8a7a63">plan B: museum</text>
+        <text x="330" y="170" font-family="IBM Plex Mono" font-size="6" fill="#8a7a63" text-anchor="end">© OpenStreetMap</text>
+      </svg>
+    </div>
+    <div style="font-family:'Work Sans',sans-serif;font-size:10.5px;color:#8a7a63;margin-top:6px;line-height:1.5">Real MapLibre base desaturated to paper tones; itinerary layer drawn with wobble filter + handwritten label face (Caveat EN / matching HE script face TBD).</div>
+  </div>
+  <div style="padding:16px 28px 24px">
+    <p class="seclab" style="color:#2b2117">Travel mode — “field mode”, same brand, ink on bone</p>
+    <div style="background:#1e1812;border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:9px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline">
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.14em;color:#d9a441">NOW · 14:20</span>
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:#9a8a72">OFFLINE · BUNDLE OK ✓</span>
+      </div>
+      <div style="font-family:'Libre Caslon Text',serif;font-size:21px;color:#f4efe4;line-height:1.2">The Citadel <span style="font-size:12px;color:#9a8a72;font-family:'Work Sans',sans-serif">· stop 2 of 6 · 40 min here</span></div>
+      <div style="display:flex;gap:8px">
+        <div style="flex:1;background:#f4efe4;color:#1e1812;border-radius:6px;padding:10px 0;text-align:center;font:600 13px 'Work Sans',sans-serif">Story</div>
+        <div style="flex:1;background:rgba(244,239,228,.12);color:#f4efe4;border-radius:6px;padding:10px 0;text-align:center;font:600 13px 'Work Sans',sans-serif;border:1px solid rgba(244,239,228,.3)">Facts</div>
+        <div style="flex:1;background:rgba(179,84,46,.25);color:#e8a583;border-radius:6px;padding:10px 0;text-align:center;font:600 13px 'Work Sans',sans-serif;border:1px solid #b3542e">Plan B →</div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ============ 1b THE POSTER DAY ============ -->
+<div class="dv-opt" id="1b">
+<div class="dv-olabel"><a class="dv-oid" href="#1b">1b</a>The Poster Day — mid-century travel poster, flat &amp; bold, fresh optimistic</div>
+<div class="dv-card" style="width:420px;background:#faf6ee">
+  <div style="padding:26px 28px 20px;background:#1d4e4f">
+    <div style="display:flex;align-items:baseline;justify-content:space-between">
+      <div style="font-family:'Archivo',sans-serif;font-size:34px;font-weight:800;letter-spacing:-.01em;color:#faf6ee">SIYUR</div>
+      <div style="font-family:'Rubik',sans-serif;font-size:26px;font-weight:700;color:#f2b63c" dir="rtl">סיור</div>
+    </div>
+    <div style="font-family:'Archivo',sans-serif;font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:#7fb3ab;margin-top:2px">One fine day · יום אחד יפה</div>
+  </div>
+  <div style="padding:18px 28px 8px">
+    <p class="seclab" style="color:#1d4e4f">Palette</p>
+    <div class="sw">
+      <div style="background:#faf6ee;color:#8c8471">cream</div>
+      <div style="background:#1d4e4f;color:#faf6ee">deep teal</div>
+      <div style="background:#e0552c;color:#faf6ee">route</div>
+      <div style="background:#f2b63c;color:#1d4e4f">sun</div>
+      <div style="background:#7fb3ab;color:#1d4e4f">water</div>
+      <div style="background:#2b2b28;color:#faf6ee">ink</div>
+    </div>
+  </div>
+  <div style="padding:14px 28px 6px;display:flex;gap:20px">
+    <div style="flex:1">
+      <p class="seclab" style="color:#1d4e4f">Type · EN</p>
+      <div style="font-family:'Archivo',sans-serif;font-weight:700;font-size:19px;color:#1d4e4f;line-height:1.15;text-transform:uppercase;letter-spacing:.01em">The old city in an afternoon</div>
+      <div style="font-family:'Work Sans',sans-serif;font-size:11.5px;color:#5f594c;margin-top:5px;line-height:1.5">Archivo (bold, poster caps) for display; Work Sans for body.</div>
+    </div>
+    <div style="flex:1" dir="rtl">
+      <p class="seclab" style="color:#1d4e4f">HE · עברית</p>
+      <div style="font-family:'Rubik',sans-serif;font-weight:700;font-size:19px;color:#1d4e4f;line-height:1.3">העיר העתיקה באחר־צהריים</div>
+      <div style="font-family:'Rubik',sans-serif;font-size:11.5px;color:#5f594c;margin-top:5px;line-height:1.6">Rubik — גיאומטרי וחם, מותאם לפוסטר.</div>
+    </div>
+  </div>
+  <div style="padding:14px 28px 4px">
+    <p class="seclab" style="color:#1d4e4f">Provenance — ticket chips</p>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+      <span style="font-family:'Work Sans',sans-serif;font-size:13px;color:#2b2b28">Open Tue–Sun 9:00–17:00</span>
+      <span style="font:600 8.5px 'Archivo',sans-serif;letter-spacing:.06em;padding:3px 8px;border-radius:99px;color:#faf6ee;background:#1d4e4f">WIKIVOYAGE</span>
+      <span style="font:600 8.5px 'Archivo',sans-serif;letter-spacing:.06em;padding:3px 8px;border-radius:99px;color:#1d4e4f;background:#7fb3ab">OSM</span>
+      <span style="font:600 8.5px 'Archivo',sans-serif;letter-spacing:.06em;padding:3px 8px;border-radius:99px;color:#e0552c;background:#faf6ee;border:1.5px solid #e0552c">GOOGLE 4.7★ ↗</span>
+    </div>
+  </div>
+  <div style="padding:16px 28px 6px">
+    <p class="seclab" style="color:#1d4e4f">Schematic map vignette</p>
+    <div style="position:relative;height:180px;background:#f6eedd;border-radius:4px;overflow:hidden">
+      <svg width="100%" height="100%" viewBox="0 0 360 180" preserveAspectRatio="xMidYMid slice">
+        <path d="M0,138 Q90,118 180,136 T360,126 L360,180 L0,180 Z" fill="#7fb3ab"></path>
+        <circle cx="290" cy="50" r="34" fill="#a8c686" opacity="0.8"></circle>
+        <path d="M30,120 C80,95 130,105 165,78 S250,60 292,52" fill="none" stroke="#e0552c" stroke-width="5" stroke-linecap="round"></path>
+        <path d="M165,78 C185,95 210,100 235,112" fill="none" stroke="#1d4e4f" stroke-width="3" stroke-dasharray="1 8" stroke-linecap="round"></path>
+        <g font-family="Archivo" font-weight="800">
+          <circle cx="30" cy="120" r="11" fill="#1d4e4f"></circle><text x="30" y="124" text-anchor="middle" fill="#faf6ee" font-size="11">1</text>
+          <circle cx="165" cy="78" r="11" fill="#1d4e4f"></circle><text x="165" y="82" text-anchor="middle" fill="#faf6ee" font-size="11">2</text>
+          <circle cx="292" cy="52" r="11" fill="#e0552c"></circle><text x="292" y="56" text-anchor="middle" fill="#faf6ee" font-size="11">3</text>
+          <circle cx="235" cy="112" r="9" fill="#f2b63c"></circle><text x="235" y="116" text-anchor="middle" fill="#1d4e4f" font-size="10">B</text>
+        </g>
+        <g font-family="Archivo" font-size="9" font-weight="700" fill="#2b2b28" letter-spacing="1">
+          <text x="46" y="112">SPICE MARKET</text>
+          <text x="180" y="72">THE CITADEL</text>
+          <text x="230" y="30" fill="#e0552c">GARDEN CAFÉ</text>
+          <text x="250" y="132" fill="#1d4e4f" opacity="0.7" font-size="8">PLAN B</text>
+        </g>
+        <text x="352" y="172" font-family="Work Sans" font-size="6" fill="#5f594c" text-anchor="end">© OpenStreetMap</text>
+      </svg>
+    </div>
+    <div style="font-family:'Work Sans',sans-serif;font-size:10.5px;color:#8c8471;margin-top:6px;line-height:1.5">Flat poster shapes over a simplified MapLibre base; route as a confident brushstroke; ALL-CAPS letterpress labels.</div>
+  </div>
+  <div style="padding:16px 28px 24px">
+    <p class="seclab" style="color:#1d4e4f">Travel mode — high-contrast “sun mode”, cream on ink</p>
+    <div style="background:#2b2b28;border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:9px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline">
+        <span style="font:700 9px 'Archivo',sans-serif;letter-spacing:.16em;color:#f2b63c">NOW · 14:20</span>
+        <span style="font:600 9px 'Archivo',sans-serif;letter-spacing:.1em;color:#8c8471">OFFLINE ✓</span>
+      </div>
+      <div style="font:800 20px 'Archivo',sans-serif;color:#faf6ee;text-transform:uppercase;line-height:1.15">The Citadel <span style="font:500 12px 'Work Sans',sans-serif;color:#8c8471;text-transform:none">· stop 2 of 6 · 40 min</span></div>
+      <div style="display:flex;gap:8px">
+        <div style="flex:1;background:#faf6ee;color:#2b2b28;border-radius:99px;padding:10px 0;text-align:center;font:700 13px 'Archivo',sans-serif">STORY</div>
+        <div style="flex:1;background:transparent;color:#faf6ee;border-radius:99px;padding:10px 0;text-align:center;font:700 13px 'Archivo',sans-serif;border:2px solid #faf6ee">FACTS</div>
+        <div style="flex:1;background:#e0552c;color:#faf6ee;border-radius:99px;padding:10px 0;text-align:center;font:700 13px 'Archivo',sans-serif">PLAN B →</div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ============ 1c THE LOCAL'S NOTEBOOK ============ -->
+<div class="dv-opt" id="1c">
+<div class="dv-olabel"><a class="dv-oid" href="#1c">1c</a>The Local's Notebook — quiet premium editorial, engraved details, restrained</div>
+<div class="dv-card" style="width:420px;background:#f7f5f1">
+  <div style="padding:26px 28px 20px;border-bottom:2px solid #23282b">
+    <div style="display:flex;align-items:baseline;justify-content:space-between">
+      <div style="font-family:'Libre Caslon Text',serif;font-size:32px;font-style:italic;color:#23282b">Siyur</div>
+      <div style="font-family:'Frank Ruhl Libre',serif;font-size:25px;font-weight:500;color:#23282b" dir="rtl">סיור</div>
+    </div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:#8b8578;margin-top:3px">A guide, made for you — N 31.77° · E 35.23°</div>
+  </div>
+  <div style="padding:18px 28px 8px">
+    <p class="seclab" style="color:#23282b">Palette</p>
+    <div class="sw">
+      <div style="background:#f7f5f1;color:#8b8578">chalk</div>
+      <div style="background:#23282b;color:#f7f5f1">graphite</div>
+      <div style="background:#9a3b2e;color:#f7f5f1">route</div>
+      <div style="background:#5a6f5d;color:#f7f5f1">park</div>
+      <div style="background:#a9b8bd;color:#23282b">water</div>
+      <div style="background:#c2b49a;color:#23282b">stone</div>
+    </div>
+  </div>
+  <div style="padding:14px 28px 6px;display:flex;gap:20px">
+    <div style="flex:1">
+      <p class="seclab" style="color:#23282b">Type · EN</p>
+      <div style="font-family:'Libre Caslon Text',serif;font-style:italic;font-size:19px;color:#23282b;line-height:1.25">The old city, in an afternoon</div>
+      <div style="font-family:'Work Sans',sans-serif;font-size:11.5px;color:#6b665b;margin-top:5px;line-height:1.5">Caslon italic display, generous whitespace; mono for coordinates &amp; metadata.</div>
+    </div>
+    <div style="flex:1" dir="rtl">
+      <p class="seclab" style="color:#23282b">HE · עברית</p>
+      <div style="font-family:'Frank Ruhl Libre',serif;font-size:19px;color:#23282b;line-height:1.3">העיר העתיקה, באחר־צהריים</div>
+      <div style="font-family:'Heebo',sans-serif;font-size:11.5px;color:#6b665b;margin-top:5px;line-height:1.6">פרנק־רוהל — ספרותי ושקט.</div>
+    </div>
+  </div>
+  <div style="padding:14px 28px 4px">
+    <p class="seclab" style="color:#23282b">Provenance — marginalia footnotes</p>
+    <div style="font-family:'Libre Caslon Text',serif;font-size:13px;color:#23282b;line-height:1.7">Open Tue–Sun 9:00–17:00<sup style="font-family:'IBM Plex Mono',monospace;font-size:8px;color:#9a3b2e;padding:0 2px">[1]</sup> · entry 24 ₪<sup style="font-family:'IBM Plex Mono',monospace;font-size:8px;color:#9a3b2e;padding:0 2px">[2]</sup></div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:8.5px;color:#8b8578;margin-top:4px;border-top:1px solid #d8d2c4;padding-top:4px;width:75%">[1] wikivoyage · verified 12 Jul &nbsp; [2] official site ↗ &nbsp; ★ google 4.7 (online only)</div>
+  </div>
+  <div style="padding:16px 28px 6px">
+    <p class="seclab" style="color:#23282b">Schematic map vignette</p>
+    <div style="position:relative;height:180px;background:#f2efe8;border:1px solid #d8d2c4;border-radius:2px;overflow:hidden">
+      <svg width="100%" height="100%" viewBox="0 0 360 180" preserveAspectRatio="xMidYMid slice">
+        <defs><pattern id="hatch1c" width="5" height="5" patternTransform="rotate(45)" patternUnits="userSpaceOnUse"><line x1="0" y1="0" x2="0" y2="5" stroke="#a9b8bd" stroke-width="1.2"></line></pattern></defs>
+        <path d="M0,138 Q90,118 180,136 T360,126 L360,180 L0,180 Z" fill="url(#hatch1c)"></path>
+        <path d="M0,138 Q90,118 180,136 T360,126" fill="none" stroke="#8fa3a9" stroke-width="1"></path>
+        <ellipse cx="290" cy="52" rx="44" ry="27" fill="none" stroke="#5a6f5d" stroke-width="1" stroke-dasharray="1 3"></ellipse>
+        <ellipse cx="290" cy="52" rx="44" ry="27" fill="#5a6f5d" opacity="0.12"></ellipse>
+        <path d="M30,120 C80,95 130,105 165,78 S250,60 292,52" fill="none" stroke="#9a3b2e" stroke-width="1.8" stroke-linecap="round"></path>
+        <path d="M165,78 C185,95 210,100 235,112" fill="none" stroke="#8b8578" stroke-width="1.2" stroke-dasharray="4 4"></path>
+        <g>
+          <circle cx="30" cy="120" r="4" fill="#23282b"></circle><circle cx="30" cy="120" r="8" fill="none" stroke="#23282b" stroke-width="0.8"></circle>
+          <circle cx="165" cy="78" r="4" fill="#23282b"></circle><circle cx="165" cy="78" r="8" fill="none" stroke="#23282b" stroke-width="0.8"></circle>
+          <circle cx="292" cy="52" r="4" fill="#9a3b2e"></circle><circle cx="292" cy="52" r="8" fill="none" stroke="#9a3b2e" stroke-width="0.8"></circle>
+          <circle cx="235" cy="112" r="6" fill="none" stroke="#8b8578" stroke-width="1" stroke-dasharray="2 2"></circle>
+        </g>
+        <g font-family="Libre Caslon Text" font-size="11" font-style="italic" fill="#23282b">
+          <text x="44" y="114">i. Spice market</text>
+          <text x="178" y="70">ii. The citadel</text>
+          <text x="240" y="34" fill="#9a3b2e">iii. Garden café</text>
+          <text x="246" y="120" fill="#8b8578" font-size="10">b. museum</text>
+        </g>
+        <text x="352" y="172" font-family="IBM Plex Mono" font-size="6" fill="#8b8578" text-anchor="end">© OpenStreetMap</text>
+      </svg>
+    </div>
+    <div style="font-family:'Work Sans',sans-serif;font-size:10.5px;color:#8b8578;margin-top:6px;line-height:1.5">Engraving cues — hatched water, ringed markers, roman-numeral stops — over a near-monochrome base; one red route line is the only loud thing.</div>
+  </div>
+  <div style="padding:16px 28px 24px">
+    <p class="seclab" style="color:#23282b">Travel mode — distinct utilitarian “field notes”, max legibility</p>
+    <div style="background:#f7f5f1;border:2px solid #23282b;border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:9px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline">
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.14em;color:#9a3b2e">NOW · 14:20</span>
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:#8b8578">OFFLINE · ✓</span>
+      </div>
+      <div style="font-family:'Work Sans',sans-serif;font-weight:700;font-size:21px;color:#23282b;line-height:1.2">The Citadel <span style="font-weight:400;font-size:12px;color:#8b8578">· stop 2/6 · 40 min</span></div>
+      <div style="display:flex;gap:8px">
+        <div style="flex:1;background:#23282b;color:#f7f5f1;border-radius:4px;padding:10px 0;text-align:center;font:600 13px 'Work Sans',sans-serif">Story</div>
+        <div style="flex:1;background:transparent;color:#23282b;border-radius:4px;padding:10px 0;text-align:center;font:600 13px 'Work Sans',sans-serif;border:1.5px solid #23282b">Facts</div>
+        <div style="flex:1;background:#9a3b2e;color:#f7f5f1;border-radius:4px;padding:10px 0;text-align:center;font:600 13px 'Work Sans',sans-serif">Plan B →</div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+</div>
+<p class="dv-next">Try next: "go with <a class="dv-oid" href="#1a">1a</a>, mock the Travel screen" · "mix <a class="dv-oid" href="#1a">1a</a>'s map with <a class="dv-oid" href="#1b">1b</a>'s palette" · "show the Hebrew/RTL version of one direction in full"</p>
+</section>
+
+</x-dc>
+</body>
+</html>

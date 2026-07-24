@@ -38,4 +38,11 @@ Build the token set and the provenance-stamp components once (they're used every
 
 1. Travel light "sun mode" as default (decision recorded; re-mock later). 2. Hebrew handwriting face. 3. Plan C representation on the strip beyond the pager. 4. Compile-checklist ↔ real compiler-step mapping.
 
-*Not imported (stayed in the design project): the exploration mocks + the standalone Visual Language file — available in the sibling `design_handoff_siyur` folder if we later want them in-repo.*
+## Files
+
+- `README.md` — the authoritative UX spec ("The Field Atlas").
+- `siyur-visual-language.dc.html` — the rendered visual-language reference (tokens, type scale, stamp system, motifs).
+- `siyur-screens-v2.dc.html` — final key screens, all phases, EN + HE side by side.
+- `travel-nav-prototype.dc.html` — working Travel-navigation simulation.
+
+*Not imported (stayed in the design project): the exploration/alternatives mocks — available in the sibling `design_handoff_siyur` folder if we later want them in-repo.*
