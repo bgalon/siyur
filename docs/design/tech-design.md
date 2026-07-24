@@ -77,10 +77,18 @@ FieldConflict:
 
 **M1 must populate:** `id`, `location`, `names.en`, `categories`, and — where the source has it — `address`, `opening_hours`, and ≥1 `story`; every populated value carries a real `SourceRef` and `bundleable` stamp. Empty M2+ fields are valid in M1.
 
-### 1.2 Merge model [M1 for per-field mechanics; thresholds ❓ pending spike]
+**i18n findings (discovery spike §7) baked into the schema:**
+- `names` keys are **BCP-47 subtags**, not bare language codes — the spike found `ja-Hira` (hiragana) and `ja-Latn` (romaji) alongside `ja`.
+- **Local-script names are sparse in sources** (Overture `names.common` mostly null; Greek/Japanese names came mainly from OSM `name:xx`) → **transliteration/translation of names & addresses is an M1-relevant capability, not an M3 afterthought** (at least for the record's display name). *Scope flag for Ben — this pulls a sliver of i18n earlier than PRD §12's M3.*
+- **Source scripts are untrustworthy** — the spike found a Hebrew Jaffa address stored in Cyrillic (`Сгула` for `סגולה`). Never trust a value's script from its source; normalize/validate.
+- The `bundleable` stamp reads the **per-source** license: Overture places mix CDLA-Permissive-2.0 (Meta) and **Apache-2.0** (Foursquare) *within one theme*.
 
-- **Join key:** `gers_id` when present; else spatial+name match (PostGIS distance ≤ ε **and** normalized-name similarity ≥ τ) → candidate merge at reduced `confidence`. **ε and τ are ❓ — set from the discovery spike (§7), not guessed.**
-- **Per-field, not per-record:** merging never discards a source. Each field keeps the winning `SourcedValue`; a losing *different* value becomes a `FieldConflict` (tested: "no source ref lost on merge", PRD §8).
+### 1.2 Merge model [M1; thresholds set by the discovery spike §7]
+
+- **Join key:** `gers_id` when present; else **fuzzy spatial+name** — PostGIS distance ≤ **ε = 25 m** AND same-language name similarity ≥ **τ = 0.6** (values from the spike). In practice Overture places (Meta/Foursquare-sourced) and OSM share **no id**, so nearly all joins are fuzzy.
+- **Distance alone never merges** — a name signal is required (spike: median name-sim among <20 m pairs ≈ 0.1; dense old towns pack many *different* POIs together). Compare names **within a language after transliteration** — raw cross-script comparison (Latin `primary` vs `name:he`/`name:ja`) scores ~0.
+- **Union-first:** the sources are ~27–40 % overlapping (mostly complementary POIs), so merge **enriches coverage** more than it reconciles; prefer keeping two records over a wrong collapse.
+- **Per-field, not per-record:** merging never discards a source. Each field keeps the winning `SourcedValue`; a losing *different* value becomes a `FieldConflict` (tested: "no source ref lost on merge", PRD §8). Spike-verified: name/category/address conflicts are captured correctly.
 - **Winner policy (default, ADR-able):** highest `confidence`, tie-broken by source-trust order (Overture/Wikidata > Wikivoyage > OSM tags > open_web) then most recent `observed_at`.
 - **Staleness:** per-value `observed_at` drives refresh-on-reuse (PRD §5): a stale record offers re-research, doesn't block.
 - **User edits:** a user's note/override is `source.kind="user"`, stored **private** (not auto-published) per PRD §13 #4; source-derived cited data auto-publishes to the commons.
@@ -226,8 +234,9 @@ Google OIDC via Identity Platform → the PWA obtains an ID token → sends it a
 
 | Lock now for M1 (→ ADR at ramp-up) | Defer to ADR (needs spike/data or a PRD open decision) |
 |---|---|
-| Python 3.12/uv; geo pins (shapely~=2.1, h3~=4.5, osmnx~=2.1, geopandas~=1.1) | Merge thresholds ε (distance) + τ (name-similarity) — from the spike (§7) |
-| Postgres+PostGIS on Cloud SQL; Alembic migrations | Merge winner policy tuning beyond the default |
+| Python 3.12/uv; geo pins (shapely~=2.1, h3~=4.5, osmnx~=2.1, geopandas~=1.1) | Merge winner-policy tuning beyond the default |
+| **Merge thresholds ε = 25 m, τ = 0.6 same-language** (spike §7); union-first; require a name signal | Cross-script name matching depth (transliteration engine choice) |
+| Postgres+PostGIS on Cloud SQL; Alembic migrations | Full translation architecture (compile-freeze vs on-read) — but name/address transliteration lands at M1 |
 | LangGraph planner + PostgresSaver; FastAPI + SSE on Cloud Run | Translation architecture (compile-freeze vs on-read) |
 | MapLibre 5.19.x + PMTiles v3; whole-archive → OPFS | Schematic-map rendering approach |
 | Identity Platform (Google OIDC); JWT-verify FastAPI dep | Plan B/C bundle-size strategy vs ≤200 MB |
@@ -242,3 +251,14 @@ Disposable exploration; **not** in the product packages (`spike/`, gitignored, n
 - **Exercise:** for a small bbox each — Overture places/divisions via DuckDB (+ Overpass long tail, Wikivoyage listings, Wikidata) → build `SiteRecordV1`s with real `SourcedValue` stamps → run the per-field merge → emit conflict + coverage statistics.
 - **Outputs:** sample `SiteRecordV1` JSON per place; a merge/coverage report (what's thin, where GERS-join works vs. the spatial+name fallback, conflict rate); and a **findings note** recommending concrete ε/τ, any schema changes, the Spec 001 demo area, and i18n/RTL gotchas.
 - **Then:** fold findings into §1 + §6; the recommended demo area seeds Spec 001.
+
+### 7.1 Result (2026-07-24) — DONE
+
+Ran against **Rhodes/Ρόδος** (Greek), **Jaffa/יפו** (Hebrew+Arabic, RTL), **Takayama/高山** (CJK) — three non-Latin scripts. Full write-up in `spike/out/FINDINGS.md` (gitignored throwaway); the durable learnings are folded into §1.1, §1.2, and §6 above. Headlines:
+
+- **Overture places are commercial-POI-sourced** (Meta/Foursquare, per-record licenses incl. Apache-2.0), **not OSM** → no shared id; joins are fuzzy. Datasets are ~27–40 % overlapping (complementary) → merge is enrichment-first.
+- **ε = 25 m, τ = 0.6 same-language, name-signal-required** — derived, not guessed (named-pair coordinate offset p90 ≈ 12–20 m; name-sim among <20 m pairs ≈ 0.1).
+- **i18n is harder and earlier than assumed:** local-script names are sparse in sources and need transliteration/translation; BCP-47 subtags (`ja-Hira`/`ja-Latn`); source scripts untrustworthy (Cyrillic-rendered Hebrew address). → a name/address transliteration sliver moves into M1 (scope flag for Ben).
+- **Overpass is flaky (504s)** → the commons cache is a reliability mechanism, not just cost.
+
+**Spec 001 demo area → Rhodes:** richest data, compact walkable medieval old town, Greek exercises non-Latin *without* requiring RTL (M1 is English-first). **Jaffa** → held for M3 RTL/Hebrew validation; **Takayama** → the unrehearsed-city eval (CJK). *(Discovery-spike code discarded per plan; `spike/` is gitignored.)*
