@@ -1,3 +1,28 @@
+# OS / editor
 .DS_Store
 Thumbs.db
 *.swp
+
+# Agent governance — personal & captured (never committed)
+.claude/settings.local.json
+logs/
+
+# Secrets — never read, never committed
+.env
+.env.*
+secrets/
+
+# Python / uv (toolchain arrives at ramp-up)
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Node / web (arrives at M1)
+node_modules/
+dist/
+
+# Throwaway discovery spike (D5) — never merged
+spike/
