@@ -26,7 +26,9 @@
       "Bash(uv sync:*)",
       "Bash(pytest:*)",
       "Bash(ruff:*)",
-      "Bash(mypy:*)"
+      "Bash(mypy:*)",
+      "Bash(python3 -m py_compile:*)",
+      "Bash(python -m py_compile:*)"
     ],
     "ask": [
       "Bash(git push:*)",
