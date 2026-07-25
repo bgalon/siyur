@@ -37,7 +37,8 @@ Python 3.12 / `uv`. Until the ramp-up adds `pyproject.toml`, there is no app to 
 ## Conventions
 
 - **Commits:** conventional commits; subject describes the change; end with a `Co-Authored-By:` trailer naming the model. Small, reviewable increments.
-- **Branches:** `agent/<ticket>-<short-desc>` for agent work; worktrees for parallel sessions. (Branch protection is added later, at ramp-up.)
+- **Branches & PRs (ADR-0005):** one branch per unit of work — `agent/<ticket>-<slug>` (`<ticket>` = `DU-NN` · issue # · slug). Integrate **via PR to `main`** (`.github/PULL_REQUEST_TEMPLATE.md`), not direct pushes. `main` requires a PR; required CI status checks are added at ramp-up (DU-00).
+- **Parallel sessions = isolation:** each concurrent session works in its **own** checkout — a `git worktree` locally (`EnterWorktree`, or `git worktree add ../wt-<slug> -b agent/<ticket>-<slug>`), a separate branch/sandbox in the cloud. **Never run two sessions in one working directory** — they race on files.
 - **Decisions → ADR:** any session that chose between libraries/schemas/architectures ends with `/adr`. Mark `drafted-by` / `approved-by`.
 - **Failures → catalog:** every real failure → `/failure` → a FAIL-NNN entry **plus a regression eval/guardrail** before it closes. No exceptions.
 - **Sessions → devlog:** decision-bearing sessions end with `/devlog`.
