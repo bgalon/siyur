@@ -102,6 +102,12 @@ java -Xmx4g -jar planetiler.jar --download --area=lisbon --output=city.pmtiles
 ### RECOMMENDED CHOICE for Siyur MVP
 Vite PWA + Workbox v7 precache for the app shell; bundle download manager writing the PMTiles archive to **OPFS** with `navigator.storage.persist()`; custom `pmtiles://` protocol reading from OPFS (adopt or imitate `maplibre-offline-pmtiles`, MIT). **Fallback:** IndexedDB chunk store (Safari < 16.4 lacks OPFS `createWritable`; use sync-access-handle in a worker, or IDB blobs).
 
+**Config invariants (proven by the ADR-0003 Vite spike, 2026-07-25 — carry into `web/`):**
+- `worker.format: 'es'` in `vite.config.js` — the OPFS reader is a *module* worker; Vite's historical `iife` worker default cannot host ESM `import` and breaks it after build.
+- The PMTiles archive is fetched at **runtime** from GCS into OPFS — never `import`ed and **never placed in `public/`** (files in `public/` copy verbatim into `dist/`, defeating the "out of the build" goal). Keep `workbox.globPatterns` free of the archive and `maximumFileSizeToCacheInBytes` small as a leak tripwire.
+- `navigator.storage.persist()` returns `false` under plain Chromium (granted only heuristically for installed PWAs); OPFS still works. Eviction is a UX problem → rely on re-downloadable bundles + launch-time integrity check, not `persist()`.
+- Non-root deploy (`base:'/app/'`) needs Vite `base` + SW scope aligned — untested; keep `base:'/'` unless the CDN path forces otherwise.
+
 ---
 
 ## 3. LLM-designed map styles
@@ -353,7 +359,9 @@ LangGraph 1.x (MIT) StateGraph with Postgres checkpointer, `interrupt()`-based H
 | Offline routing | precomputed legs + geojson-path-finder | v2.x | ISC |
 | Agent framework | PydanticAI + LiteLLM over model seam; own Postgres checkpoint (ADR-0004) | pinned at scaffolding | MIT |
 | Query engine | DuckDB + spatial + httpfs | 1.3+ | MIT |
-| Web build tool / dev server | Vite + vite-plugin-pwa (ADR-0003) | pinned at scaffolding | MIT |
+| Web build tool / dev server | Vite (ADR-0003; spike-confirmed 2026-07-25) | `vite@8.1.5` | MIT |
+| PWA/Workbox plugin | vite-plugin-pwa (owns the Workbox major) | `vite-plugin-pwa@1.3.0` | MIT |
+| Service-worker toolkit | Workbox (pulled by the plugin) | `workbox-build@7.4.1` / `workbox-window@7.4.1` | MIT |
 
 ## B. License obligations register
 
