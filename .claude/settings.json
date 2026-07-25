@@ -35,7 +35,8 @@
       "Bash(uv add:*)",
       "Bash(gh:*)",
       "WebFetch",
-      "WebSearch"
+      "WebSearch",
+      "Edit(./.github/workflows/**)"
     ],
     "deny": [
       "Bash(sudo:*)",
@@ -48,8 +49,7 @@
       "Read(./secrets/**)",
       "Edit(**/.env)",
       "Edit(**/.env.*)",
-      "Edit(./secrets/**)",
-      "Edit(./.github/workflows/**)"
+      "Edit(./secrets/**)"
     ]
   },
   "hooks": {
