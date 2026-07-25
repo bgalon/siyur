@@ -33,3 +33,18 @@ The seam is capability-oriented, not lowest-common-denominator: the orchestratio
 ## Confirmation
 
 Validation spike (throwaway, `spike/planner_spike/`, before `planner/` is scaffolded): the M1 planner slice (resolve_area→research→curate→propose→HITL→compile) on the chosen stack — PydanticAI orchestration over the `ModelRouter` seam with an Anthropic-native adapter — measured on **output tokens per completed plan**, and verifying per-task model routing and prompt-cache hits. It is the reference implementation `planner/` is scaffolded from at ramp-up, not an A/B (the framework choice is settled). Durable architecture confirmation at build time: a **seam-purity test** (`tests/test_llm_seam.py`) asserting no `anthropic`/`openai`/`litellm` import appears in `planner/` or `commons/` above `commons/llm.py` — the tripwire that keeps "replace/extend the SDK later" a localized change rather than a pervasive refactor, and that keeps LiteLLM confined to the adapter. Prompt-cache effectiveness confirmed via `usage.cache_read_input_tokens > 0` on repeated same-area research (a caching-regression eval). TODO: add the seam-purity test path and the validation-spike task to `delivery-plan.md` on implementation.
+
+### Spike result — 2026-07-25 (SATISFIED)
+
+The spike was executed against the live Anthropic API (`spike/planner_spike/`, gitignored; `FINDINGS.md` there has the full detail):
+
+- **Output tokens per completed plan: ~1,900–3,700 (mean ≈ 2,850)** over four runs of the full slice — research ~250–430, curate ~770–1,860, plan ~670–1,860. High run-to-run variance (output is unconstrained); the curate/plan figures include billed adaptive-thinking tokens.
+- **Per-task routing verified:** the `model` field showed `claude-haiku-4-5`=research, `claude-sonnet-5`=curate, `claude-opus-4-8`=plan on every call.
+- **Prompt-cache lever confirmed:** `cache_read_input_tokens = 14,993 > 0` on repeated same-area research (write on run 1, read on the repeat).
+
+Two constraints the spike surfaced, which must carry into the M1 build:
+
+1. **Caching has a minimum-prefix precondition.** `cache_control` silently no-ops below the model's minimum cacheable prefix (2,048 tokens Sonnet 5 / 4,096 tokens Haiku 4.5). The cache lever only pays off if the cached prefix (system prompt + grounded source rows) actually clears that bar; a small prefix reads as "caching broken" (`cache_read=0`) when it is really "nothing was cacheable." The caching-regression eval must assert against a realistically-sized prefix.
+2. **Per-tier capability constraint.** Adaptive thinking and `output_config.effort` are 4.6+ features; **Haiku 4.5 (the research tier) rejects both with a 400.** The seam adapter must not send them to a model that can't take them (spike gated this behind a `SUPPORTS_ADAPTIVE_EFFORT` model set — the pattern to carry into `commons/llm.py`). Open sub-decision, deferred to scaffolding: keep the research tier on Haiku 4.5 with those params gated off (spike's choice), **or** re-point research at a 4.6+ small model so the levers apply uniformly — the latter changes the routing table above and is Ben's to ratify.
+
+`planner/` is scaffolded from the **fixed** adapter (post the Haiku-param gate), not the as-written reference. Two regression evals to file with the code at ramp-up: (a) the seam must not send adaptive/effort to a rejecting model; (b) the caching-regression eval (`cache_read > 0` on repeated same-area research, above the min-prefix threshold).
