@@ -28,10 +28,20 @@
       "Bash(ruff:*)",
       "Bash(mypy:*)",
       "Bash(python3 -m py_compile:*)",
-      "Bash(python -m py_compile:*)"
+      "Bash(python -m py_compile:*)",
+      "Bash(git checkout:*)",
+      "Bash(git switch:*)",
+      "Bash(git worktree:*)",
+      "Bash(git fetch:*)",
+      "Bash(git pull:*)",
+      "Bash(git push:*)",
+      "Bash(gh pr create:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr list:*)",
+      "Bash(gh pr diff:*)",
+      "Bash(gh pr checks:*)"
     ],
     "ask": [
-      "Bash(git push:*)",
       "Bash(uv add:*)",
       "Bash(gh:*)",
       "WebFetch",
