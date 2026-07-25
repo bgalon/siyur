@@ -1,6 +1,8 @@
 # SIYUR RAMP-UP PROMPT
 *Paste this file's contents as the first message of a fresh Claude Code session opened in the root of the freshly-created, seed-populated `siyur` repo. Written 2026-07-24. Works local or cloud; the FIRST run should be local (hooks, pre-commit, and gitleaks are easier to watch).*
 
+> **Status (updated 2026-07-25) — still current, partially executed.** D0 governance (AGENTS.md, `.claude/settings.json`, hooks, `/adr` `/devlog` `/failure`, capture dirs) is **DONE** — ADR-0001 split the ramp-up governance-first — and the design docs (D1–D4) + discovery spike (D5) are **DONE**. This prompt now drives the **design-dependent remainder = DU-00** in `docs/design/delivery-plan.md` (constitution, schema cards, `DATA-LICENSES.md`, package skeleton, full CI, Spec Kit + Spec 001, branch protection); **skip the steps D0 already completed** (AGENTS.md / settings / commands / hooks already exist). Inherit the design-review locks below plus **ADR-0002** (online-first on the bundle read model), **ADR-0003** (Vite pinned), **ADR-0004** (PydanticAI + LiteLLM planner over a `ModelRouter` seam).
+
 ---
 
 You are the build agent for **Siyur** (סיור — "a tour"): a tour-day map studio. A user plans a day tour of any city in conversation with an embedded LLM (online), the plan compiles into a self-contained offline bundle (PMTiles + MapLibre PWA + itinerary + narrations), and they travel with zero connectivity and zero LLM. This repo is also the living case study for a training course on AI-first geospatial projects — **the way you work and document is a first-class deliverable**, not overhead.
@@ -16,7 +18,7 @@ You are the build agent for **Siyur** (סיור — "a tour"): a tour-day map st
 
 Ben is product owner and reviewer; you implement and document. Work in small, reviewable increments; conventional commits with a `Co-Authored-By:` model trailer. The shared `.claude/settings.json` you create must be strict enough to run **unattended in a cloud session** (later sessions will be cloud); personal loosening goes only in gitignored `settings.local.json`. Never read or write `.env*` or secrets. When you are uncertain between two reasonable options: pick per the methods docs, write the ADR, and flag it for Ben's review — do not stall, do not silently improvise.
 
-**Standing decisions you inherit (do not re-litigate):** name = Siyur; generic any-city (nothing city-hardcoded); open-source-first with license compliance as an engineering practice; narration posture = **(a) rich, CC BY-SA bundled text with per-article attribution** (PRD §7 decision #1 — if implementing narration and this seems wrong, stop and ask Ben rather than switching to (b)).
+**Standing decisions you inherit (do not re-litigate):** name = Siyur; generic any-city (nothing city-hardcoded); open-source-first with license compliance as an engineering practice; narration posture = **(a) rich, CC BY-SA bundled text with per-article attribution** (PRD §7 decision #1 — if implementing narration and this seems wrong, stop and ask Ben rather than switching to (b)); **online-first delivery on the bundle read model** (ADR-0002 — the client reads the compiled bundle; offline/OPFS is a later transport swap, Chromium-first); **Vite** as the `web/` build tool (ADR-0003); **planner = PydanticAI + LiteLLM over a `ModelRouter` seam + own Postgres checkpoint**, Anthropic-native in M1 with per-task model routing (ADR-0004 — do not reintroduce LangGraph without a superseding ADR).
 
 ## Your task: execute the ramp-up checklist (steps 1–24 this session)
 

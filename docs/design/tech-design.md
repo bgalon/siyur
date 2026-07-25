@@ -153,7 +153,7 @@ BundleManifestV1:
   - `story` — `(id, site_id fk, text_by_lang jsonb, source jsonb)`.
   - `site_conflict` — `(id, site_id fk, field, candidates jsonb, resolution)`.
   - Per-user (private): `user_plan` (holds `ItineraryV1`), `user_note`, `user_pref` — each with `user_id` and **row-level scoping** to the auth subject. This is the PRD §13 #4 privacy boundary expressed in the schema.
-- **Migrations: Alembic**, identical local and Cloud SQL. LangGraph's Postgres checkpointer lives in the same instance (separate tables) for M1.
+- **Migrations: Alembic**, identical local and Cloud SQL. The planner's Postgres checkpoint (ADR-0004) lives in the same instance (separate tables) for M1.
 - **❓ Moderation/write-trust:** auto-publish source-derived cited data (traceable + reversible via `site_source`) for MVP; revisit if abuse appears → ADR (PRD §13 #4).
 
 ## 3. GCP topology
@@ -196,7 +196,7 @@ Geo stack pinned exactly as prod (`shapely~=2.1`, `h3~=4.5`, `osmnx~=2.1`, `geop
 
 ```
 commons/    data model (SourcedValue, SiteRecordV1, …) + PostGIS access + merge
-planner/    LangGraph graph + tool nodes (research/curate) + prompts
+planner/    typed pipeline + tool nodes (research/curate) + prompts (PydanticAI+LiteLLM over the model seam — ADR-0004)
 compiler/   bundle pipeline (tiles, routing, quarantine, manifest)
 api/        FastAPI app (auth dep, SSE endpoints)
 web/        PWA (MapLibre + PMTiles + OPFS)
@@ -204,7 +204,9 @@ evals/  tests/   per test-strategy.md
 ```
 Root `AGENTS.md` (exists); per-package `AGENTS.md` added as packages appear.
 
-### 5.2 Planner graph (LangGraph) [M1]
+### 5.2 Planner graph [M1]
+
+> **Framework superseded by ADR-0004:** the planner is **PydanticAI + LiteLLM over the `ModelRouter` seam** with an owned Postgres checkpoint — not LangGraph. The node sequence, HITL gate, and determinism discipline below are unchanged in *shape*; read "graph / checkpointer / `interrupt()`" as their owned-pipeline equivalents (explicit persisted pause; one `UPSERT` per step over `user_plan`). Per-task model routing: Haiku=research, Sonnet=curate, Opus=plan.
 
 Nodes: `resolve_area → research → curate/merge → propose_itinerary → [HITL: approve] → compile`.
 - **Checkpointer:** Postgres saver (Cloud SQL); `InMemorySaver` in unit tests, SQLite in local integration (test-strategy Tier 2).
@@ -237,11 +239,13 @@ Google OIDC via Identity Platform → the PWA obtains an ID token → sends it a
 | Python 3.12/uv; geo pins (shapely~=2.1, h3~=4.5, osmnx~=2.1, geopandas~=1.1) | Merge winner-policy tuning beyond the default |
 | **Merge thresholds ε = 25 m, τ = 0.6 same-language** (spike §7); union-first; require a name signal | Cross-script name matching depth (transliteration engine choice) |
 | Postgres+PostGIS on Cloud SQL; Alembic migrations | Full translation architecture (compile-freeze vs on-read) — but name/address transliteration lands at M1 |
-| LangGraph planner + PostgresSaver; FastAPI + SSE on Cloud Run | Translation architecture (compile-freeze vs on-read) |
+| ~~LangGraph planner + PostgresSaver~~ → **PydanticAI + LiteLLM over the model seam (ADR-0004)**; FastAPI + SSE on Cloud Run | Translation architecture (compile-freeze vs on-read) |
 | MapLibre 5.19.x + PMTiles v3; whole-archive → OPFS | Schematic-map rendering approach |
 | Identity Platform (Google OIDC); JWT-verify FastAPI dep | Plan B/C bundle-size strategy vs ≤200 MB |
 | M1 compiles in-process; Cloud Run Jobs at M2 | Review-provider integration (PRD §13 #2) |
 | License-quarantine as a merge-blocking structural test | Commons moderation / write-trust (PRD §13 #4) |
+
+**Amended after v1.0 (design review 2026-07-25):** the LangGraph-planner lock is superseded by **ADR-0004** — a layered planner (**PydanticAI + LiteLLM** over a `ModelRouter` seam + owned Postgres checkpoint), Anthropic-native in M1 with per-task model routing, cross-provider deferred. Offline sequencing is set by **ADR-0002** — online-first delivery on the bundle read model (the client reads the compiled bundle over HTTP in M1; OPFS is a later transport swap, Chromium-first). Frontend build tool pinned to Vite by **ADR-0003**.
 
 ## 7. Discovery spike (throwaway, pre-ramp-up) — the spec
 

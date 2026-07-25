@@ -307,6 +307,8 @@ graph = builder.compile(checkpointer=PostgresSaver.from_conn_string(DB_URL))
 ### RECOMMENDED CHOICE for Siyur MVP
 LangGraph 1.x (MIT) StateGraph with Postgres checkpointer, `interrupt()`-based HITL at itinerary + style gates, Pydantic `ItineraryV1` structured output, FastAPI + SSE streaming to the planning web UI. **Fallback:** LangGraph Server (self-hosted, free) if hand-rolled thread management becomes a time sink.
 
+> **Amended 2026-07-25 (ADR-0004):** superseded for Siyur by **PydanticAI + LiteLLM over an owned `ModelRouter` seam + Postgres checkpoint** — an Anthropic-native adapter in M1 (full prompt caching / adaptive thinking), per-task model routing (Haiku=research, Sonnet=curate, Opus=plan), cross-provider deferred behind the seam. LangGraph's checkpointer/HITL was judged not worth the dependency weight over a single owned `user_plan` row.
+
 ---
 
 ## A. MVP reference architecture
@@ -314,7 +316,7 @@ LangGraph 1.x (MIT) StateGraph with Postgres checkpointer, `interrupt()`-based H
 ```
  PLANNING (online, server)                              TRAVEL (offline, device)
  ┌──────────────────────────────────────────────┐       ┌──────────────────────────────┐
- │ LangGraph 1.x planner (FastAPI + SSE UI)     │       │ PWA (Vite + Workbox v7)      │
+ │ PydanticAI planner over model seam (SSE)     │       │ PWA (Vite + Workbox v7)      │
  │  intake ─ research ─ curate ─ route ─ style  │       │  MapLibre GL JS 5.19         │
  │     │        │         │       │       │     │       │   └ pmtiles:// ← OPFS archive│
  │     ▼        ▼         ▼       ▼       ▼     │       │  itinerary.json + narrations │
@@ -349,8 +351,9 @@ LangGraph 1.x (MIT) StateGraph with Postgres checkpointer, `interrupt()`-based H
 | Planning routing | Valhalla per-city docker | 3.5.x line | MIT |
 | Dev routing | OpenRouteService free key | 2,500 req/day | GPL-3 backend |
 | Offline routing | precomputed legs + geojson-path-finder | v2.x | ISC |
-| Agent framework | LangGraph + Postgres checkpointer | 1.x (≥1.0 GA) | MIT |
+| Agent framework | PydanticAI + LiteLLM over model seam; own Postgres checkpoint (ADR-0004) | pinned at scaffolding | MIT |
 | Query engine | DuckDB + spatial + httpfs | 1.3+ | MIT |
+| Web build tool / dev server | Vite + vite-plugin-pwa (ADR-0003) | pinned at scaffolding | MIT |
 
 ## B. License obligations register
 

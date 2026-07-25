@@ -388,7 +388,7 @@ Ordered, `git init` → first eval passing in CI. Roughly one focused week, solo
 13. `/speckit.specify` interview → **Spec 001: plan one tour day, compile to offline bundle**; criteria in EARS; `/speckit.clarify` until no `[NEEDS CLARIFICATION]` remains.
 14. `/speckit.plan` → hand-review; capture the 2–3 forced architecture choices as ADRs 0002+.
 15. `/speckit.tasks` → tasks citing spec clauses; per-task DoD = EARS criteria + tests + evals + doc artifacts.
-16. Scaffold LangGraph app from `new-langgraph-project`: `langgraph.json`, `src/agent/graph.py`; `SqliteSaver` for dev, `InMemorySaver` in tests.
+16. Scaffold the planner (**PydanticAI + LiteLLM over the `ModelRouter` seam**, ADR-0004): `commons/llm.py` seam + Anthropic-native adapter, `planner/` typed pipeline, own Postgres/SQLite checkpoint (in-memory in tests), and the seam-purity test. Reference: `spike/planner_spike/`. *(Was: scaffold LangGraph from `new-langgraph-project` — superseded by ADR-0004.)*
 17. Seed `evals/golden/` with ~25 hand-written tour-day cases (cities × interests × constraints × edge cases).
 18. Write `evals/test_structural.py` (schema, geometry validity, constraint checks, offline-render check) and `tests/test_geo_api_pins.py` (stale-API tripwire).
 19. Write `evals/test_trajectory.py` — agentevals `superset` trajectory match on `geocode → find_pois → optimize_route → compile_bundle`.

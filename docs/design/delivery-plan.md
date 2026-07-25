@@ -8,6 +8,15 @@ Walking skeleton first, then thin end-to-end slices. Every DU is **demoable**, p
 
 **DoD template (every DU):** EARS criteria (PRD §5) verified · the named test tiers green · trajectory/structural evals green · an ADR if a decision was made · a devlog entry · exhibit-tag candidate proposed.
 
+## Amendments (design review 2026-07-25)
+
+Four ADRs from the design review adjust this plan — no milestone re-sequencing:
+
+- **ADR-0002 — online-first on the bundle read model.** The client reads the compiled bundle from day one; in M1 it is served over HTTP, offline/OPFS is a later transport swap (Chromium-first). **DU-05** compiles the bundle served over HTTP; **DU-06** offline render becomes that transport swap, not a rebuild. New M1 tripwire: a scoped airplane-mode e2e asserting the client reads itinerary/sites/map **only** from bundle endpoints (never a live commons/API read) — it becomes the DU-06 gate unchanged when transport swaps to OPFS.
+- **ADR-0003 — Vite pinned.** Adds a **Vite config spike** to DU-00 (prove module worker + Workbox precache + WASM building static together) and Vite / `vite-plugin-pwa` / Workbox version pins to the stack reference.
+- **ADR-0004 — planner = PydanticAI + LiteLLM over a `ModelRouter` seam.** Changes **DU-04** (below). Adds a **planner validation spike** (`spike/planner_spike/`, written 2026-07-25, not yet executed) as the reference `planner/` is scaffolded from, and a **seam-purity test** (`tests/test_llm_seam.py`: no provider SDK imported above `commons/llm.py`) added at DU-02 and enforced through DU-04. Per-task model routing (Haiku=research, Sonnet=curate, Opus=plan) lands with DU-04.
+- **Flagged for Ben, not scheduled:** iPhone/WebKit offline scope (future ADR before the offline-runtime milestone) and cross-provider/non-Anthropic support (future ADR before any second model adapter; also a standing-decision change).
+
 ## Sequence at a glance
 
 | DU | Increment | Milestone | Feeds | Exhibit-tag candidate |
@@ -60,10 +69,10 @@ The discovery spike (`tech-design.md` §7) precedes DU-00 and hardens the schema
 - **Tests:** T1 merge logic (no source lost, conflict creation, winner policy); T2 multi-source integration; eval: merge-correctness golden cases. **Artifacts:** ADR (merge policy + ε/τ), any FAIL entries + regression evals, `exhibit/U3-merge-provenance`.
 
 ### DU-04 · Plan (no variants)
-- **Scope:** LangGraph planner → `ItineraryV1` (no Plan B/C) + HITL approval (`interrupt()`).
+- **Scope:** planner (PydanticAI + LiteLLM over the `ModelRouter` seam, ADR-0004) → `ItineraryV1` (no Plan B/C) + HITL approval (explicit persisted pause); per-task model routing (Haiku=research, Sonnet=curate, Opus=plan).
 - **Demo:** chat "half-day, art + coffee" → itinerary with provenance chips → approve.
 - **EARS:** "candidate itinerary whose walking ≤ stated limit and whose timeline respects opening windows."
-- **Tests:** T1 planner node (mocked model, schema-valid itinerary, feasibility); T2 graph run w/ SQLite checkpointer + HITL interrupt; **trajectory eval** superset match on `resolve_area→research→curate→propose_itinerary`. **Artifacts:** `prompts/planner.md`, ItineraryV1 schema card, ADR (HITL gate), `exhibit/U5-hitl-gate`, `exhibit/U3-structured-output`.
+- **Tests:** T1 planner node (mocked model, schema-valid itinerary, feasibility) + **seam-purity test** (no provider SDK above `commons/llm.py`); T2 pipeline run w/ own Postgres/SQLite checkpoint + explicit HITL pause; **trajectory eval** superset match on `resolve_area→research→curate→propose_itinerary`. **Artifacts:** `prompts/planner.md`, ItineraryV1 schema card, ADR (HITL gate), `exhibit/U5-hitl-gate`, `exhibit/U3-structured-output`.
 
 ### DU-05 · Compile → bundle
 - **Scope:** `pmtiles extract` + Valhalla legs + quarantine filter + `BundleManifestV1` + download to OPFS.

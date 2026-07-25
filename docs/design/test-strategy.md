@@ -27,7 +27,7 @@ Runners: `pytest` + `pytest-asyncio` + `hypothesis` (geometry property tests) + 
 Runner: `pytest` + `testcontainers-python` locally; **GitHub Actions service containers** in CI (pre-pulled, no docker-in-docker).
 
 - **Component** = one service in isolation over its real stores, collaborators stubbed. E.g. the FastAPI app (`httpx.ASGITransport`/`TestClient`) over real PostGIS + DuckDB, with Valhalla and the LLM mocked — verifies the SSE stream, endpoint contracts, auth-dep JWT verification, DB queries (incl. the `ST_Within` coverage query and row-level user scoping).
-- **Integration** = two+ real components together: a LangGraph graph run with a **SQLite/`InMemorySaver`** checkpointer (real PostgresSaver exercised nightly), real Valhalla container for legs, real PostGIS for spatial queries, `fake-gcs-server` for bundle objects. DuckDB reads a **small committed Overture fixture parquet**.
+- **Integration** = two+ real components together: a planner pipeline run with a **SQLite / in-memory** checkpoint (real Postgres checkpoint exercised nightly), real Valhalla container for legs, real PostGIS for spatial queries, `fake-gcs-server` for bundle objects. DuckDB reads a **small committed Overture fixture parquet**.
 - **Compiler contract test:** build a bundle, re-open it, verify every `BundleManifestV1` hash matches its artifact and the quarantine filter dropped all `bundleable=false` values.
 
 Service containers for the standard CI matrix; reserve `docker-compose` for the local full stack.
@@ -59,7 +59,7 @@ Product tests answer "did it break"; evals answer "did quality regress." Distinc
 | 6 | security (Semgrep + gitleaks + pip-audit + slopsquatting gate) | — | ✅ |
 | 7 | diff-guard (>500 lines w/o `size-override`) | — | ✅ |
 | 8 | llm-judge-evals | real model | ⚠️ non-blocking PR / blocking on `main` |
-| N | nightly-full | real PostgresSaver, multi-browser, full Overture | scheduled |
+| N | nightly-full | real Postgres checkpoint, multi-browser, full Overture | scheduled |
 
 Required merge checks: **1–7.** Jobs 6–7 come from methods §5 + agent-ops D4. Speed: build artifacts once and reuse across shards (`upload-artifact`); cache Playwright browsers, `uv`, and Vite/pnpm; pre-pull service images; `if: always()` container teardown.
 
