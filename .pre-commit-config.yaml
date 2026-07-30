@@ -1,0 +1,27 @@
+# Local dev pre-commit hooks (DU-00 unit d, ADR-0007).
+# Toolchain foundation only — lint + types + hygiene, mirroring the CI lint/type
+# gate so failures surface before push. Conventional-commit linting, gitleaks, and
+# the eval/security gates are CI concerns and land with the CI unit (checklist §7
+# steps 20/22), not here. Run `uv run pre-commit install` once to enable.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.0
+    hooks:
+      - id: ruff # lint (autofix), pinned to the pyproject ruff major
+        args: [--fix]
+      - id: ruff-format
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-added-large-files # tripwire: no stray tiles/bundles committed
+      - id: check-merge-conflict
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy (strict, py312 packages)
+        entry: uv run mypy .
+        language: system
+        types: [python]
+        pass_filenames: false
