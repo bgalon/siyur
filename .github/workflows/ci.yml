@@ -19,6 +19,10 @@ name: CI
 
 on:
   pull_request:
+    # labeled/unlabeled so toggling `size-override` re-runs diff-guard with fresh
+    # PR state (the other types are the pull_request defaults, restated because an
+    # explicit `types:` list replaces them).
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   push:
     branches: [main]
 
@@ -27,8 +31,11 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Least privilege: read code; read PR metadata (gitleaks lists PR commits;
+# diff-guard reads the live label set).
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   # ── Job 1 · lint + typecheck (ruff, mypy, tsc) ─────────────────────────────
@@ -162,9 +169,14 @@ jobs:
       - name: guard changed-line count
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HAS_OVERRIDE: ${{ contains(github.event.pull_request.labels.*.name, 'size-override') }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [ "$HAS_OVERRIDE" = "true" ]; then
+          # Read the label from LIVE PR state, not the triggering event payload:
+          # a `size-override` added AFTER the last push must still count (the
+          # payload froze the label set at push time).
+          if gh pr view "$PR_NUMBER" --json labels -q '.labels[].name' \
+              | grep -qx 'size-override'; then
             echo "size-override label present — diff-guard skipped."
             exit 0
           fi
