@@ -1,0 +1,4 @@
+# pnpm reads build-script approvals here (the package.json "pnpm" field is ignored).
+# esbuild has a postinstall that fetches its platform binary; vite/vitest need it.
+allowBuilds:
+  esbuild: true
