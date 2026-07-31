@@ -55,11 +55,19 @@ jobs:
         run: uv run ruff format --check .
       - name: mypy (strict)
         run: uv run mypy .
-      # tsc lands with the web/ Vite scaffold (DU-00 web slice); guard until then.
+      # web/ TypeScript typecheck (Vite scaffold, DU-00 web slice). pnpm before
+      # setup-node so `cache: pnpm` can find it.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm -C web install --frozen-lockfile
       - name: tsc (web)
-        if: ${{ hashFiles('web/tsconfig.json') != '' }}
-        run: |
-          echo "TODO(web scaffold): pnpm -C web tsc --noEmit"
+        run: pnpm -C web typecheck
 
   # ── Job 2 · unit (py + web) ────────────────────────────────────────────────
   unit:
@@ -75,11 +83,18 @@ jobs:
       # when the suite is large enough to need it (test-strategy.md §"CI gating").
       - name: pytest (Tier 1, tests/)
         run: uv run pytest tests/ -q
-      # vitest lands with the web/ scaffold; guard until package.json exists.
+      # web/ unit tests (vitest + jsdom). pnpm before setup-node for the cache.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm -C web install --frozen-lockfile
       - name: vitest (web)
-        if: ${{ hashFiles('web/package.json') != '' }}
-        run: |
-          echo "TODO(web scaffold): pnpm -C web test --run"
+        run: pnpm -C web test
 
   # ── Job 3 · integration & component ────────────────────────────────────────
   # Green stub. Tier-2 tests (planner pipeline + SQLite checkpoint, real PostGIS,
