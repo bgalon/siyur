@@ -1,8 +1,8 @@
 # 0010 — Greek→Latin display-name transliteration sliver: deterministic, offline, provenance-inheriting
 
-- Status: proposed
+- Status: accepted
 - Decision Maker(s): Ben
-- drafted-by: claude-code · approved-by:  · Date: 2026-07-31
+- drafted-by: claude-code · approved-by: Ben · Date: 2026-07-31
 
 ## Context and Problem Statement
 

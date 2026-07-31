@@ -1,8 +1,8 @@
 # 0009 — Research source-adapter pattern: Overture (DuckDB parquet) + OSM (Overpass) ingestion for slice 001
 
-- Status: proposed
+- Status: accepted
 - Decision Maker(s): Ben
-- drafted-by: claude-code · approved-by:  · Date: 2026-07-31
+- drafted-by: claude-code · approved-by: Ben · Date: 2026-07-31
 
 ## Context and Problem Statement
 
