@@ -35,8 +35,8 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "pytest~=8.3",
-    "pytest-asyncio~=0.24",
+    "pytest~=9.0",
+    "pytest-asyncio~=1.0",
     "hypothesis~=6.122",
     "ruff~=0.14",
     "mypy~=1.14",
@@ -45,6 +45,13 @@ dev = [
     "deepeval~=4.1",
     "agentevals~=0.0.9",
 ]
+
+[tool.uv]
+# Security-gate resolution (pip-audit, CI job 6, ADR-0007 amendment): force the
+# transitive `langchain` (via agentevals→openevals) to the advisory-fixed release.
+# Dev/eval-only, never in the product runtime; keeps the security gate at zero
+# ignores so it reddens only on genuinely new CVEs.
+constraint-dependencies = ["langchain>=1.3.9"]
 
 [build-system]
 requires = ["hatchling"]
@@ -57,10 +64,13 @@ packages = ["commons", "planner", "compiler", "api"]
 [tool.ruff]
 target-version = "py312"
 line-length = 100
-# Not py312 app source: throwaway spike; ephemeral worktrees; and .claude/ hooks,
+# Not py312 app source: throwaway spike; ephemeral worktrees; .claude/ hooks,
 # which the harness runs under bare system python3 (3.9) — linting them at py312
-# would rewrite them to 3.11+ idioms (e.g. datetime.UTC) and crash the hook.
-extend-exclude = ["spike", ".claude"]
+# would rewrite them to 3.11+ idioms (e.g. datetime.UTC) and crash the hook; and
+# docs/, whose fenced ```python snippets are hand-aligned illustrative reference
+# code, not app source — `ruff format` would collapse their comment alignment
+# (pre-commit's ruff-format already skips markdown, so this keeps CI consistent).
+extend-exclude = ["spike", ".claude", "docs"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]

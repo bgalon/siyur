@@ -41,3 +41,27 @@ Chosen, because the driver throughout is *follow the ADRs over the stale checkli
 
 - **Now (this PR):** `uv sync` resolves (198 packages); `uv run ruff check .` and `uv run mypy .` clean; `uv run pytest` = 13 passed, including `tests/test_geo_api_pins.py` (the stale-API tripwire) and `evals/test_evals_tier.py`; all five packages import.
 - **Standing guard for the langgraph-exclusion + seam confinement:** `tests/test_llm_seam.py` (added at DU-02, enforced through DU-04) asserts no `anthropic`/`openai`/`litellm` import appears in `planner/` or `commons/` above `commons/llm.py` — the tripwire that keeps `pydantic-ai`/`litellm` behind the seam. **TODO: lands at DU-02** with the seam implementation.
+
+## Amendment — 2026-07-31 (security-gate-driven pin bumps)
+
+*drafted-by: claude-code · approved-by: Ben (this session)*
+
+Standing up the CI security gate (job 6, `pip-audit`) — the very step decision #6
+deferred to "the CI unit" — surfaced two dependency advisories in the **dev/eval
+toolchain only** (never in the product runtime):
+
+- `pytest 8.4.2` → **PYSEC-2026-1845**, fixed in `9.0.3`
+- `langchain 1.3.2` (transitive via `agentevals → openevals`) → **PYSEC-2026-2192**, fixed in `1.3.9`
+
+Per the decision-#6 mandate to keep the gate honest, and consistent with the
+consequences note that "security bumps need a deliberate `uv lock`," Ben chose to
+**bump both to the fixed versions rather than ignore the advisories** (pip-audit
+therefore runs with **zero `--ignore-vuln` flags** — it reddens only on genuinely
+new CVEs). This adjusts decision #2's pins:
+
+- `pytest ~=8.3` → **`~=9.0`** (resolved `9.1.1`; full suite re-verified green under 9).
+- `pytest-asyncio ~=0.24` → **`~=1.0`** (resolved `1.4.0`) — forced by pytest 9 (`~=0.24` caps pytest `<9`).
+- Added `[tool.uv] constraint-dependencies = ["langchain>=1.3.9"]` to lift the transitive `langchain` to the fixed release (resolved `1.3.9`; also bumps `langgraph-sdk 0.3.15→0.4.2`).
+
+Confirmation: `uv lock --locked` consistent; `pip-audit` → **no known vulnerabilities**;
+`ruff`/`mypy`/`pytest` (13 passed) all green under the new pins.
