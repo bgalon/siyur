@@ -1,8 +1,8 @@
 # 0007 — DU-00 unit d: planner-seam + eval dependency pins and toolchain-foundation completion
 
-- Status: proposed
+- Status: accepted
 - Decision Maker(s): Ben
-- drafted-by: claude-code · approved-by: <pending> · Date: 2026-07-30
+- drafted-by: claude-code · approved-by: Ben · Date: 2026-07-30
 
 ## Context and Problem Statement
 
