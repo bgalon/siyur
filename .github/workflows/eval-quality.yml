@@ -1,0 +1,68 @@
+# Eval quality — the quality axis, kept in its own workflow so a non-deterministic
+# LLM-judge flake can never block a product hotfix (test-strategy.md §"Evals").
+#
+#   Job 4 · deterministic-evals — schema/structural + trajectory (tool-sequence
+#           `superset` match) on FIXED traces with a mocked LLM. Fast, no API
+#           keys, no flake. PR-gating → a REQUIRED merge check (1–7).
+#   Job 8 · llm-judge-evals — plan/story quality via a pinned judge model+prompt,
+#           scores appended to evals/history.csv. Non-blocking on PRs, blocking
+#           on `main` and nightly. Needs a real model key.
+#
+# Green-on-stubs (DU-00): the deterministic tier runs evals/ for real today; the
+# judge harness itself lands with the planner (DU-04), so job 8 is a documented
+# placeholder that skips cleanly until a model key + harness exist.
+
+name: Eval Quality
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 7 * * *" # nightly full judge pass
+
+concurrency:
+  group: eval-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ── Job 4 · deterministic-evals (mocked LLM) — REQUIRED, PR-gating ─────────
+  deterministic-evals:
+    name: "4 · deterministic-evals"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      # Structural + trajectory evals run on fixed traces with a mocked LLM —
+      # never hit live Overture/OSM/Anthropic in CI (test-strategy.md §"Fixtures").
+      - name: deterministic evals (evals/)
+        run: uv run pytest evals/ -q
+
+  # ── Job 8 · llm-judge-evals — non-blocking on PR / blocking on main+nightly ─
+  # Green stub. The judge harness (pinned model + prompt, evals/history.csv,
+  # significance-vs-baseline gating) lands at DU-04. Skips cleanly with no key so
+  # the job exists now without being a required PR gate.
+  llm-judge-evals:
+    name: "8 · llm-judge-evals"
+    runs-on: ubuntu-latest
+    # Non-blocking on PRs; the real gate applies on main + the nightly schedule.
+    continue-on-error: ${{ github.event_name == 'pull_request' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: judge harness status
+        env:
+          HAS_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+        run: |
+          if [ "$HAS_KEY" != "true" ]; then
+            echo "No ANTHROPIC_API_KEY secret — LLM-judge evals skipped (green stub)."
+            echo "The pinned-judge harness + evals/history.csv land at DU-04."
+            exit 0
+          fi
+          echo "TODO(DU-04): uv run deepeval test run evals/judge/ "
+          echo "then append scores to evals/history.csv and gate on significance."

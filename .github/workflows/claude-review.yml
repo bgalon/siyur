@@ -1,0 +1,53 @@
+# Claude PR review — automated first-pass code review on every PR (agent-ops D4).
+#
+# NOT one of the required 1–7 merge checks: it advises, it does not gate. It runs
+# only when the repo owner has configured an ANTHROPIC_API_KEY secret, and skips
+# cleanly otherwise so the workflow can exist before the secret does. To activate:
+# add ANTHROPIC_API_KEY (or CLAUDE_CODE_OAUTH_TOKEN) in repo → Settings → Secrets.
+#
+# Least privilege: read the code, write PR comments only. Fork PRs do not expose
+# secrets, so the guard below no-ops there rather than failing.
+
+name: Claude Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    name: "claude-review (advisory)"
+    runs-on: ubuntu-latest
+    steps:
+      - name: check for API key
+        id: gate
+        env:
+          HAS_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+        run: echo "present=$HAS_KEY" >> "$GITHUB_OUTPUT"
+      - name: skip notice
+        if: ${{ steps.gate.outputs.present != 'true' }}
+        run: |
+          echo "No ANTHROPIC_API_KEY secret configured — Claude review skipped."
+          echo "Advisory only (not a required gate). Add the secret to activate."
+      - uses: actions/checkout@v4
+        if: ${{ steps.gate.outputs.present == 'true' }}
+        with:
+          fetch-depth: 0
+      - name: Claude Code review
+        if: ${{ steps.gate.outputs.present == 'true' }}
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Review this PR's diff for correctness bugs and reuse/simplification
+            opportunities. Respect the repo's AGENTS.md — especially the geo
+            stale-API pins and the licensing/bundleable discipline. Post findings
+            as inline PR comments; be concise and high-signal.

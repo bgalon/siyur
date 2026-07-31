@@ -7,10 +7,11 @@ readme = "README.md"
 
 # Pinned to majors with compatible-release (~=) per the stack reference + the
 # geo stale-API discipline in AGENTS.md. Geo pins are exact-major and verified
-# (shapely 2.1.x / h3 4.5.x / osmnx 2.1.x / geopandas 1.1.x). LLM + eval deps
-# (pydantic-ai, litellm, deepeval, agentevals) are intentionally deferred to the
-# units that introduce them (seam = DU-00 unit d; evals = unit e), pinned there
-# against current docs — not guessed here.
+# (shapely 2.1.x / h3 4.5.x / osmnx 2.1.x / geopandas 1.1.x). The planner-seam
+# (pydantic-ai, litellm — ADR-0004, NOT langgraph) and eval libs (deepeval,
+# agentevals) land here at DU-00 unit d, pinned against the versions uv resolved
+# at scaffolding time (ADR-0007) — not guessed. The Anthropic-native adapter's
+# `anthropic` SDK is deferred to the seam implementation (commons/llm.py, DU-02).
 dependencies = [
     # --- geospatial core (see AGENTS.md "Geo APIs" table — do NOT emit v-old idioms) ---
     "shapely~=2.1",
@@ -23,6 +24,9 @@ dependencies = [
     "pydantic~=2.11",
     "fastapi~=0.118",
     "uvicorn~=0.34",
+    # --- planner model seam (ADR-0004: PydanticAI orchestration + LiteLLM routing) ---
+    "pydantic-ai~=2.21",
+    "litellm~=1.94",
     # --- persistence (planner checkpoint + PostGIS access, migrations) ---
     "sqlalchemy~=2.0",
     "alembic~=1.14",
@@ -31,13 +35,23 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "pytest~=8.3",
-    "pytest-asyncio~=0.24",
+    "pytest~=9.0",
+    "pytest-asyncio~=1.0",
     "hypothesis~=6.122",
     "ruff~=0.14",
     "mypy~=1.14",
     "pre-commit~=4.0",
+    # --- eval harness libs (test-strategy tiers; harness itself lands at unit e) ---
+    "deepeval~=4.1",
+    "agentevals~=0.0.9",
 ]
+
+[tool.uv]
+# Security-gate resolution (pip-audit, CI job 6, ADR-0007 amendment): force the
+# transitive `langchain` (via agentevals→openevals) to the advisory-fixed release.
+# Dev/eval-only, never in the product runtime; keeps the security gate at zero
+# ignores so it reddens only on genuinely new CVEs.
+constraint-dependencies = ["langchain>=1.3.9"]
 
 [build-system]
 requires = ["hatchling"]
@@ -50,10 +64,13 @@ packages = ["commons", "planner", "compiler", "api"]
 [tool.ruff]
 target-version = "py312"
 line-length = 100
-# Not py312 app source: throwaway spike; ephemeral worktrees; and .claude/ hooks,
+# Not py312 app source: throwaway spike; ephemeral worktrees; .claude/ hooks,
 # which the harness runs under bare system python3 (3.9) — linting them at py312
-# would rewrite them to 3.11+ idioms (e.g. datetime.UTC) and crash the hook.
-extend-exclude = ["spike", ".claude"]
+# would rewrite them to 3.11+ idioms (e.g. datetime.UTC) and crash the hook; and
+# docs/, whose fenced ```python snippets are hand-aligned illustrative reference
+# code, not app source — `ruff format` would collapse their comment alignment
+# (pre-commit's ruff-format already skips markdown, so this keeps CI consistent).
+extend-exclude = ["spike", ".claude", "docs"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
@@ -63,6 +80,10 @@ python_version = "3.12"
 strict = true
 # packages appear incrementally; keep unstubbed third-party geo libs from failing the skeleton
 ignore_missing_imports = true
+# Mirror ruff's extend-exclude: the throwaway spike (gitignored, duplicate module
+# names) and .claude/ hooks (run under system python 3.9) are not py312 app source.
+# Without this, `mypy .` aborts on spike/'s duplicate `run` module (FAIL-003).
+exclude = ['^spike/', '^\.claude/']
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
