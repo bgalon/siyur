@@ -67,10 +67,11 @@ line-length = 100
 # Not py312 app source: throwaway spike; ephemeral worktrees; .claude/ hooks,
 # which the harness runs under bare system python3 (3.9) — linting them at py312
 # would rewrite them to 3.11+ idioms (e.g. datetime.UTC) and crash the hook; and
-# docs/, whose fenced ```python snippets are hand-aligned illustrative reference
-# code, not app source — `ruff format` would collapse their comment alignment
-# (pre-commit's ruff-format already skips markdown, so this keeps CI consistent).
-extend-exclude = ["spike", ".claude", "docs"]
+# docs/ and specs/, whose fenced ```python snippets are hand-aligned illustrative
+# reference/spec code, not app source — `ruff format` would collapse their comment
+# alignment or churn spec/plan pseudo-code (pre-commit's ruff-format already skips
+# markdown, so this keeps CI consistent).
+extend-exclude = ["spike", ".claude", "docs", "specs"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
