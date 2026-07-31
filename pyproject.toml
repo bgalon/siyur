@@ -24,6 +24,13 @@ dependencies = [
     "pydantic~=2.11",
     "fastapi~=0.118",
     "uvicorn~=0.34",
+    # --- api auth: server-side Google OIDC login (DU-00 "SSO works" slice) ---
+    # Resolve-then-pin (ADR-0007): added unbounded → uv lock → tightened to the
+    # resolved ~=major.minor. authlib = OAuth2/OIDC client (Google discovery);
+    # itsdangerous signs the Starlette session cookie. Google client id/secret +
+    # the session secret are read from env only — never .env*/secrets/.
+    "authlib~=1.7",
+    "itsdangerous~=2.2",
     # --- planner model seam (ADR-0004: PydanticAI orchestration + LiteLLM routing) ---
     "pydantic-ai~=2.21",
     "litellm~=1.94",
