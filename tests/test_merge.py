@@ -10,9 +10,14 @@ distance-only join would fuse a whole old town into one POI.
 
 from __future__ import annotations
 
-from datetime import date
+import itertools
+from collections.abc import Sequence
+from datetime import date, timedelta
+from typing import Any
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 from pyproj import Geod
 from shapely import Point
 
@@ -23,9 +28,11 @@ from commons.merge import (
     best_name_similarity,
     decide_match,
     distance_m,
+    merge_cluster,
     name_similarity,
     name_similarity_by_language,
     normalize_name,
+    source_refs,
 )
 from commons.models import SiteRecordV1, SourcedValue, SourceRef
 
@@ -35,6 +42,10 @@ OSM = SourceRef(
     id="node/123456",
     license="ODbL-1.0",
     attribution="© OpenStreetMap contributors",
+)
+WIKIDATA = SourceRef(kind="wikidata", id="Q1049981", license="CC0-1.0")
+WIKIVOYAGE = SourceRef(
+    kind="wikivoyage", id="Rhodes", license="CC-BY-SA-4.0", attribution="Wikivoyage (CC BY-SA 4.0)"
 )
 OBSERVED = date(2026, 7, 22)
 # An arbitrary anchor; nothing in `commons/` may hardcode a place (FR-001 genericity) —
@@ -55,22 +66,29 @@ def _record(
     location: Point | None = None,
     gers_id: str | None = None,
     source: SourceRef = OVERTURE,
+    confidence: float = 0.8,
+    observed_at: date = OBSERVED,
+    categories: Sequence[str] = (),
+    address: str | None = None,
 ) -> SiteRecordV1:
     """A minimal valid slice-001 record: stamped names + a stamped location."""
+
+    def stamp(value: object, conf: float = confidence) -> SourcedValue[Any]:
+        return SourcedValue[Any].stamp(
+            value=value, source=source, confidence=conf, observed_at=observed_at
+        )
+
     return SiteRecordV1(
         gers_id=gers_id,
-        names={
-            tag: SourcedValue[str].stamp(
-                value=value, source=source, confidence=0.8, observed_at=OBSERVED
-            )
-            for tag, value in names.items()
-        },
+        names={tag: stamp(value) for tag, value in names.items()},
         location=SourcedValue[Wgs84Point].stamp(
             value=location if location is not None else Point(*ANCHOR),
             source=source,
-            confidence=0.9,
-            observed_at=OBSERVED,
+            confidence=confidence,
+            observed_at=observed_at,
         ),
+        categories=tuple(stamp(value) for value in categories),
+        address=None if address is None else stamp(address),
     )
 
 
@@ -268,3 +286,175 @@ def test_decision_is_symmetric() -> None:
     assert forward.matched is backward.matched is True
     assert forward.distance_m == pytest.approx(backward.distance_m)
     assert forward.name_similarity == backward.name_similarity
+
+
+# ══ per-field merge: no source lost, conflicts, winner policy (T029) ═══════════════
+#
+# The FR-009 / validation-rule-4 invariant is asserted as a **set property**: the source
+# refs reachable from the result equal the source refs on the inputs. "Reachable" = the
+# winning `SourcedValue`, a `FieldConflict` candidate, or the provenance ledger
+# (`site_source`) — where *agreeing* sources survive, agreement being no conflict.
+
+
+def _refs(records: Sequence[SiteRecordV1]) -> frozenset[SourceRef]:
+    return frozenset(ref for record in records for ref in source_refs(record))
+
+
+_SOURCES = (OVERTURE, OSM, WIKIDATA, WIKIVOYAGE)
+_POOL_NAMES = ("Clock Tower", "Clocktower", "Elli Beach", "Archaeological Museum")
+_POOL_CATEGORIES = ("attraction.castle", "attraction.museum", "beach")
+# (name index, source index, confidence × 10, metres from the anchor, days after
+# OBSERVED, category index)
+_ROW = st.tuples(*(st.integers(0, bound) for bound in (3, 3, 10, 60, 30, 2)))
+
+
+@settings(max_examples=200, deadline=None)
+@given(st.lists(_ROW, min_size=1, max_size=6))
+def test_no_source_ref_is_lost(rows: list[tuple[int, int, int, int, int, int]]) -> None:
+    """Property (FR-009): merging never adds or drops a source ref, whatever it decides."""
+    records = [
+        _record(
+            names={"en": _POOL_NAMES[name]},
+            location=_offset(float(metres)),
+            source=_SOURCES[source],
+            confidence=confidence / 10,
+            observed_at=OBSERVED + timedelta(days=days),
+            categories=(_POOL_CATEGORIES[category],),
+            address=f"{metres} Odos Ippoton",
+        )
+        for name, source, confidence, metres, days, category in rows
+    ]
+    assert merge_cluster(records).source_refs == _refs(records)
+
+
+def test_no_source_ref_is_lost_when_three_sources_describe_one_place() -> None:
+    """The same property on a concrete cluster: three sources in, three sources out."""
+    records = [
+        _record(names={"en": "Clock Tower"}, source=OVERTURE, address="1 Odos Orfeos"),
+        _record(names={"en": "Clocktower"}, location=_offset(6.0), source=OSM, address="Orfeos 1"),
+        _record(names={"en": "Clock Tower"}, location=_offset(9.0), source=WIKIDATA),
+    ]
+    assert merge_cluster(records).source_refs == _refs(records) == {OVERTURE, OSM, WIKIDATA}
+
+
+# ── conflicts ──────────────────────────────────────────────────────────────────────
+
+
+def test_disagreement_creates_a_conflict_holding_every_candidate() -> None:
+    left = _record(names={"en": "Clock Tower"}, source=OVERTURE, address="1 Odos Orfeos")
+    right = _record(names={"en": "Clock Tower"}, source=OSM, address="Orfeos 1")
+    result = merge_cluster([left, right])
+    winner = result.record.address
+    assert winner is not None
+    conflict = next(c for c in result.record.conflicts if c.field == "address")
+    assert {c.value for c in conflict.candidates} == {"1 Odos Orfeos", "Orfeos 1"}
+    assert conflict.resolution == f"picked:{winner.source.id}"
+    # The losing source stays reachable *in the record itself*, not only in the ledger.
+    assert OSM in {c.source for c in conflict.candidates}
+
+
+def test_agreement_creates_no_conflict_but_keeps_the_second_source() -> None:
+    """Two sources saying the same thing is not a disagreement — the ledger holds both."""
+    left = _record(names={"en": "Elli Beach"}, source=OVERTURE, address="Akti Miaouli")
+    right = _record(names={"en": "Elli Beach"}, source=OSM, address="Akti Miaouli")
+    result = merge_cluster([left, right])
+    assert [c.field for c in result.record.conflicts] == []
+    assert result.source_refs == {OVERTURE, OSM}
+    assert {o.value.source for o in result.provenance if o.field == "address"} == {OVERTURE, OSM}
+
+
+def test_categories_are_unioned_not_conflicted() -> None:
+    """Union-first: different categories are complementary coverage, not disagreement."""
+    left = _record(names={"en": "Elli Beach"}, source=OVERTURE, categories=("beach",))
+    right = _record(names={"en": "Elli Beach"}, source=OSM, categories=("beach", "leisure.bar"))
+    result = merge_cluster([left, right])
+    assert {c.value for c in result.record.categories} == {"beach", "leisure.bar"}
+    assert [c.field for c in result.record.conflicts] == []
+
+
+def test_an_earlier_conflict_survives_a_re_merge() -> None:
+    """Re-research enriches; it never drops a disagreement recorded by a previous pass."""
+    first = merge_cluster(
+        [
+            _record(names={"en": "Clock Tower"}, source=OVERTURE, address="1 Odos Orfeos"),
+            _record(names={"en": "Clock Tower"}, source=OSM, address="Orfeos 1"),
+        ]
+    )
+    again = merge_cluster(
+        [first.record, _record(names={"en": "Clock Tower"}, source=WIKIDATA, address="Orfeos 1")]
+    )
+    assert _refs([again.record]) >= {OVERTURE, OSM, WIKIDATA}
+    assert any(c.field == "address" for c in again.record.conflicts)
+
+
+# ── winner policy: confidence → source trust → observed_at → content tiebreak ──────
+
+
+def _address_winner(*records: SiteRecordV1) -> tuple[str, str]:
+    winner = merge_cluster(records).record.address
+    assert winner is not None
+    return winner.value, winner.source.kind
+
+
+def test_confidence_beats_source_trust() -> None:
+    """Confidence dominates: a high-confidence OSM value outranks a weak Overture one."""
+    assert _address_winner(
+        _record(names={"en": "X"}, source=OVERTURE, address="overture", confidence=0.4),
+        _record(names={"en": "X"}, source=OSM, address="osm", confidence=0.9),
+    ) == ("osm", "osm")
+
+
+def test_source_trust_breaks_a_confidence_tie() -> None:
+    assert _address_winner(
+        _record(names={"en": "X"}, source=OSM, address="osm", confidence=0.7),
+        _record(names={"en": "X"}, source=OVERTURE, address="overture", confidence=0.7),
+    ) == ("overture", "overture")
+
+
+def test_recency_breaks_a_confidence_and_trust_tie() -> None:
+    """Same kind, same confidence → the fresher `observed_at` wins (staleness, PRD §5)."""
+    stale = SourceRef(kind="osm", id="node/1", license="ODbL-1.0")
+    fresh = SourceRef(kind="osm", id="node/2", license="ODbL-1.0")
+    assert _address_winner(
+        _record(names={"en": "X"}, source=fresh, address="new", observed_at=OBSERVED),
+        _record(
+            names={"en": "X"},
+            source=stale,
+            address="old",
+            observed_at=OBSERVED - timedelta(days=400),
+        ),
+    ) == ("new", "osm")
+
+
+def test_the_final_tiebreak_is_deterministic_under_permutation() -> None:
+    """Candidates equal on every policy term still elect the same winner, every run.
+
+    Without a content-derived last resort the winner would depend on adapter ordering,
+    and two identical merges could disagree — which would make conflicts un-reproducible.
+    """
+    records = [
+        _record(
+            names={"en": "X"},
+            source=SourceRef(kind="osm", id=f"node/{n}", license="ODbL-1.0"),
+            address=f"address {n}",
+            confidence=0.7,
+        )
+        for n in (3, 1, 2)
+    ]
+    winners = {_address_winner(*order) for order in itertools.permutations(records)}
+    assert winners == {("address 1", "osm")}  # lowest source.id, deterministically
+
+
+def test_a_single_record_cluster_still_yields_a_result_with_its_ledger() -> None:
+    """One shape to persist: a lone record round-trips, conflict-free, ledger intact."""
+    only = _record(names={"en": "Elli Beach"}, source=OSM, categories=("beach",), address="Akti")
+    result = merge_cluster([only])
+    assert result.record.names["en"].value == "Elli Beach"
+    assert result.record.conflicts == ()
+    assert result.merged_from == (only.id,)
+    assert result.source_refs == {OSM}
+
+
+def test_merge_cluster_refuses_an_empty_cluster() -> None:
+    with pytest.raises(ValueError, match="at least one record"):
+        merge_cluster([])
