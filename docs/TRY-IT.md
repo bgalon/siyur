@@ -145,19 +145,31 @@ pnpm -C web typecheck
 pnpm -C web build
 ```
 
-On its own, `pnpm -C web dev` still shows **an empty dark map with the ODbL attribution control** — `web/src/map/sites.ts` fetches the *same-origin* path `/sites`, and on port 5173 that is Vite, not the API. The two must be served from one origin.
+`web/src/map/sites.ts` fetches the *same-origin* path `/sites`, so the dev server proxies `/areas`, `/sites`, `/auth`, `/me` and `/healthz` to the API (`web/vite.config.ts`). Start the API from §4 first, then `pnpm -C web dev`; point it elsewhere with `SIYUR_API_ORIGIN`. Same-origin rather than CORS because the session cookie is `same_site=lax` and a cross-origin XHR would not send it.
 
-**What was verified (2026-08-01):** with the API from §4 and the Vite dev server placed behind a single origin, and the dev session cookie set in the browser, the map rendered **2011 markers** — each with its display name and a per-value attribution chip (`OVERTURE · CDLA-PERMISSIVE-2.0`, `OSM · ODBL-1.0`), Greek names showing their transliterated form, and `© OpenStreetMap contributors, ODbL` in the attribution control. Panning re-queried `/sites` with the new viewport bbox and re-rendered; panning off the area dropped to zero markers. The real API response also passes the client's own provenance gate (`sanitiseSitesResponse`) with **zero records dropped**.
+> If port 5173 is taken, Vite silently moves to 5174 — and the *other* server on 5173 will answer your requests with its SPA fallback (HTML, status `200`). Read the line Vite prints; a `200` from `/me` is not proof you reached the API.
 
-**What was *not* verified, and why:** that run used a **throwaway** same-origin proxy that is not in the repo. `web/vite.config.ts` has no `server.proxy` entry, so there is no committed one-command way to run the two together yet — adding one belongs to whoever owns `web/`. The browser sign-in was the dev cookie above, **not** a real Google SSO round-trip; that path is still only exercised by mocked tests.
+Paste the §4 `$COOKIE` into the browser once (`document.cookie = "session=…; path=/"`), then reload.
+
+**What was verified (2026-08-01), twice, on separate runs:**
+
+- 782 sites over the Rhodes old-town bbox rendered as **782 markers**, each with its display name and a per-value attribution chip (`OVERTURE · CDLA-PERMISSIVE-2.0`, `OSM · ODBL-1.0 · © OPENSTREETMAP CONTRIBUTORS`), Greek names showing their transliterated form, and `© OpenStreetMap contributors, ODbL` in the attribution control.
+- Framed on the researched area at z16, the markers spread across 691 × 731 px of the viewport — real geographic positions, not a cluster.
+- Panning re-queried `/sites` with the new viewport bbox; panning off the area dropped to zero markers.
+- The real API response passes the client's own provenance gate (`sanitiseSitesResponse`) with **zero records dropped**.
+
+**What was *not* verified, and why:** browser sign-in was the dev cookie above, **not** a real Google SSO round-trip — that path is still only exercised by mocked tests. `POST /areas` **by name** was not verified in the browser: it hangs for minutes (see below), so every browser run used the `bbox` path.
 
 ---
 
 ## What does NOT work yet
 
-- **No committed dev proxy.** See §5 — until `web/vite.config.ts` gains a `server.proxy` for `/areas`, `/sites`, `/auth` and `/me` (or the API serves the built bundle), running the web app and the API together is a manual step.
-- **No UI for delimiting an area or triggering research.** `POST /areas` and the research stream are curl-only; the map reads the commons but nothing in the browser writes to it yet.
+- **Marker labels are always on**, so at a few hundred markers they overlap into unreadable noise (see the §5 screenshot behaviour). Every value carries its stamp, which is the constitutional requirement and is correct — it is the *presentation* that needs hover/click or clustering. This is the most visible thing standing between the current state and something demoable to a stranger.
+- **`POST /areas` by name is very slow.** The Overture divisions lookup scans the hosted theme with no bbox pushdown, so a name resolve can hang for minutes; a request from the browser froze the tab. The `bbox` path returns immediately. Until that is fixed, treat the search pill as unfinished.
+- **Prompt caching is off in practice.** `curate` requests it correctly, but its cached prefix (~133 tokens) is under Sonnet 5's 1,024-token minimum, and Anthropic caches nothing below the minimum without erroring. Pinned by `evals/test_caching.py`.
 - **Google SSO is untested end to end.** The code path exists and is unit-tested with a mocked token exchange; nobody has yet logged in with a real Google project.
+- **The `409` "research already running" guard is process-local** (a module-level set), so a second process would not see the claim.
+- **Genericity is evidenced, not proven to the constitution's bar.** Rhodes + Takayama pass with no place-specific code (`evals/test_genericity.py`), but both fixtures are committed and therefore rehearsed; the ≥3-areas-including-an-unrehearsed-one milestone gate is not met.
 - **Bundles, offline and the planner proper** (M2+) — not started.
 
 ---
