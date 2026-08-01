@@ -6,17 +6,28 @@ schema; read this card.** Constitution Article V (provenance is mechanical) is e
 
 - **Schema version:** `SiteRecordV1` (`schema_ver` literal). M1 populates a subset; later fields exist but may be empty.
 - **Storage:** Cloud SQL Postgres + PostGIS — table `site` (`fields jsonb` holds the `SourcedValue` map),
-  append-only `site_source` provenance rows, `story`, `site_conflict`. See tech-design §2.
+  append-only `site_source` provenance rows, `site_conflict`, and (M1, not yet shipped) `story`. See tech-design §2.
+  **The commons is source-derived only:** `user_note` (private, row-scoped to `user_id`) is a *sibling* of these tables,
+  never part of them — a value whose `source.kind="user"` is **refused at the commons boundary** before any row is
+  written (`commons/repository.py::CommonsWriteRefused`, FR-010 / validation rule 7), winning value and provenance
+  ledger alike.
 - **CRS:** **EPSG:4326 (lon, lat)** for all geometry. Geometry type: **Point** (`geometry(Point,4326)`, GiST-indexed).
   Never let the LLM emit or arithmetic on coordinates — PostGIS/shapely compute them (AGENTS.md geo rules).
 - **Timezone:** `updated_at` is `timestamptz` (UTC). `opening_hours` is an **opening_hours.js** string evaluated in the
   **area's local wall-clock time** (locale/country passed for PH/SH resolution — FAIL-catalog: pass it or holidays misfire).
   `observed_at` (inside each `SourcedValue`) is a UTC date driving staleness / refresh-on-reuse.
 - **License & provenance:** every value is a `SourcedValue` stamped `source + license + bundleable` at ingestion.
-  License pointer → [`/DATA-LICENSES.md`](../../DATA-LICENSES.md). **Quarantine invariant** (merge-blocking test
-  `test_structural.py::test_no_unbundleable_in_bundle`): `bundleable=true` only if `source.license` ∈
-  {ODbL, CDLA-Permissive-2.0, CC0, CC-BY-4.0, CC-BY-SA-4.0, PD, OFL, LGPL-as-dependency}; `open_web` and
-  `review_provider` are **always** `bundleable=false`; no bundle may carry a `bundleable=false` value.
+  License pointer → [`/DATA-LICENSES.md`](../../DATA-LICENSES.md), which is the **registry of record** — this list is
+  transcribed from it, never invented here. **Quarantine invariant** (merge-blocking test
+  `test_structural.py::test_no_unbundleable_in_bundle`): `bundleable=true` **⟺** `source.license` ∈
+  {ODbL, CDLA-Permissive-2.0, **Apache-2.0**, CC0, CC-BY-4.0, CC-BY-SA-4.0, PD, OFL, LGPL-as-dependency} **and**
+  `source.kind ∉ {open_web, review_provider}` — those two kinds are **always** `bundleable=false` whatever license they
+  claim; no bundle may carry a `bundleable=false` value. It is an **equivalence, not "only if"**: `bundleable=false`
+  over an allowlisted license is refused too, so the stamp is *derived* from the registry and can never be author-set
+  in either direction (`commons/licenses.py::bundleable`, `SourcedValue.stamp`).
+  *Apache-2.0 added 2026-08-01 (ADR-0012): Overture places mixes licenses within one theme (33 of 200 fixture rows are
+  Foursquare Apache-2.0), so omitting it quarantined 16.5 % of places. **Read the per-record stamp, never the theme's
+  usual license.***
 
 ## The primitive — `SourcedValue<T>`
 
@@ -46,13 +57,13 @@ Every fact Siyur shows is *stamped*, not bare.
 |---|---|---|---|
 | `id` | `UUID` | M1 | our stable id |
 | `gers_id` | `str \| null` | M1 | Overture GERS — cross-source join key when present (Overture↔OSM share none → joins are mostly fuzzy) |
-| `names` | `{ bcp47: SourcedValue<str> }` | M1 | keys are **BCP-47 subtags** (`en`, `ja`, `ja-Hira`, `ja-Latn`), not bare lang codes. `he` at M3. Local-script names are sparse in sources → name transliteration is an **M1 sliver** (accepted 2026-07-24) |
+| `names` | `{ bcp47: SourcedValue<str> }` | M1 | keys are **BCP-47 subtags** (`en`, `ja`, `ja-Hira`, `ja-Latn`), not bare lang codes — **plus `und`**, see below. `he` at M3. Local-script names are sparse in sources → name transliteration is an **M1 sliver** (accepted 2026-07-24) |
 | `location` | `SourcedValue<Point>` | M1 | EPSG:4326 (lon,lat); PostGIS `geometry(Point,4326)` |
 | `categories` | `[SourcedValue<str>]` | M1 | Overture `basic_category` (post-Sept-2026 field) + OSM tags |
 | `address` | `SourcedValue<str> \| null` | M1 | **source scripts untrustworthy** — a Hebrew address was found stored in Cyrillic; normalize/validate, never trust the script (FAIL-001) |
 | `opening_hours` | `SourcedValue<str> \| null` | M1 | opening_hours.js syntax + parsed windows; local wall-clock (see Timezone) |
 | `stories` | `[Story]` | M1 | ≥1 adapted **CC-BY-SA** story with per-article attribution (PRD §7 rich narration posture) |
-| `notes` | `[SourcedValue<str>]` | M1 | free text; user notes are `source.kind="user"`, stored **private**, never auto-published |
+| `notes` | `[SourcedValue<str>]` | M1 | free text. A `source.kind="user"` note is **private**: it lives in `user_note`, never in `site`/`site_source` (see Storage) — it is never auto-published and never merged into the commons record |
 | `phone` | `SourcedValue<str> \| null` | M2+ | |
 | `price` | `SourcedValue<str> \| null` | M2+ | tickets/fees |
 | `accessibility` | `SourcedValue<str> \| null` | M2+ | |
@@ -76,8 +87,11 @@ ReviewSummary:                            # [M2+] bundleable=false, live-online-
   fetched_at: timestamptz
 
 FieldConflict:
-  field:      str
-  candidates: [SourcedValue]              # the disagreeing values, each still sourced
+  field:      str                         # dotted path: `location`, `names.el-Latn`, `address`, …
+  candidates: [SourcedValue]              # the disagreeing values, each still sourced — winner INCLUDED,
+                                          # so a conflict is self-contained. A geometry candidate carries
+                                          # its value as **GeoJSON**, not a bare Point: candidates land in
+                                          # `site_conflict.candidates jsonb` and must be serialisable.
   resolution: "unresolved" | "picked:<source.id>" | "user-override"
 ```
 
@@ -85,11 +99,59 @@ FieldConflict:
 `opening_hours`, and ≥1 `story`; every populated value carries a real `SourceRef` and `bundleable` stamp. Empty M2+
 fields are valid in M1.
 
+## Name keys — `und` and the derived `*-Latn` twins
+
+**`und` is a first-class key.** A source that publishes a display name **without declaring its language** (Overture
+`names.primary`, a bare OSM `name` tag) keys it `und` ("undetermined", BCP-47) rather than guessing — guessing a
+language would be inventing provenance. `und` is the *absence* of a language claim, not a language.
+
+**Derived Latin display names inherit, they do not invent** (FR-008 / SC-004; ADR-0010). `el` → `el-Latn` is produced
+by a deterministic, offline rule table — never by the LLM, never by an ASCII-folding library. The derived
+`SourcedValue` carries the **same `SourceRef` as its parent** (a transliteration is a *produced work* of the source
+datum), so `license`, `attribution` and therefore `bundleable` are identical to the parent's; `confidence` is the
+transliteration's certainty and `observed_at` is the derivation date. **The original-script value is never
+overwritten**, and a `*-Latn` key a source supplied itself is never replaced by a derived one.
+
+**The script guard runs first** (FAIL-001): a value's *actual* script is asserted against the script its tag declares,
+and a mismatch is **flagged and never transliterated** — the Hebrew address stored in Cyrillic is why. "No expectation
+on record" and "no letters" are *not* passes; nothing is derived from them either. Addresses are validated by the same
+guard but **never transliterated** (ADR-0010).
+
 **Merge (per-field, union-first; thresholds from the discovery spike):** join on `gers_id` when present, else fuzzy
 **spatial+name** (PostGIS distance ≤ **ε = 25 m** AND same-language name similarity ≥ **τ = 0.6**, after transliteration).
 Distance alone never merges — a name signal is required. Each field keeps the winning `SourcedValue`; a losing *different*
 value becomes a `FieldConflict`; **no source ref is ever lost** (tested). Winner = highest `confidence`, tie-break by
 source-trust (Overture/Wikidata > Wikivoyage > OSM tags > open_web) then most recent `observed_at`. Details: tech-design §1.2.
+
+Five rules the join actually turns on, stated here because the code depends on every one of them:
+
+1. **`gers_id` is authoritative both ways.** The id rule applies when **both** records carry one: equal ids join, and
+   **different ids are different places and are never retried fuzzily**. A fuzzy chain may likewise not pull two
+   *different* `gers_id`s into one cluster — that union is refused.
+2. **`und` is comparable to any tagged key.** Same-language comparison is exact-key by default, but an `und` value on
+   one side is compared against **every** key on the other, and the score is filed under the *determined* tag. Without
+   this the commonest cross-source case cannot merge at all: the same place, the same name bytes, keyed `und` by one
+   source and `el` by the other, scored 0.00 (**FAIL-004**). This changes which names are *comparable*, never the
+   thresholds — ε **and** τ must still both hold, and two *differently tagged* languages still never compare.
+3. **Multi-valued fields union; they do not conflict.** `categories`, `notes` and `links` are merged by **union** —
+   two sources listing different categories are complementary, and **no `FieldConflict` is recorded**. `FieldConflict`
+   is for single-valued fields (`location`, each `names.<tag>`, `address`, `opening_hours`, `phone`, `price`,
+   `accessibility`, `website`) where the sources state *different* values for the same slot.
+4. **Agreement is not a conflict — the ledger is what makes "no source lost" true.** When two sources state the *same*
+   value there is nothing to conflict over, so the loser's stamp survives only as an append-only `site_source` row.
+   The invariant is therefore over *record ∪ ledger*, not over the record alone: **every** candidate for every field
+   is written to `site_source`, deduped on `(site_id, field, source, value, observed_at)` so a refresh appends nothing
+   new. Conflicts already recorded on an input travel with it through a re-merge and are never dropped.
+5. **The winner is a pure function of the candidate set.** After `confidence` → source-trust → `observed_at`, ties fall
+   through to `source.kind`, `source.id`, then the value itself, so the same candidates in any input order always elect
+   the same winner. A geometry is compared at **7 decimals (≈1 cm)**: float noise from a JSON/PostGIS round-trip is not
+   a disagreement and must not manufacture a `FieldConflict`.
+
+**Upsert (refresh) uses the same rule, never a second one:** an incoming record joins the existing commons row by
+`gers_id`, else by `decide_match` against the rows PostGIS returns within ε (`ST_DWithin` on `geography`, the same
+WGS84 metric the Python join uses); on a hit both are re-merged and written back **onto the existing row's id**, so a
+refresh enriches and never forks. A stored `fields` blob that fails `SiteRecordV1` validation is **dropped on read and
+logged**, never returned as a half-record (FR-003).
 
 ## Example rows
 
@@ -143,4 +205,61 @@ source-trust (Overture/Wikidata > Wikivoyage > OSM tags > open_web) then most re
     "url": "https://…" } ], "fetched_at": "2026-07-25T10:00:00Z" },
   "conflicts": [], "updated_at": "2026-07-25T10:00:00Z"
 }
+
+// 4 — merged from two sources: `und` ↔ `el` join (FAIL-004), a derived `el-Latn` twin
+//     inheriting its parent's stamp, and a `location` conflict carrying GeoJSON candidates
+{
+  // Only the Overture side carried a GERS id, so the join was the fuzzy ε∧τ rule; the
+  // merged record keeps the id, which is what a later refresh joins on.
+  "id": "31b7…-uuid", "gers_id": "08f39c…gers", "schema_ver": "SiteRecordV1",
+  "names": {
+    // Overture published the name without declaring a language ⇒ `und`, never a guess.
+    "und": { "value": "Πύλη Ταρσανά", "source": { "kind": "overture", "id": "08f39c…gers",
+      "license": "CDLA-Permissive-2.0" }, "bundleable": true, "confidence": 0.8,
+      "observed_at": "2026-07-22" },
+    "el": { "value": "Πύλη Ταρσανά", "source": { "kind": "osm", "id": "way/987654",
+      "license": "ODbL-1.0", "attribution": "© OpenStreetMap contributors" },
+      "bundleable": true, "confidence": 0.7, "observed_at": "2026-07-20" },
+    // Derived: same SourceRef as its `el` parent — same license, same attribution, same
+    // `bundleable`. `confidence` is the transliteration's, `observed_at` the derivation date.
+    "el-Latn": { "value": "Pyli Tarsana", "source": { "kind": "osm", "id": "way/987654",
+      "license": "ODbL-1.0", "attribution": "© OpenStreetMap contributors" },
+      "bundleable": true, "confidence": 0.9, "observed_at": "2026-08-01" }
+  },
+  "location": { "value": { "type": "Point", "coordinates": [28.2229, 36.4462] },
+    "source": { "kind": "overture", "id": "08f39c…gers", "license": "CDLA-Permissive-2.0" },
+    "bundleable": true, "confidence": 0.8, "observed_at": "2026-07-22" },
+  // Union, not conflict: two sources' categories are complementary.
+  "categories": [ { "value": "attraction.gate", "source": { "kind": "overture",
+    "id": "08f39c…gers", "license": "CDLA-Permissive-2.0" }, "bundleable": true,
+    "confidence": 0.8, "observed_at": "2026-07-22" } ],
+  "conflicts": [ { "field": "location", "resolution": "picked:08f39c…gers", "candidates": [
+    { "value": { "type": "Point", "coordinates": [28.2229, 36.4462] },
+      "source": { "kind": "overture", "id": "08f39c…gers", "license": "CDLA-Permissive-2.0" },
+      "bundleable": true, "confidence": 0.8, "observed_at": "2026-07-22" },
+    { "value": { "type": "Point", "coordinates": [28.2229, 36.4461] },
+      "source": { "kind": "osm", "id": "way/987654", "license": "ODbL-1.0",
+      "attribution": "© OpenStreetMap contributors" }, "bundleable": true,
+      "confidence": 0.7, "observed_at": "2026-07-20" } ] } ],
+  "updated_at": "2026-07-22T09:00:00Z"
+}
 ```
+
+## Audit trail
+
+**Slice 001 audit (T067) — 2026-08-01.** The card was re-read field by field against everything slice 001 shipped
+(`commons/models.py`, `merge.py`, `repository.py`, `db.py`, `translit.py`, `planner/nodes/*`). `SiteRecordV1` itself
+**stood unchanged**: every field, type, `M1?` flag and the `SourceRef.kind` enum are still exactly what `commons/models.py`
+implements (T007 transcribed the card verbatim and nothing since contradicted it), and no field was added, removed or
+retyped. What the implementation *did* reveal was six rules the code depends on that the card did not state, all now
+written down above — the `und` name key and its merge comparability (FAIL-004), the provenance-inheritance contract for
+derived `*-Latn` names (T058/T059), `FieldConflict` candidates carrying geometry as GeoJSON and the winner among them
+(T029), the union-not-conflict rule for multi-valued fields, the `site_source` ledger as the thing that makes "no source
+is ever lost" true when sources *agree*, and the `user_note` privacy boundary (FR-010) — plus one place where the card
+had genuinely gone **stale**: the bundleable allowlist was missing **Apache-2.0** (added to `DATA-LICENSES.md` and
+`commons/licenses.py` on 2026-08-01 by ADR-0012), and stated the quarantine as "only if" where the code enforces an
+equivalence in both directions.
+
+Deliberately **not** changed: `stories` stays `M1 / ≥1 story`. Slice 001 defers stories to slice 002 (FR-011), but empty
+`stories` was always valid, so this is a narrower *fill-set for one slice*, not a schema change
+(`specs/001-research-cited-sites/data-model.md` §2 carries the same divergence flag).
