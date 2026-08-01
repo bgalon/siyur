@@ -63,6 +63,12 @@ BUNDLEABLE_LICENSES: Final[frozenset[str]] = frozenset(
     {
         "ODbL-1.0",
         "CDLA-Permissive-2.0",
+        # Added 2026-08-01 (ADR-0012). Overture places mixes licenses within one theme:
+        # 33 of the 200 fixture rows are Foursquare-sourced Apache-2.0. Omitting it
+        # dropped 16.5% of places from every bundle while allowlisting ODbL, which
+        # carries share-alike and is strictly more restrictive. Apache-2.0 §4 adds one
+        # obligation the pipeline must discharge: reproduce NOTICE-file contents.
+        "Apache-2.0",
         "CC0-1.0",
         "CC-BY-4.0",
         "CC-BY-SA-4.0",
@@ -80,6 +86,9 @@ _LICENSE_ALIASES: Final[dict[str, str]] = {
     "odbl": "ODbL-1.0",
     "odbl-1.0": "ODbL-1.0",
     "cdla-permissive-2.0": "CDLA-Permissive-2.0",
+    "apache-2.0": "Apache-2.0",
+    "apache2.0": "Apache-2.0",
+    "apache-license-2.0": "Apache-2.0",
     "cc0": "CC0-1.0",
     "cc0-1.0": "CC0-1.0",
     "cc-by-4.0": "CC-BY-4.0",
@@ -101,7 +110,7 @@ def normalize_license(license_id: str) -> str | None:
     """Canonicalise a license stamp to its allowlist spelling, or ``None`` if unknown.
 
     ``None`` means "not on the allowlist" — it is never an error: a value may perfectly
-    well be ``proprietary``/``user-owned``/``Apache-2.0``; it is simply not bundleable.
+    well be ``proprietary`` or ``user-owned``; it is simply not bundleable.
     """
     key = _WHITESPACE_RE.sub("", license_id).strip().lower()
     return _LICENSE_ALIASES.get(key)

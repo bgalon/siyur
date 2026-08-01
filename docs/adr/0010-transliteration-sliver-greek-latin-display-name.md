@@ -46,7 +46,7 @@ Drivers: a deterministic engine is the only one that makes SC-004's ≥95% bar *
 
 ## Amendment — 2026-08-01 (resolve-then-pin outcome: no package — PyICU is a confirmed CI build hazard)
 
-*drafted-by: claude-code · approved-by: pending (Ben to ratify) · Date: 2026-08-01*
+*drafted-by: claude-code · approved-by: **Ben (ratified 2026-08-01)** · Date: 2026-08-01*
 
 Spec 001 Phase 1 Setup (T001, `pyproject.toml` dependency audit) resolved the "open sub-decision deferred to implementation" this ADR left open: **PyICU vs a pure-python alternative**, per the ADR-0007 resolve-then-pin discipline.
 
@@ -74,3 +74,11 @@ This is exactly the build hazard ADR-0010's original text anticipated ("PyICU ne
 - Same as the original ADR's Confirmation section (`tests/test_translit.py`, snapshot-gated, ≥95% bar, provenance-inheritance assertion, FAIL-001 script-mismatch case) — unaffected by the engine change, since the contract was always "deterministic transform, testable to a fixed expected output," not "must be backed by ICU specifically."
 - New: `pyproject.toml`'s dependency comment block (spec-001 Phase 1 setup, T001) records this decision inline, so a future reader doesn't have to rediscover why no transliteration package is pinned.
 - **TODO (unchanged, lands with DU-03):** `commons/translit.py` + `tests/test_translit.py` still not built by this task.
+
+### Ratification and revisit trigger (Ben, 2026-08-01)
+
+**Ratified as the resolve-then-pin outcome this ADR asked for** — not as a deviation from it. The original text explicitly deferred the engine ("the concrete package pin — PyICU vs a pure-python transliteration library — is chosen against what `uv` resolves and how heavy the C dependency is") and predicted this exact outcome ("PyICU needs a system libicu — if that's a build hazard, pick the pragmatic alternative"). The *approach* it fixed — deterministic, offline, rule-based, display-name-only, provenance-inheriting, script-validated, never the LLM — is unchanged.
+
+Shipped and measured (`commons/translit.py`, PR #29): **ELOT 743 / UN-GEGN**, zero runtime dependencies, **98.3% coverage against the ≥95% SC-004 bar**, with the digraph and context rules that make the difference verified against real cases — `Ρολόι → Roloi` (accent breaks the `οι` digraph), `Ευαγγελισμός → Evangelismos` vs `Ευτυχία → Eftychia` (voiced/unvoiced `ευ`), `Αϋπνία → Aypnia` (diaeresis breaks `αυ`), `μπακάλικο → bakaliko`, `ντομάτα → domata`, final sigma, and per-word casing. The FAIL-001 guard flags Cyrillic-in-`el` as a mismatch without false-positiving on mixed `Ρόδος (Rhodes)`.
+
+**Revisit trigger: the second language, not a date.** M3 introduces Hebrew (RTL), and a hand-rolled Hebrew table is materially harder than Greek. That is the point where ICU's breadth starts to justify its build cost (system `libicu` in CI, a macOS dev-setup burden, a Cloud Run image dependency, and a C-extension build on every install). Re-evaluate PyICU — or a wheel-shipping equivalent — **before** committing to a second hand-rolled table; do not extend the in-repo approach to Hebrew by default. The Greek table stays either way: the *approach* ports, the *table* does not, and a working Greek transform is not worth re-deriving through a new engine.
