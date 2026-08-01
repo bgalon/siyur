@@ -34,31 +34,55 @@ Merge does **not** transliterate. Comparison is *within one BCP-47 key* — the 
 key already holds the transliterated form produced at ingestion (data-model §3), so
 comparing like key to like key *is* the "same language, post-transliteration" rule, and
 raw cross-script comparison (which the spike measured at ≈0) never happens.
+
+**Per-field, and no source is ever discarded** (FR-009 / data-model §5 rule 4): each field
+keeps one winning ``SourcedValue`` and a losing *different* value becomes a
+:class:`~commons.models.FieldConflict`. Every candidate is *also* emitted as a
+:class:`FieldObservation` — the in-memory form of the append-only ``site_source`` table
+(tech-design §2) — which is what keeps the invariant true when two sources **agree**
+(agreement is no conflict, so the ledger is the only honest place for the second source).
+:attr:`MergeResult.source_refs` is the set the invariant is tested against.
+
+Persistence is deliberately **not** here: this module produces merged records, conflicts
+and provenance in memory; ``site``/``site_source``/``site_conflict`` writes are
+``commons/repository.py`` (T030).
 """
 
 from __future__ import annotations
 
 import unicodedata
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-from typing import Final, Literal
+from typing import Any, Final, Literal
+from uuid import UUID
 
+from pydantic import BaseModel
 from pyproj import Geod
 from shapely import Point
 
-from commons.geo import validate_point
-from commons.models import SiteRecordV1
+from commons.geo import point_to_geojson, validate_point
+from commons.licenses import SourceKind
+from commons.models import FieldConflict, SiteRecordV1, SourcedValue, SourceRef
 
 __all__ = [
     "EPSILON_METERS",
+    "SOURCE_TRUST_RANK",
     "TAU_NAME_SIMILARITY",
+    "FieldObservation",
     "MatchDecision",
+    "MergeResult",
     "best_name_similarity",
+    "cluster_records",
     "decide_match",
     "distance_m",
+    "iter_sourced_values",
+    "merge_cluster",
+    "merge_records",
     "name_similarity",
     "name_similarity_by_language",
     "normalize_name",
+    "source_refs",
 ]
 
 #: ε — maximum spatial separation for a fuzzy join, in **metres**.
@@ -214,4 +238,335 @@ def decide_match(left: SiteRecordV1, right: SiteRecordV1) -> MatchDecision:
         distance_m=metres,
         name_similarity=similarity,
         language=tag,
+    )
+
+
+# ── winner policy ──────────────────────────────────────────────────────────────────
+#
+# Verbatim from tech-design §1.2 / the schema card: **highest `confidence`, tie-broken by
+# source-trust order, then most recent `observed_at`** — plus a final content-derived
+# tiebreak added here so the outcome is a pure function of the candidate *set*.
+
+#: Source-trust tiers for the *tie-break* (confidence dominates it). The card names four —
+#: Overture/Wikidata > Wikivoyage > OSM tags > open_web; unnamed kinds sit with their
+#: nearest kin (encyclopedic → the Wikivoyage tier; a parsed opening-hours string → the
+#: OSM tier it was read from; ``user`` below all source-derived data, FR-010; and
+#: ``review_provider`` with ``open_web``, both never bundleable).
+SOURCE_TRUST_RANK: Final[dict[SourceKind, int]] = {
+    "overture": 0,
+    "wikidata": 0,
+    "wikivoyage": 1,
+    "wikipedia": 1,
+    "commons": 1,
+    "osm": 2,
+    "opening_hours_js": 2,
+    "user": 3,
+    "review_provider": 4,
+    "open_web": 4,
+}
+
+#: Unknown kinds sort last rather than raising: an unrecognised source is still a source
+#: and must not be dropped (FR-009); it simply loses every tie.
+_UNKNOWN_TRUST_RANK: Final[int] = max(SOURCE_TRUST_RANK.values()) + 1
+
+#: Point equality tolerance for "is this the same value?": 7 decimals ≈ 1 cm. Float noise
+#: from a round-trip through JSON/PostGIS is not a disagreement.
+_POINT_PRECISION: Final[int] = 7
+
+
+def _value_key(value: object) -> str:
+    """A stable, comparable identity for a value — used for both equality and ordering."""
+    if isinstance(value, Point):
+        return f"POINT({value.x:.{_POINT_PRECISION}f} {value.y:.{_POINT_PRECISION}f})"
+    return str(value)
+
+
+def _as_conflict_candidate(candidate: SourcedValue[Any]) -> SourcedValue[Any]:
+    """Re-shape a candidate for storage inside a ``FieldConflict``.
+
+    Candidates land in ``site_conflict.candidates jsonb`` (data-model §4), so geometry is
+    carried as **GeoJSON**: the record's own ``location`` keeps its shapely ``Point``, but
+    a ``SourcedValue[Any]`` holding a raw ``Point`` has no serializer and would make the
+    merged record undumpable. The stamp is copied verbatim — no provenance is altered.
+    """
+    if not isinstance(candidate.value, Point):
+        return candidate
+    return SourcedValue[Any](
+        value=point_to_geojson(candidate.value),
+        source=candidate.source,
+        bundleable=candidate.bundleable,
+        confidence=candidate.confidence,
+        observed_at=candidate.observed_at,
+    )
+
+
+def _winner_key(candidate: SourcedValue[Any]) -> tuple[float, int, int, str, str, str]:
+    """Ascending sort key for the winner policy; ``min()`` elects the winner.
+
+    In order: **1.** higher ``confidence`` · **2.** better source trust · **3.** more
+    recent ``observed_at`` · **4.** ``source.kind``, ``source.id``, then the value — a
+    content-only last resort, so two runs over the same candidates, in any input order,
+    always elect the same winner.
+    """
+    return (
+        -candidate.confidence,
+        SOURCE_TRUST_RANK.get(candidate.source.kind, _UNKNOWN_TRUST_RANK),
+        -candidate.observed_at.toordinal(),
+        candidate.source.kind,
+        candidate.source.id,
+        _value_key(candidate.value),
+    )
+
+
+# ── the merge result: record + conflicts + the full provenance ledger ──────────────
+
+
+@dataclass(frozen=True, slots=True)
+class FieldObservation:
+    """One candidate value for one field, kept whatever the merge decided — the in-memory
+    row of the append-only ``site_source`` table (tech-design §2), the audit trail that
+    lets a merge re-run under a better policy without data loss."""
+
+    #: Dotted field path: ``location``, ``names.el-Latn``, ``categories``, …
+    field: str
+    value: SourcedValue[Any]
+
+
+@dataclass(frozen=True, slots=True)
+class MergeResult:
+    """A merged record plus everything needed to justify it."""
+
+    record: SiteRecordV1
+    #: Every candidate considered, in field order — nothing here is ever dropped.
+    provenance: tuple[FieldObservation, ...] = ()
+    #: The ids of the input records this result was merged from (1 = nothing to merge).
+    merged_from: tuple[UUID, ...] = ()
+
+    @property
+    def source_refs(self) -> frozenset[SourceRef]:
+        """Every source ref reachable from this result — the FR-009 invariant's subject."""
+        return source_refs(self.record) | frozenset(o.value.source for o in self.provenance)
+
+
+def iter_sourced_values(record: SiteRecordV1) -> Iterator[tuple[str, SourcedValue[Any]]]:
+    """Every ``(field_path, SourcedValue)`` a record carries, conflict candidates included."""
+    for tag in sorted(record.names):
+        yield f"names.{tag}", record.names[tag]
+    yield "location", record.location
+    for value in record.categories:
+        yield "categories", value
+    for name in _SCALAR_FIELDS:
+        scalar: SourcedValue[Any] | None = getattr(record, name)
+        if scalar is not None:
+            yield name, scalar
+    for name in ("notes", "links"):
+        for value in getattr(record, name):
+            yield name, value
+    for conflict in record.conflicts:
+        for candidate in conflict.candidates:
+            yield conflict.field, candidate
+
+
+def source_refs(record: SiteRecordV1) -> frozenset[SourceRef]:
+    """The distinct source refs reachable in a record (values, conflicts and stories)."""
+    refs = {value.source for _, value in iter_sourced_values(record)}
+    for story in record.stories:
+        refs.add(story.source)
+        refs.update(claim.source for claim in story.claims)
+    return frozenset(refs)
+
+
+# ── clustering: which records are the same place ───────────────────────────────────
+
+
+@dataclass(slots=True)
+class _Cluster:
+    """A growing group of records believed to be one place (union-find over indices)."""
+
+    members: list[int]
+    gers_ids: set[str]
+
+
+def cluster_records(records: Sequence[SiteRecordV1]) -> tuple[tuple[int, ...], ...]:
+    """Group record **indices** into same-place clusters using :func:`decide_match`.
+
+    Pairs are visited in input order and unioned transitively (a↔b, b↔c ⇒ {a,b,c}) with
+    one guard: a union that would put **two different ``gers_id``s in one cluster is
+    refused** — GERS is authoritative identity and a fuzzy chain must not overrule it.
+    Union-first (§1.2) accepts the residual chaining risk elsewhere; the ε∧τ conjunction
+    is what keeps chains short, and keeping two records is always the cheaper error.
+    """
+    clusters = [
+        _Cluster(members=[i], gers_ids=set() if r.gers_id is None else {r.gers_id})
+        for i, r in enumerate(records)
+    ]
+    owner = {index: index for index in range(len(records))}
+
+    for left in range(len(records)):
+        for right in range(left + 1, len(records)):
+            a, b = owner[left], owner[right]
+            if a == b or not decide_match(records[left], records[right]).matched:
+                continue
+            if len(clusters[a].gers_ids | clusters[b].gers_ids) > 1:
+                continue  # authoritative ids disagree — refuse the chain
+            keep, drop = (a, b) if a < b else (b, a)
+            clusters[keep].members.extend(clusters[drop].members)
+            clusters[keep].gers_ids |= clusters[drop].gers_ids
+            for member in clusters[drop].members:
+                owner[member] = keep
+            clusters[drop].members = []
+
+    return tuple(tuple(sorted(c.members)) for c in clusters if c.members)
+
+
+# ── per-field merge ────────────────────────────────────────────────────────────────
+
+#: Single-valued ``SourcedValue | None`` fields, merged by :meth:`_FieldMerger.pick`.
+_SCALAR_FIELDS: Final[tuple[str, ...]] = (
+    "address",
+    "opening_hours",
+    "phone",
+    "price",
+    "accessibility",
+    "website",
+)
+
+
+class _FieldMerger:
+    """Accumulates per-field decisions for one cluster: winners, conflicts, provenance."""
+
+    def __init__(self) -> None:
+        self.provenance: list[FieldObservation] = []
+        self.conflicts: list[FieldConflict] = []
+
+    def pick(self, field: str, candidates: Sequence[SourcedValue[Any]]) -> SourcedValue[Any] | None:
+        """Elect the winner for a single-valued field and record any disagreement.
+
+        Candidates go to the provenance ledger *first*, so no later decision can lose a
+        source. More than one distinct value ⇒ a :class:`~commons.models.FieldConflict`
+        carrying **all** of them (winner included, so it is self-contained), resolved
+        ``picked:<source.id>``.
+        """
+        self.provenance.extend(FieldObservation(field=field, value=c) for c in candidates)
+        if not candidates:
+            return None
+        ordered = sorted(candidates, key=_winner_key)
+        if len({_value_key(c.value) for c in ordered}) > 1:
+            self.conflicts.append(
+                FieldConflict(
+                    field=field,
+                    candidates=tuple(map(_as_conflict_candidate, ordered)),
+                    resolution=f"picked:{ordered[0].source.id}",
+                )
+            )
+        return ordered[0]
+
+    def union(
+        self, field: str, candidates: Sequence[SourcedValue[Any]]
+    ) -> tuple[SourcedValue[Any], ...]:
+        """Union-first for multi-valued fields (``categories``, ``notes``, ``links``).
+
+        Two sources listing *different* categories are complementary, not in conflict —
+        the union *is* the merge, and no conflict is recorded. Within one repeated value
+        the winner policy picks the stamp to keep; losing stamps stay in the ledger.
+        Output is ordered by value, so the merge is reproducible.
+        """
+        self.provenance.extend(FieldObservation(field=field, value=c) for c in candidates)
+        groups: dict[str, list[SourcedValue[Any]]] = {}
+        for candidate in candidates:
+            groups.setdefault(_value_key(candidate.value), []).append(candidate)
+        return tuple(min(group, key=_winner_key) for _, group in sorted(groups.items()))
+
+
+def _unique[T: BaseModel](groups: Iterable[Sequence[T]]) -> list[T]:
+    """Concatenate, dropping structural duplicates. Order-preserving, ``__eq__``-based —
+    these models nest dicts, so they are not hashable and a ``set`` cannot be used."""
+    unique: list[T] = []
+    for group in groups:
+        unique.extend(item for item in group if item not in unique)
+    return unique
+
+
+def merge_cluster(records: Sequence[SiteRecordV1]) -> MergeResult:
+    """Merge records already known to be the same place, **per field**.
+
+    A single-record cluster still returns a :class:`MergeResult` (with its provenance
+    ledger), so callers have exactly one shape to persist.
+    """
+    if not records:
+        raise ValueError("merge_cluster() needs at least one record")
+    merger = _FieldMerger()
+
+    names: dict[str, SourcedValue[str]] = {}
+    for tag in sorted({tag for record in records for tag in record.names}):
+        winner = merger.pick(f"names.{tag}", [r.names[tag] for r in records if tag in r.names])
+        if winner is not None:
+            names[tag] = winner
+
+    # `location` is required on every record, so `pick` over a non-empty cluster always
+    # elects one; the fallback keeps the type honest without an assert.
+    location = merger.pick("location", [r.location for r in records]) or records[0].location
+    scalars = {
+        name: merger.pick(name, [v for r in records if (v := getattr(r, name)) is not None])
+        for name in _SCALAR_FIELDS
+    }
+    multi = {
+        name: merger.union(name, [v for r in records for v in getattr(r, name)])
+        for name in ("categories", "notes", "links")
+    }
+    # Conflicts already on the inputs travel with them: a re-merge enriches, and must
+    # never drop a disagreement (or its sources) recorded by an earlier pass.
+    conflicts = tuple(
+        sorted(
+            (*_unique(r.conflicts for r in records), *merger.conflicts),
+            key=lambda c: (c.field, c.resolution, len(c.candidates)),
+        )
+    )
+    # M2+; `ReviewSummary` carries no SourceRef of its own, so the freshest wins outright.
+    reviews = max(
+        (r.reviews for r in records if r.reviews is not None),
+        key=lambda summary: summary.fetched_at,
+        default=None,
+    )
+    gers_ids = sorted({r.gers_id for r in records if r.gers_id is not None})
+    record = SiteRecordV1(
+        # Deterministic identity: the smallest input UUID. The repository (T030) re-keys
+        # onto the existing commons row on upsert — nothing may assume this id is new.
+        id=min(r.id for r in records),
+        # `cluster_records` guarantees at most one distinct gers_id per cluster.
+        gers_id=gers_ids[0] if gers_ids else None,
+        names=names,
+        location=location,
+        categories=multi["categories"],
+        address=scalars["address"],
+        opening_hours=scalars["opening_hours"],
+        # Narration is additive (and empty in slice 001 — FR-011).
+        stories=tuple(_unique(r.stories for r in records)),
+        notes=multi["notes"],
+        phone=scalars["phone"],
+        price=scalars["price"],
+        accessibility=scalars["accessibility"],
+        website=scalars["website"],
+        links=multi["links"],
+        reviews=reviews,
+        conflicts=conflicts,
+        updated_at=max(r.updated_at for r in records),
+    )
+    return MergeResult(
+        record=record,
+        provenance=tuple(merger.provenance),
+        merged_from=tuple(r.id for r in records),
+    )
+
+
+def merge_records(records: Iterable[SiteRecordV1]) -> tuple[MergeResult, ...]:
+    """Cluster candidate records by the join rule, then merge each cluster per-field.
+
+    The whole thing in one call: ingestion hands over stamped records from every adapter,
+    this returns one :class:`MergeResult` per real-world place. Output order follows first
+    appearance in the input, so a re-run reproduces it.
+    """
+    ordered = tuple(records)
+    return tuple(
+        merge_cluster([ordered[index] for index in cluster]) for cluster in cluster_records(ordered)
     )
