@@ -18,6 +18,7 @@
 
 import maplibregl, { type Map as MapLibreMap, type Marker } from 'maplibre-gl'
 
+import { AreaReuseSurface, type AreaReuseOptions } from './areas'
 import { renderSourcedValue } from './attribution-chip'
 import type { OdblAttributionControl } from './attribution'
 import { sanitiseSitesResponse } from './guards'
@@ -336,4 +337,28 @@ export function mountSitesLayer(
   options: SitesLayerOptions = {},
 ): SitesLayer {
   return new SitesLayer(map, attribution, options).start()
+}
+
+/* -------------------------------------------------------- reuse (T052) ----- */
+
+/**
+ * T052 — bind a {@link SitesLayer} to the US2 reuse surface (`./areas`).
+ *
+ * "Show the existing cited sites" for a covered area is exactly this layer's
+ * `refresh()`: one `GET /sites` over the viewport, which the contract defines as
+ * read-only ("no research triggered"). Wiring it here means the covered path can
+ * only ever *read* the commons — {@link AreaReuseSurface} holds no research code
+ * of its own, so a covered area cannot be auto-researched (FR-006).
+ */
+export function mountAreaReuse(
+  layer: SitesLayer,
+  container: HTMLElement,
+  options: Omit<AreaReuseOptions, 'showExistingSites'> = {},
+): AreaReuseSurface {
+  return new AreaReuseSurface(container, {
+    ...options,
+    showExistingSites: async () => {
+      await layer.refresh()
+    },
+  })
 }

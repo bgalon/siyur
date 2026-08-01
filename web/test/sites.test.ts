@@ -65,6 +65,7 @@ const {
   displayNameOrder,
   fetchSites,
   formatBbox,
+  mountAreaReuse,
 } = await import('../src/map/sites')
 const { OdblAttributionControl } = await import('../src/map/attribution')
 
@@ -306,6 +307,62 @@ describe('display name preference: en → <lang>-Latn → source-script (FR-008 
   })
 })
 
+/* ---------------------------------------------- T062 · rendered fallback --- */
+
+/**
+ * T062 pins the *rendered* consequence of the FR-008 ordering across all three
+ * tiers, and the half of US3 that is easy to regress: the display form never
+ * replaces the original — the source-script value stays on the record and in the
+ * popup in **every** case, including the one where English wins.
+ *
+ * The ordering itself already existed in `sites.ts` (T042); this test fixes it.
+ */
+describe('T062 · display name resolves en → <lang>-Latn → source-script', () => {
+  /** Names of a Greek-only fixture, tier by tier. */
+  const GREEK_SCRIPT_ONLY = { el: CLOCK_TOWER.names.el }
+  const GREEK_WITH_LATIN = CLOCK_TOWER.names
+  const GREEK_WITH_ENGLISH = {
+    ...CLOCK_TOWER.names,
+    en: { value: 'Clock Tower', source: OVERTURE, bundleable: true, confidence: 0.8 },
+  }
+
+  const markerName = (names: unknown): string | null | undefined =>
+    buildMarkerElement({ ...CLOCK_TOWER, names } as never).querySelector('.siyur-value__text')
+      ?.textContent
+
+  it.each([
+    ['source script (el only)', GREEK_SCRIPT_ONLY, 'Ρολόι'],
+    ['el-Latn over el', GREEK_WITH_LATIN, 'Roloi'],
+    ['en over both', GREEK_WITH_ENGLISH, 'Clock Tower'],
+  ])('renders %s', (_label, names, expected) => {
+    expect(displayName({ ...CLOCK_TOWER, names } as never)?.value).toBe(expected)
+    expect(markerName(names)).toBe(expected)
+  })
+
+  it.each([
+    ['source script (el only)', GREEK_SCRIPT_ONLY],
+    ['el-Latn over el', GREEK_WITH_LATIN],
+    ['en over both', GREEK_WITH_ENGLISH],
+  ])('keeps the original script on the record and in the popup — %s', (_label, names) => {
+    const site = { ...CLOCK_TOWER, names } as never
+    // US3 preserves the original, it does not replace it.
+    expect((names as Record<string, { value: string } | undefined>).el?.value).toBe('Ρολόι')
+    expect(buildPopupContent(site).textContent).toMatch(/Ρολόι/)
+  })
+
+  it('renders the original with the ORIGINAL’s own stamp, not the display form’s', () => {
+    // `en` here is Overture-stamped while `el` is OSM/ODbL: the Greek row must
+    // keep its own ODbL chip even though English is what the marker shows.
+    const popup = buildPopupContent({ ...CLOCK_TOWER, names: GREEK_WITH_ENGLISH } as never)
+    const rows = [...popup.querySelectorAll('.siyur-popup__row')]
+    const greekRow = rows.find((row) => row.textContent?.includes('Ρολόι'))
+    expect(greekRow?.querySelector('.siyur-chip')?.textContent).toMatch(/ODbL-1\.0/)
+    expect(displayName({ ...CLOCK_TOWER, names: GREEK_WITH_ENGLISH } as never)?.source.kind).toBe(
+      'overture',
+    )
+  })
+})
+
 /* ------------------------------------------------------------- rendering --- */
 
 describe('marker rendering', () => {
@@ -424,5 +481,50 @@ describe('SitesLayer', () => {
     expect(await layer.refresh()).toBeNull()
     expect(onError).toHaveBeenCalledOnce()
     expect(stub.markers).toHaveLength(0)
+  })
+})
+
+/* -------------------------------------------------- T052 · reuse bridge --- */
+
+describe('mountAreaReuse (T052 / US2 / FR-006)', () => {
+  const covered = {
+    area_id: 'area-1',
+    polygon: null,
+    coverage: {
+      known_site_count: 42,
+      covered: true,
+      stalest_observed_at: '2026-07-10',
+      refresh_available: true,
+    },
+  }
+
+  it('shows the existing cited sites via GET /sites and researches nothing', async () => {
+    const spy = okFetch(RESPONSE)
+    const requestResearch = vi.fn()
+    const layer = new SitesLayer(fakeMap(), null, { fetchImpl: spy })
+    const container = document.createElement('div')
+
+    const surface = mountAreaReuse(layer, container, { requestResearch })
+    expect(await surface.apply(covered)).toBe('reuse')
+
+    // Existing data is rendered…
+    expect(layer.markerCount).toBe(2)
+    // …from GET /sites, which the contract defines as read-only…
+    const [url] = (spy as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [string]
+    expect(url).toMatch(/^\/sites\?bbox=/)
+    // …and no research pass was started (FR-006 / SC-003).
+    expect(requestResearch).not.toHaveBeenCalled()
+    expect(container.querySelector('[data-action="refresh"]')).not.toBeNull()
+  })
+
+  it('requests research only once the user clicks refresh', async () => {
+    const requestResearch = vi.fn()
+    const layer = new SitesLayer(fakeMap(), null, { fetchImpl: okFetch(RESPONSE) })
+    const container = document.createElement('div')
+    await mountAreaReuse(layer, container, { requestResearch }).apply(covered)
+
+    expect(requestResearch).not.toHaveBeenCalled()
+    container.querySelector<HTMLButtonElement>('[data-action="refresh"]')?.click()
+    expect(requestResearch).toHaveBeenCalledWith({ area_id: 'area-1', force_refresh: true })
   })
 })

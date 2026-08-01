@@ -1,7 +1,7 @@
 /**
- * Wire types for `GET /sites` — the shape defined by
- * `specs/001-research-cited-sites/contracts/sites.md` and the `SiteRecordV1`
- * schema card (`docs/data/poi-site.md`).
+ * Wire types for `GET /sites` and `POST /areas` — the shapes defined by
+ * `specs/001-research-cited-sites/contracts/sites.md`, `contracts/areas.md` and
+ * the `SiteRecordV1` schema card (`docs/data/poi-site.md`).
  *
  * These describe data that has ALREADY been validated by {@link ../guards}.
  * Anything straight off `fetch()` is `unknown` until a guard narrows it — the
@@ -61,4 +61,34 @@ export interface SitesResponse {
   readonly sites: readonly SiteRecordV1[]
   /** Union of required attribution strings across every returned value. */
   readonly attribution: readonly string[]
+}
+
+/* --------------------------------------------------- POST /areas (US2) ----- */
+
+/** GeoJSON Polygon in EPSG:4326 — rings of `[lon, lat]`. */
+export interface GeoPolygon {
+  readonly type: 'Polygon'
+  readonly coordinates: readonly (readonly (readonly [number, number])[])[]
+}
+
+/**
+ * `coverage` block of the `POST /areas` `200` body (`contracts/areas.md`).
+ * Drives the reuse/refresh decision (FR-006 / US2 / SC-003).
+ */
+export interface AreaCoverage {
+  /** `ST_Within(geom, polygon)` count of commons records already in the area. */
+  readonly known_site_count: number
+  /** The server's own verdict. `true` ⇒ show existing data, do NOT research. */
+  readonly covered: boolean
+  /** Min `observed_at` among covered records — how stale the data may be. */
+  readonly stalest_observed_at: string | null
+  /** Always `true` when covered: a refresh is offered, never auto-run. */
+  readonly refresh_available: boolean
+}
+
+/** `200` body of `POST /areas` — a resolved area plus its commons coverage. */
+export interface AreaResolution {
+  readonly area_id: string
+  readonly polygon: GeoPolygon | null
+  readonly coverage: AreaCoverage
 }

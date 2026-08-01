@@ -97,3 +97,40 @@ body {
 .siyur-attrib {
   font-size: 11px;
 }
+
+/* --- Commons coverage card (T052 / US2) — reuse instead of re-researching --- */
+.siyur-coverage {
+  padding: 0.9em 1em;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 2px 10px rgb(0 0 0 / 12%);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.siyur-coverage__title {
+  margin: 0 0 0.2em;
+  font-weight: 700;
+}
+
+.siyur-coverage__staleness {
+  margin: 0.2em 0 0;
+  color: #6f6558;
+  font-size: 11px;
+}
+
+.siyur-coverage__action {
+  margin-block-start: 0.8em;
+  padding: 0.5em 1em;
+  border: 0;
+  border-radius: 999px;
+  background: #1b6b4f;
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+
+.siyur-coverage__action:disabled {
+  background: #b8b2a8;
+  cursor: not-allowed;
+}
