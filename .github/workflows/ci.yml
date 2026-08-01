@@ -232,13 +232,27 @@ jobs:
             exit 0
           fi
           git fetch --no-tags --depth=1 origin "$BASE_SHA" 2>/dev/null || true
-          # Exclude generated lockfiles from the human-churn count.
+          # Exclude machine-produced content from the human-churn count. The guard
+          # exists to keep *review effort* bounded, so anything a reviewer reads at
+          # a glance (or not at all) must not consume the budget:
+          #   - lockfiles         — resolver output, reviewed via the manifest
+          #   - tests/fixtures/** — CAPTURED source data (Overture parquet, Overpass
+          #                         JSON). Reviewed by provenance notes in the
+          #                         fixture README, not line by line.
+          #   - alembic scaffold  — verbatim `alembic init` output (alembic.ini is
+          #                         155 lines, 123 of them comments). NOTE: env.py
+          #                         and alembic/versions/** stay counted — those are
+          #                         genuinely authored and migrations need real review.
           CHANGED=$(git diff --numstat "$BASE_SHA"...HEAD -- . \
             ':(exclude)uv.lock' \
             ':(exclude)**/pnpm-lock.yaml' \
             ':(exclude)**/package-lock.json' \
+            ':(exclude)tests/fixtures/**' \
+            ':(exclude)alembic.ini' \
+            ':(exclude)alembic/script.py.mako' \
+            ':(exclude)alembic/README' \
             | awk '{a+=$1; d+=$2} END {print a+d+0}')
-          echo "Human-authored changed lines (excluding lockfiles): $CHANGED"
+          echo "Human-authored changed lines (excluding generated/captured files): $CHANGED"
           if [ "$CHANGED" -gt 500 ]; then
             echo "::error::Diff exceeds 500 lines ($CHANGED). Split the PR, or add the 'size-override' label with justification."
             exit 1
