@@ -6,13 +6,16 @@ same function, so a Greek query matched nothing — silently, and only for non-L
 (SC-005 is exactly the property that broke). `tests/test_resolve_area.py` pins that one call
 site; this file pins the **class**, in three layers:
 
-1. **The oracle** — Python's fold and DuckDB's fold are measured against each other over a
-   non-Latin corpus, and every disagreement must be one of the four *pinned* expansions
-   below. A new disagreement (a new script, a DuckDB upgrade, a change to the repo's fold)
-   turns this red instead of turning a user's query into an empty result.
+1. **The oracle** — the repo's Python fold and the SQL arm it generates are measured
+   against each other over a non-Latin corpus *and over every codepoint*, and any
+   disagreement fails. The pin tables below are now **empty**: since the two arms are
+   generated from one definition in `planner/nodes/resolve_area.py`, there is nothing left
+   to tolerate. A new disagreement (a new script, a DuckDB upgrade, a change to the repo's
+   fold) turns this red instead of turning a user's query into an empty result.
 2. **The mechanism** — a real DuckDB table shows what each comparison shape does: the
    shipped shape (fold *both* operands in SQL, hand SQL the raw needle) matches across
-   composition and case; the pre-fix shape (fold in Python, compare in SQL) misses.
+   composition, case *and* full-vs-simple folding; the pre-fix shape (fold in Python with
+   `casefold`, compare in SQL) still misses, which is why the base is `str.lower()`.
 3. **The tripwire** — every SQL literal in the repo is parsed, and any comparison whose
    operands carry *different* normalization wrappers fails the build. That is the shape the
    original bug had (`contains(lower(col), $needle)` with a Python-folded `$needle`), so a
@@ -27,11 +30,13 @@ involves a model.
 
 The general rule this file exists to enforce, stated once: **when two engines must agree on
 a string, pin the agreement with a test — never assume it.** Fold both operands of a
-comparison inside the *same* engine, or prove the two engines' folds are equal on the inputs
-that matter. `str.casefold()` performs Unicode **full** case folding (1:N mappings: ``ß``
-becomes ``ss``); DuckDB's ``lower()`` performs **simple** lowercasing (1:1). They agree on
-most of the world and disagree on exactly the letters a Greek or Armenian place name is
-likely to end in.
+comparison inside the *same* engine, and generate that engine's fold from the *same*
+definition the Python side uses. `str.casefold()` performs Unicode **full** case folding
+(1:N mappings: ``ß`` becomes ``ss``); DuckDB's ``lower()`` performs **simple** lowercasing
+(1:1); they disagree on 274 codepoints, including exactly the letters a Greek or Armenian
+place name is likely to end in. That is why `resolve_area`'s fold is built on *simple*
+lowercasing — the one both engines can compute — with the 1:N recall added back by shared
+tables rather than inherited from whichever engine happened to run.
 """
 
 from __future__ import annotations
@@ -46,10 +51,16 @@ from typing import Final, NamedTuple
 import duckdb
 import pytest
 
-# The repo's Python-side fold, imported rather than re-implemented: this test must fail if
-# *that* function changes, not if a copy of it does. If the helper is ever extracted to a
-# shared module (recommended in docs/failures/FAIL-005.md), update this one import.
-from planner.nodes.resolve_area import _DIVISIONS_QUERY, _normalize
+# The repo's fold — *both* arms — imported rather than re-implemented: this test must fail
+# if those change, not if a copy of them does. `_normalize` is the Python arm and
+# `_fold_sql` generates the DuckDB arm from the same tables, which is what makes the
+# oracle below a comparison of the shipped code rather than of two transcriptions.
+from planner.nodes.resolve_area import (
+    _DIVISIONS_QUERY,
+    _WHITESPACE_MAX,
+    _fold_sql,
+    _normalize,
+)
 
 REPO_ROOT: Final = Path(__file__).resolve().parents[1]
 
@@ -93,15 +104,14 @@ SAMPLES: Final[tuple[Sample, ...]] = (
 )
 
 #: The **complete** set of corpus entries on which the two folds disagree, with the reason.
-#: Every one of them is a 1:N *full* case folding that Python performs and DuckDB's simple
-#: ``lower()`` does not. Listed rather than tolerated: this table is the seam's contract, and
-#: both directions of drift (a new divergence, or a listed one silently healing) fail below.
-KNOWN_FULL_FOLD_EXPANSIONS: Final[dict[str, str]] = {
-    "greek final sigma": "ς (U+03C2) folds to σ in Python; DuckDB lower() keeps final sigma",
-    "armenian ligature": "և (U+0587) folds to եւ in Python; DuckDB lower() keeps the ligature",
-    "turkish dotted capital i": "İ (U+0130) folds to i + U+0307 in Python; DuckDB gives i",
-    "german sharp s": "ß folds to ss in Python; DuckDB lower() keeps ß",
-}
+#: **Empty, and that is the point.** It held four entries while the Python arm folded with
+#: `str.casefold()` (full, 1:N) and the SQL arm with `lower()` (simple, 1:1): final sigma,
+#: the Armenian ew ligature, İ, and ß. `resolve_area` now generates both arms from one
+#: definition, so there is nothing left to tolerate — see the resolution note in
+#: docs/failures/FAIL-005.md. Kept rather than deleted because the machinery around it is
+#: what fails when a *future* divergence appears, and an entry added here must carry a
+#: stated reason. Both directions still fail: a new divergence, or a listed one healing.
+KNOWN_FULL_FOLD_EXPANSIONS: Final[dict[str, str]] = {}
 
 
 @pytest.fixture(scope="module")
@@ -114,9 +124,20 @@ def con() -> Iterator[duckdb.DuckDBPyConnection]:
         connection.close()
 
 
+#: The shipped SQL arm, generated by the module under test — never transcribed here.
+SQL_FOLD: Final = _fold_sql("$v")
+
+
 def duckdb_fold(con: duckdb.DuckDBPyConnection, text: str) -> str:
     """The fold the shipped prefilter applies **inside SQL** to both of its operands."""
-    row = con.execute("SELECT nfc_normalize(lower($v))", {"v": text}).fetchone()
+    row = con.execute(f"SELECT {SQL_FOLD}", {"v": text}).fetchone()
+    assert row is not None
+    return str(row[0])
+
+
+def duckdb_simple_lower(con: duckdb.DuckDBPyConnection, text: str) -> str:
+    """DuckDB's bare ``lower()`` — the *simple* fold the shipped arm is built on top of."""
+    row = con.execute("SELECT lower($v)", {"v": text}).fetchone()
     assert row is not None
     return str(row[0])
 
@@ -140,10 +161,10 @@ def test_python_fold_and_duckdb_fold_agree_except_on_the_pinned_expansions(
         "FAIL-005: Python's fold and DuckDB's fold have drifted apart on a sample that used "
         "to agree.\n"
         + "\n".join(surprises)
-        + "\nA Python-folded string is therefore not safe to compare against a "
-        "DuckDB-folded one for these inputs. Fold both operands inside one engine (see "
-        "planner/nodes/resolve_area.py::_DIVISIONS_QUERY), then add the sample to "
-        "KNOWN_FULL_FOLD_EXPANSIONS with its reason."
+        + "\nThe prefilter can therefore drop a row `_match_confidence` would have scored "
+        "above zero — a silently empty answer. Both arms are generated from the tables in "
+        "planner/nodes/resolve_area.py, so fix them there; only pin a sample in "
+        "KNOWN_FULL_FOLD_EXPANSIONS, with its reason, if it genuinely cannot be closed."
     )
     assert not healed, (
         "FAIL-005: a pinned divergence has disappeared — good news, but the pin is now a "
@@ -154,10 +175,53 @@ def test_python_fold_and_duckdb_fold_agree_except_on_the_pinned_expansions(
     )
 
 
+#: Codepoint range the exhaustive oracle sweeps: every assigned plane-0 and plane-1
+#: character, surrogates excluded (they are not text and cannot be bound as a parameter).
+_SWEEP_START: Final = 0x20
+_SWEEP_STOP: Final = 0x30000
+_SURROGATE_LOW: Final = 0xD800
+_SURROGATE_HIGH: Final = 0xDFFF
+
+
+def test_the_two_arms_agree_on_every_codepoint_not_merely_on_the_corpus(
+    con: duckdb.DuckDBPyConnection,
+) -> None:
+    """The oracle, exhaustively: 18 samples prove a fold works, they cannot prove it safe.
+
+    A corpus can only ever pin the scripts someone thought of — and FAIL-005 is a failure
+    of *genericity* (SC-005), so the interesting input is by definition the one nobody
+    listed. Because both arms are generated from one definition, the far stronger claim is
+    available and cheap (~1s): they agree on **every** codepoint. Nothing here is sampled.
+    """
+    rows = con.execute(
+        f"SELECT chr(i::INTEGER), {_fold_sql('chr(i::INTEGER)')} "
+        f"FROM range({_SWEEP_START}, {_SWEEP_STOP}) t(i) "
+        f"WHERE i NOT BETWEEN {_SURROGATE_LOW} AND {_SURROGATE_HIGH}"
+    ).fetchall()
+    assert len(rows) > 190_000, f"the sweep only reached {len(rows)} codepoints"
+    divergent = [(char, _normalize(char), sql) for char, sql in rows if _normalize(char) != sql]
+    assert not divergent, (
+        "FAIL-005: the Python arm and the SQL arm of resolve_area's fold disagree on "
+        f"{len(divergent)} codepoint(s) — the prefilter can now silently drop rows the "
+        "scorer would accept.\n"
+        + "\n".join(
+            f"  - U+{ord(char):04X} python={python!r} duckdb={sql!r}"
+            for char, python, sql in divergent[:20]
+        )
+    )
+
+
 def test_python_casefold_is_full_folding_and_duckdb_lower_is_simple(
     con: duckdb.DuckDBPyConnection,
 ) -> None:
-    """The root cause, character by character — why the divergences above exist at all."""
+    """The root cause, character by character — why the fold is built the way it is.
+
+    ``str.casefold()`` still expands these and DuckDB's ``lower()`` still does not; that
+    has not been fixed and cannot be. What changed is that `resolve_area` no longer *asks*
+    the two to agree: it folds on **simple** lowercasing, which both engines compute
+    identically, and adds the expansions back from a shared table. If this test ever goes
+    red, the premise of that design has moved and the tables must be re-derived.
+    """
     expansions = {
         "ς": "σ",  # ς -> σ  (Greek final sigma: every second Greek place name)
         "և": "եւ",  # և -> եւ (Armenian ligature)
@@ -165,24 +229,39 @@ def test_python_casefold_is_full_folding_and_duckdb_lower_is_simple(
     }
     for source, folded in expansions.items():
         assert source.casefold() == folded, "Python no longer does full case folding"
-        assert duckdb_fold(con, source) == source, (
+        assert duckdb_simple_lower(con, source) == source, (
             f"DuckDB's lower() now expands {source!r} — it used to be simple (1:1) "
-            "lowercasing. Re-derive KNOWN_FULL_FOLD_EXPANSIONS."
+            "lowercasing. Re-derive resolve_area's _FOLD_EXPANSIONS/_FOLD_VARIANTS."
+        )
+        # ...and the shipped fold closes the gap the two raw functions leave open.
+        assert duckdb_fold(con, source) == _normalize(source) == _normalize(folded), (
+            f"the shipped fold no longer unifies {source!r} with {folded!r}"
         )
 
 
-#: Corpus entries on which **DuckDB's** ``nfc_normalize(lower(x))`` is *not* composition
-#: invariant. Order matters: it lowercases first and normalizes second, so a character whose
-#: simple lowercasing depends on its composition escapes. Folding both operands in SQL still
-#: makes the *comparison* consistent — but only for inputs spelled the same way, so a stored
-#: NFC name and an NFD query drift apart. ``lower(nfc_normalize(x))`` — normalize **first** —
-#: is invariant over this whole corpus; see docs/failures/FAIL-005.md "Recommendations".
-KNOWN_COMPOSITION_SENSITIVE: Final[dict[str, str]] = {
-    "turkish dotted capital i": (
-        "lower(U+0130) drops the dot ('i'), lower('I' + U+0307) keeps it ('i' + U+0307); "
-        "normalizing after folding cannot undo that"
-    ),
-}
+def test_the_whitespace_table_covers_every_codepoint_python_calls_whitespace() -> None:
+    """`_FOLD_WHITESPACE` is derived under a bound; the bound itself must stay true.
+
+    The Python arm collapses whitespace with `str.split()`, the SQL arm with a `translate`
+    table generated from `range(_WHITESPACE_MAX)`. A codepoint Python splits on above that
+    bound would be collapsed by one arm and not the other — the FAIL-005 shape again, in
+    whitespace rather than in case.
+    """
+    above = [code for code in range(_WHITESPACE_MAX, 0x110000) if not chr(code).split()]
+    assert not above, (
+        "Python treats these codepoints as whitespace but resolve_area's derivation stops "
+        f"below them: {[hex(code) for code in above]}. Raise _WHITESPACE_MAX."
+    )
+
+
+#: Corpus entries on which the **SQL** arm is *not* composition invariant. **Empty now.**
+#: It held İ while the arm was `nfc_normalize(lower(x))` — folding first and normalizing
+#: second, so a character whose simple lowercasing depends on its composition escaped
+#: (`lower(U+0130)` drops the dot, `lower('I' + U+0307)` keeps it, and normalizing
+#: afterwards cannot undo that). The shipped arm normalizes **first** — and again after,
+#: to recompose sequences lowercasing itself produces — so a stored NFC name and an NFD
+#: query no longer drift apart. Kept, empty, so a future regression still has to be stated.
+KNOWN_COMPOSITION_SENSITIVE: Final[dict[str, str]] = {}
 
 
 def test_the_python_fold_is_composition_invariant(con: duckdb.DuckDBPyConnection) -> None:
@@ -236,10 +315,11 @@ def test_duckdb_folds_after_normalizing_only_where_it_is_pinned_to(
 # Layer 2 — the mechanism: what each comparison shape actually does to a Greek row
 # ======================================================================================
 
-#: The three shapes, as SQL. Only the first is safe.
+#: The three shapes, as SQL. Only the first is safe — and it is the *shipped* one,
+#: generated by the module under test rather than transcribed, so this layer cannot end up
+#: proving something about a shape the product no longer uses.
 _BOTH_SIDES_IN_SQL: Final = (
-    "SELECT count(*) FROM names "
-    "WHERE contains(nfc_normalize(lower(v)), nfc_normalize(lower($needle)))"
+    f"SELECT count(*) FROM names WHERE contains({_fold_sql('v')}, {_fold_sql('$needle')})"
 )
 _COLUMN_ONLY_LOWER: Final = "SELECT count(*) FROM names WHERE contains(lower(v), $needle)"
 _COLUMN_ONLY_NORMALIZED: Final = (
@@ -291,23 +371,32 @@ def test_a_casefolded_needle_silently_matches_nothing_the_original_fail_005(
     assert _hits(names_table, _COLUMN_ONLY_LOWER, recomposed) == 1
 
 
-def test_even_the_repos_python_fold_still_misses_which_is_why_sql_folds_the_needle(
+def test_the_prefilter_no_longer_drops_a_row_the_python_scorer_would_have_accepted(
     names_table: duckdb.DuckDBPyConnection,
 ) -> None:
-    """`nfc_normalize` closed the *composition* gap; the *full-fold* gap is still open.
+    """The residual FAIL-005 gap, now closed — and the reason the needle is still raw.
 
-    A Greek name ending in ``ς`` folds to ``σ`` in Python and stays ``ς`` in DuckDB, so a
-    Python-folded needle misses even against the fixed `nfc_normalize(lower(col))` column
-    expression. This is not a defect in the shipped query — it never sends a folded needle —
-    it is the standing proof that the two folds are **not interchangeable**, and it is why
-    the rule is "fold both operands in one engine" rather than "fold carefully".
+    Was `test_even_the_repos_python_fold_still_misses_which_is_why_sql_folds_the_needle`,
+    which pinned the *open* gap: a user typing ``Ρόδοσ`` (non-final sigma — ordinary on a
+    foreign keyboard) was dropped by the DuckDB prefilter although `_match_confidence`
+    would have scored the row 1.0. Both arms of the fold now come from one definition, so
+    the two agree and the prefilter cannot under-select.
+
+    The needle is nevertheless *still* handed to SQL unfolded. That is deliberate: the
+    equality of the two arms is pinned by a test, not guaranteed by DuckDB, and sending a
+    Python-folded needle would make it load-bearing at runtime instead.
     """
     stored = "Ρόδος"  # Rhodes — the M1 demo area, and a textbook final sigma
+    typed = "Ρόδοσ"  # ...the same name typed with a medial sigma
     names_table.execute("INSERT INTO names VALUES ($v)", {"v": stored})
-    assert _normalize(stored) != duckdb_fold(names_table, stored)
-    assert _hits(names_table, _COLUMN_ONLY_NORMALIZED, _normalize(stored)) == 0
-    # The shipped shape, given the same user input unfolded, finds it.
-    assert _hits(names_table, _BOTH_SIDES_IN_SQL, stored) == 1
+
+    assert _normalize(typed) == _normalize(stored) == duckdb_fold(names_table, stored)
+    assert _hits(names_table, _BOTH_SIDES_IN_SQL, typed) == 1
+    assert _hits(names_table, _BOTH_SIDES_IN_SQL, stored.upper()) == 1
+
+    # ...while a *casefolded* needle compared against a bare `lower()` column still misses,
+    # which is why the fold is built on simple lowercasing rather than on `str.casefold()`.
+    assert _hits(names_table, _COLUMN_ONLY_NORMALIZED, stored.casefold()) == 0
 
 
 # ======================================================================================
@@ -315,9 +404,25 @@ def test_even_the_repos_python_fold_still_misses_which_is_why_sql_folds_the_need
 # ======================================================================================
 
 #: SQL functions that change a string's comparison form. A comparison whose operands do not
-#: carry the *same* chain of these is comparing two different normalizations.
+#: carry the *same* chain of these is comparing two different normalizations. ``replace`` /
+#: ``translate`` / ``regexp_replace`` / ``trim`` are here because `resolve_area`'s fold is
+#: built from them — a fold that the detector did not recognise as folding would make this
+#: whole layer silently vacuous, which is a worse failure than a false positive.
 FOLDING_SQL_FUNCTIONS: Final[frozenset[str]] = frozenset(
-    {"lower", "upper", "lcase", "ucase", "nfc_normalize", "nfd_normalize", "normalize", "unaccent"}
+    {
+        "lower",
+        "upper",
+        "lcase",
+        "ucase",
+        "nfc_normalize",
+        "nfd_normalize",
+        "normalize",
+        "unaccent",
+        "replace",
+        "translate",
+        "regexp_replace",
+        "trim",
+    }
 )
 
 #: Functions whose arguments are compared against each other.
@@ -341,7 +446,7 @@ COMPARISON_FUNCTIONS: Final[frozenset[str]] = frozenset(
 #: A string literal is in scope exactly when it *folds* something — that is the whole domain
 #: of this rule, and it keeps English prose ("please select a where clause") out of the scan.
 _FOLD_CALL: Final = re.compile(
-    r"\b(lower|upper|lcase|ucase|nfc_normalize|nfd_normalize|normalize|unaccent)\s*\(",
+    r"\b(" + "|".join(sorted(FOLDING_SQL_FUNCTIONS, key=len, reverse=True)) + r")\s*\(",
     re.IGNORECASE,
 )
 _CALL: Final = re.compile(r"^\s*([A-Za-z_][A-Za-z_0-9]*)\s*\((.*)\)\s*$", re.DOTALL)
@@ -374,7 +479,12 @@ def wrapper_chain(expr: str) -> tuple[str, ...]:
     """The normalization functions wrapping ``expr``, outermost first.
 
     ``nfc_normalize(lower(names.primary))`` → ``("nfc_normalize", "lower")``; ``$needle`` →
-    ``()``. A non-folding call (``trim(x)``) ends the chain — it is not a comparison form.
+    ``()``. A non-folding call (``length(x)``) ends the chain — it is not a comparison form.
+
+    Multi-argument folding calls are descended into by their **first** argument, so
+    ``translate(replace(lower(c), 'a', 'b'), 'x', 'y')`` yields the whole chain rather than
+    stopping at the outermost call: a fold expressed with `replace`/`translate` must be as
+    visible to this detector as one expressed with `lower`.
     """
     chain: list[str] = []
     current = expr.strip()
@@ -382,8 +492,11 @@ def wrapper_chain(expr: str) -> tuple[str, ...]:
         name = match.group(1).lower()
         if name not in FOLDING_SQL_FUNCTIONS:
             break
+        arguments = _split_top_level(match.group(2))
+        if not arguments:
+            break
         chain.append(name)
-        current = match.group(2)
+        current = arguments[0]
     return tuple(chain)
 
 
@@ -615,6 +728,11 @@ def test_no_sql_comparison_normalizes_its_operands_differently() -> None:
         for lineno, sql in sql_literals(path):
             for problem in mismatched_comparisons(sql):
                 offences.append(f"  - {path.relative_to(REPO_ROOT)}:{lineno} {problem}")
+    # The divisions query is *assembled* from `_fold_sql`, so the static literal scan sees
+    # only its fragments. Scan the assembled statement too — a generated query must not be
+    # a way out of this rule.
+    for problem in mismatched_comparisons(_DIVISIONS_QUERY):
+        offences.append(f"  - planner/nodes/resolve_area.py::_DIVISIONS_QUERY {problem}")
     assert not offences, (
         "FAIL-005: a SQL comparison normalizes its two operands differently.\n"
         + "\n".join(offences)
@@ -626,12 +744,22 @@ def test_no_sql_comparison_normalizes_its_operands_differently() -> None:
 
 def test_the_shipped_divisions_prefilter_is_what_the_rule_describes() -> None:
     """A tripwire that scans nothing passes forever — assert it really parsed the query."""
+    expected = wrapper_chain(_fold_sql("x"))
+    # The chain reads outermost-first, so the ordering FAIL-005 recommended — normalize,
+    # *then* fold — is the sandwich `nfc_normalize(lower(nfc_normalize(...)))`: an inner
+    # normalization the lowercasing sees, and an outer one that recomposes its output.
+    sandwich = ("nfc_normalize", "lower", "nfc_normalize")
+    windows = [expected[i : i + 3] for i in range(len(expected) - 2)]
+    assert sandwich in windows, (
+        "the fold no longer normalizes before lowercasing — a stored NFC name and an NFD "
+        f"query will drift apart (outermost-first chain {expected})"
+    )
     sites = comparisons(_DIVISIONS_QUERY)
     folded = [site for site in sites if any(wrapper_chain(o) for o in site.operands)]
     assert len(folded) >= 4, f"only parsed {len(folded)} folded comparisons out of {len(sites)}"
     for site in folded:
         chains = {wrapper_chain(operand) for operand in site.operands}
-        assert chains == {("nfc_normalize", "lower")}, site
+        assert chains == {expected}, site
     assert mismatched_comparisons(_DIVISIONS_QUERY) == []
 
 
