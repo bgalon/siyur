@@ -1,0 +1,433 @@
+{
+  "version": 0.6,
+  "generator": "Overpass API 0.7.62.11 87bfad18",
+  "osm3s": {
+    "timestamp_osm_base": "2026-08-01T18:27:31Z",
+    "copyright": "The data included in this document is from www.openstreetmap.org. The data is made available under ODbL."
+  },
+  "elements": [
+
+{
+  "type": "node",
+  "id": 251369869,
+  "lat": 36.1408964,
+  "lon": 137.2522925,
+  "tags": {
+    "name": "ワシントンホテルプラザ",
+    "name:en": "Washington Hotel Plaza",
+    "tourism": "hotel"
+  }
+},
+{
+  "type": "node",
+  "id": 294563169,
+  "lat": 36.1427630,
+  "lon": 137.2544272,
+  "tags": {
+    "highway": "traffic_signals",
+    "name": "国分寺東",
+    "name:en": "Kokubunji E."
+  }
+},
+{
+  "type": "node",
+  "id": 294563181,
+  "lat": 36.1385278,
+  "lon": 137.2549126,
+  "tags": {
+    "highway": "traffic_signals",
+    "name": "日赤北",
+    "name:en": "Red Cross Hospital N."
+  }
+},
+{
+  "type": "node",
+  "id": 815233948,
+  "lat": 36.1420334,
+  "lon": 137.2530690,
+  "tags": {
+    "name": "Oyado koto no yume",
+    "tourism": "hotel"
+  }
+},
+{
+  "type": "node",
+  "id": 1385417563,
+  "lat": 36.1427736,
+  "lon": 137.2534726,
+  "tags": {
+    "highway": "traffic_signals",
+    "name": "国分寺西"
+  }
+},
+{
+  "type": "node",
+  "id": 1385417864,
+  "lat": 36.1429869,
+  "lon": 137.2575922,
+  "tags": {
+    "highway": "traffic_signals",
+    "name": "鍛冶橋"
+  }
+},
+{
+  "type": "node",
+  "id": 1416000484,
+  "lat": 36.1371118,
+  "lon": 137.2548204,
+  "tags": {
+    "amenity": "hospital",
+    "healthcare": "hospital",
+    "name": "高山赤十字病院",
+    "name:en": "Takayama Red Cross Hospital",
+    "name:ja": "高山赤十字病院",
+    "name:ja_rm": "Takayama-sekijuuji-byouin"
+  }
+},
+{
+  "type": "node",
+  "id": 1420978720,
+  "lat": 36.1370660,
+  "lon": 137.2556500,
+  "tags": {
+    "building": "public",
+    "name": "名古屋国税局高山税務署",
+    "note": "National-Land Numerical Information (Public Facility) 2006, MLIT Japan",
+    "note:ja": "国土数値情報（公共施設データ）平成19年　国土交通省",
+    "source": "KSJ2",
+    "source_ref": "http://nlftp.mlit.go.jp/ksj/jpgis/datalist/KsjTmplt-P02-v2_0.html"
+  }
+},
+{
+  "type": "node",
+  "id": 1420978945,
+  "lat": 36.1414140,
+  "lon": 137.2539309,
+  "tags": {
+    "building": "public",
+    "name": "商工組合中央金庫高山事務所",
+    "note": "National-Land Numerical Information (Public Facility) 2006, MLIT Japan",
+    "note:ja": "国土数値情報（公共施設データ）平成19年　国土交通省",
+    "source": "KSJ2",
+    "source_ref": "http://nlftp.mlit.go.jp/ksj/jpgis/datalist/KsjTmplt-P02-v2_0.html"
+  }
+},
+{
+  "type": "node",
+  "id": 1420980003,
+  "lat": 36.1413160,
+  "lon": 137.2627600,
+  "tags": {
+    "KSJ2:ADS": "堀端町94",
+    "KSJ2:AdminArea": "岐阜県高山市",
+    "KSJ2:PubFacAdmin": "市区町村",
+    "amenity": "kindergarten",
+    "name": "城山保育園",
+    "note": "National-Land Numerical Information (Public Facility) 2006, MLIT Japan",
+    "note:ja": "国土数値情報（公共施設データ）平成19年　国土交通省",
+    "source": "KSJ2",
+    "source_ref": "http://nlftp.mlit.go.jp/ksj/jpgis/datalist/KsjTmplt-P02-v2_0.html"
+  }
+},
+{
+  "type": "node",
+  "id": 1420990920,
+  "lat": 36.1418710,
+  "lon": 137.2617880,
+  "tags": {
+    "KSJ2:ADS": "上一之町75",
+    "KSJ2:AdminArea": "岐阜県高山市",
+    "KSJ2:PubFacAdmin": "市区町村",
+    "name": "歴史民俗資料館・高山市郷土館",
+    "note": "National-Land Numerical Information (Public Facility) 2006, MLIT Japan",
+    "note:ja": "国土数値情報（公共施設データ）平成19年　国土交通省",
+    "source": "KSJ2",
+    "source_ref": "http://nlftp.mlit.go.jp/ksj/jpgis/datalist/KsjTmplt-P02-v2_0.html",
+    "tourism": "museum"
+  }
+},
+{
+  "type": "node",
+  "id": 1420999111,
+  "lat": 36.1397037,
+  "lon": 137.2621796,
+  "tags": {
+    "name": "福来博士記念霊堂館",
+    "name:en": "Dr. Fukurai Memorial Hall",
+    "name:ja": "福来博士記念館",
+    "note": "National-Land Numerical Information (Public Facility) 2006, MLIT Japan",
+    "note:ja": "国土数値情報（公共施設データ）平成19年　国土交通省",
+    "source": "KSJ2",
+    "source_ref": "http://nlftp.mlit.go.jp/ksj/jpgis/datalist/KsjTmplt-P02-v2_0.html",
+    "tourism": "museum"
+  }
+},
+{
+  "type": "node",
+  "id": 1420999628,
+  "lat": 36.1370660,
+  "lon": 137.2548170,
+  "tags": {
+    "amenity": "hospital",
+    "healthcare": "hospital",
+    "name": "綜合病院高山赤十字病院",
+    "note": "National-Land Numerical Information (Public Facility) 2006, MLIT Japan",
+    "note:ja": "国土数値情報（公共施設データ）平成19年　国土交通省",
+    "source": "KSJ2",
+    "source_ref": "http://nlftp.mlit.go.jp/ksj/jpgis/datalist/KsjTmplt-P02-v2_0.html"
+  }
+},
+{
+  "type": "node",
+  "id": 1420999771,
+  "lat": 36.1432790,
+  "lon": 137.2607220,
+  "tags": {
+    "KSJ2:ADS": "上一之町60",
+    "KSJ2:AdminArea": "岐阜県高山市",
+    "name": "老田野鳥館",
+    "note": "National-Land Numerical Information (Public Facility) 2006, MLIT Japan",
+    "note:ja": "国土数値情報（公共施設データ）平成19年　国土交通省",
+    "operator:type": "private",
+    "source": "KSJ2",
+    "source_ref": "http://nlftp.mlit.go.jp/ksj/jpgis/datalist/KsjTmplt-P02-v2_0.html",
+    "tourism": "museum"
+  }
+},
+{
+  "type": "node",
+  "id": 1421000405,
+  "lat": 36.1428120,
+  "lon": 137.2592020,
+  "tags": {
+    "KSJ2:ADS": "上三之町69",
+    "KSJ2:AdminArea": "岐阜県高山市",
+    "name": "藤井美術民芸館",
+    "name:en": "Fujii Folk Museum",
+    "note": "National-Land Numerical Information (Public Facility) 2006, MLIT Japan",
+    "note:ja": "国土数値情報（公共施設データ）平成19年　国土交通省",
+    "operator:type": "private",
+    "source": "KSJ2",
+    "source_ref": "http://nlftp.mlit.go.jp/ksj/jpgis/datalist/KsjTmplt-P02-v2_0.html",
+    "tourism": "museum",
+    "wikidata": "Q11622863",
+    "wikipedia": "ja:藤井美術民芸館"
+  }
+},
+{
+  "type": "node",
+  "id": 1421002641,
+  "lat": 36.1379830,
+  "lon": 137.2541929,
+  "tags": {
+    "KSJ2:ADS": "天満町3-41-1",
+    "KSJ2:AdminArea": "岐阜県高山市",
+    "KSJ2:PubFacAdmin": "都道府県",
+    "addr:housenumber": "岐阜県高山市天満町3-41-1",
+    "addr:postcode": "5060025",
+    "amenity": "school",
+    "name": "飛騨特別支援学校 高山日赤分校",
+    "note": "National-Land Numerical Information (Public Facility) 2006, MLIT Japan",
+    "note:ja": "国土数値情報（公共施設データ）平成19年　国土交通省",
+    "phone": "0577343637",
+    "source": "KSJ2",
+    "source_ref": "http://nlftp.mlit.go.jp/ksj/jpgis/datalist/KsjTmplt-P02-v2_0.html",
+    "wikidata": "Q65265281",
+    "wikipedia": "ja:岐阜県立飛騨特別支援学校高山日赤分校"
+  }
+},
+{
+  "type": "node",
+  "id": 1421002658,
+  "lat": 36.1422010,
+  "lon": 137.2594110,
+  "tags": {
+    "KSJ2:ADS": "上三之町82",
+    "KSJ2:AdminArea": "岐阜県高山市",
+    "name": "飛騨民族考古館",
+    "name:en": "Hida Archeology Museum",
+    "note": "National-Land Numerical Information (Public Facility) 2006, MLIT Japan",
+    "note:ja": "国土数値情報（公共施設データ）平成19年　国土交通省",
+    "operator:type": "private",
+    "source": "KSJ2",
+    "source_ref": "http://nlftp.mlit.go.jp/ksj/jpgis/datalist/KsjTmplt-P02-v2_0.html",
+    "tourism": "museum"
+  }
+},
+{
+  "type": "node",
+  "id": 1421002874,
+  "lat": 36.1408814,
+  "lon": 137.2610080,
+  "tags": {
+    "addr:block_number": "97",
+    "addr:city": "高山市",
+    "addr:neighbourhood": "上一之町",
+    "addr:postcode": "506-0844",
+    "addr:province": "岐阜県",
+    "amenity": "post_office",
+    "level": "0",
+    "name": "高山上一之町郵便局",
+    "name:en": "Takayama Kamiichinomachi Post Office",
+    "name:es": "Oficina de Correos de Takayama Kamiichinomachi",
+    "name:ja": "高山上一之町郵便局",
+    "name:ja-Hira": "たかやま かみいちのまち ゆうびんきょく",
+    "name:pt": "Correio de Takayama Kamiichinomachi",
+    "note": "National-Land Numerical Information (Public Facility) 2006, MLIT Japan",
+    "note:ja": "国土数値情報（公共施設データ）平成19年　国土交通省",
+    "opening_hours": "Mo-Fr 09:00-17:00",
+    "operator": "日本郵便",
+    "operator:en": "Japan Post",
+    "operator:ja": "日本郵便",
+    "operator:short": "郵便局",
+    "operator:short:en": "JP",
+    "operator:short:ja": "郵便局",
+    "operator:wikidata": "Q11509260",
+    "phone": "+81-577-32-0550",
+    "source": "KSJ2",
+    "source_ref": "http://nlftp.mlit.go.jp/ksj/jpgis/datalist/KsjTmplt-P02-v2_0.html"
+  }
+},
+{
+  "type": "node",
+  "id": 1421002885,
+  "lat": 36.1456210,
+  "lon": 137.2587610,
+  "tags": {
+    "KSJ2:ADS": "下二之町26",
+    "KSJ2:AdminArea": "岐阜県高山市",
+    "amenity": "post_office",
+    "name": "高山八幡郵便局",
+    "note": "National-Land Numerical Information (Public Facility) 2006, MLIT Japan",
+    "note:ja": "国土数値情報（公共施設データ）平成19年　国土交通省",
+    "operator": "日本郵便",
+    "operator:en": "Japan Post",
+    "operator:ja": "日本郵便",
+    "operator:short": "郵便局",
+    "operator:short:en": "JP",
+    "operator:short:ja": "郵便局",
+    "operator:wikidata": "Q11509260",
+    "source": "KSJ2",
+    "source_ref": "http://nlftp.mlit.go.jp/ksj/jpgis/datalist/KsjTmplt-P02-v2_0.html"
+  }
+},
+{
+  "type": "node",
+  "id": 1421002902,
+  "lat": 36.1375550,
+  "lon": 137.2552479,
+  "tags": {
+    "addr:block_number": "86",
+    "addr:city": "高山市",
+    "addr:housenumber": "10",
+    "addr:neighbourhood": "名田町3丁目",
+    "addr:postcode": "506-0021",
+    "addr:province": "岐阜県",
+    "amenity": "post_office",
+    "level": "0",
+    "name": "高山名田郵便局",
+    "name:en": "Takayama Nada Post Office",
+    "name:es": "Oficina de Correos de Takayama Nada",
+    "name:ja": "高山名田郵便局",
+    "name:ja-Hira": "たかやま なだ ゆうびんきょく",
+    "name:pt": "Correio de Takayama Nada",
+    "note": "National-Land Numerical Information (Public Facility) 2006, MLIT Japan",
+    "note:ja": "国土数値情報（公共施設データ）平成19年　国土交通省",
+    "opening_hours": "Mo-Fr 09:00-17:00",
+    "operator": "日本郵便",
+    "operator:en": "Japan Post",
+    "operator:ja": "日本郵便",
+    "operator:short": "郵便局",
+    "operator:short:en": "JP",
+    "operator:short:ja": "郵便局",
+    "operator:wikidata": "Q11509260",
+    "phone": "+81-577-32-0580",
+    "source": "KSJ2",
+    "source_ref": "http://nlftp.mlit.go.jp/ksj/jpgis/datalist/KsjTmplt-P02-v2_0.html"
+  }
+},
+{
+  "type": "node",
+  "id": 1421002908,
+  "lat": 36.1365488,
+  "lon": 137.2567781,
+  "tags": {
+    "amenity": "community_centre",
+    "name": "高山市ふれあい児童館",
+    "note": "National-Land Numerical Information (Public Facility) 2006, MLIT Japan",
+    "note:ja": "国土数値情報（公共施設データ）平成19年　国土交通省",
+    "source": "KSJ2",
+    "source_ref": "http://nlftp.mlit.go.jp/ksj/jpgis/datalist/KsjTmplt-P02-v2_0.html"
+  }
+},
+{
+  "type": "node",
+  "id": 1421002910,
+  "lat": 36.1434919,
+  "lon": 137.2624274,
+  "tags": {
+    "amenity": "library",
+    "name": "高山市図書館",
+    "name:en": "Takayama City Library",
+    "name:ja": "高山市図書館",
+    "note": "National-Land Numerical Information (Public Facility) 2006, MLIT Japan",
+    "note:ja": "国土数値情報（公共施設データ）平成19年 国土交通省",
+    "source": "KSJ2",
+    "source_ref": "http://nlftp.mlit.go.jp/ksj/jpgis/datalist/KsjTmplt-P02-v2_0.html",
+    "wikidata": "Q28686304",
+    "wikipedia": "ja:高山市図書館"
+  }
+},
+{
+  "type": "node",
+  "id": 1421002946,
+  "lat": 36.1402355,
+  "lon": 137.2551093,
+  "tags": {
+    "amenity": "kindergarten",
+    "check_date": "2023-10-06",
+    "name": "高山西保育園",
+    "note": "National-Land Numerical Information (Public Facility) 2006, MLIT Japan",
+    "note:ja": "国土数値情報（公共施設データ）平成19年　国土交通省",
+    "source": "KSJ2",
+    "source_ref": "http://nlftp.mlit.go.jp/ksj/jpgis/datalist/KsjTmplt-P02-v2_0.html"
+  }
+},
+{
+  "type": "node",
+  "id": 1421002956,
+  "lat": 36.1428710,
+  "lon": 137.2584270,
+  "tags": {
+    "KSJ2:ADS": "片原町36",
+    "KSJ2:AdminArea": "岐阜県高山市",
+    "amenity": "police",
+    "name": "高山警察署安川交番",
+    "note": "National-Land Numerical Information (Public Facility) 2006, MLIT Japan",
+    "note:ja": "国土数値情報（公共施設データ）平成19年　国土交通省",
+    "operator": "岐阜県警察",
+    "source": "KSJ2",
+    "source_ref": "http://nlftp.mlit.go.jp/ksj/jpgis/datalist/KsjTmplt-P02-v2_0.html"
+  }
+},
+{
+  "type": "node",
+  "id": 1635036519,
+  "lat": 36.1378990,
+  "lon": 137.2558599,
+  "tags": {
+    "KSJ2:ADS": "八軒町3-10",
+    "KSJ2:AdminArea": "岐阜県高山市",
+    "KSJ2:PubFacAdmin": "市区町村",
+    "amenity": "social_facility",
+    "name": "一本杉児童遊園",
+    "note": "National-Land Numerical Information (Public Facility) 2006, MLIT Japan",
+    "note:ja": "国土数値情報（公共施設データ）平成19年　国土交通省",
+    "social_facility": "assisted_living",
+    "source": "KSJ2",
+    "source_ref": "http://nlftp.mlit.go.jp/ksj/jpgis/datalist/KsjTmplt-P02-v2_0.html"
+  }
+}
+
+  ]
+}
