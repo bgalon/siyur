@@ -161,3 +161,64 @@ Verified red-on-reintroduction: restoring the asymmetric shape
 red with the file, line and offending operand pair — **while all 35 tests in
 `tests/test_resolve_area.py` stay green**, which is exactly why the class needed a guardrail
 of its own.
+
+## Residual defects resolved — 2026-08-01
+
+Both gaps above are closed in `planner/nodes/resolve_area.py`; **nothing is left open.**
+
+The measurement that decided the design: over every codepoint in `0x20–0x30000`, Python's
+`NFC(casefold(c))` and DuckDB's `lower(nfc_normalize(c))` disagree on **274** codepoints,
+while Python's `NFC(str.lower(c))` and the same DuckDB expression disagree on **one**
+(U+0130). Full case folding is not something a database can be talked into; *simple*
+lowercasing is something both engines already agree on.
+
+So the fold is now **defined once and emitted twice** — `_normalize` (Python) and
+`_fold_sql` (DuckDB), both generated from the same three tables in that module:
+
+```
+whitespace-collapse → NFC → simple lowercase → NFC → 1:N expansions → 1:1 variants
+```
+
+- **Gap 2 (ordering)** — `nfc_normalize` now runs **before** `lower`, the ordering this
+  entry recommended. It also runs again *after*, because lowercasing itself produces
+  sequences that want recomposing (Η + U+0342 → η + U+0342 → U+1FC6); normalize-first alone
+  would have broken the pre-existing `test_overture_divisions_folds_case_script_and_composition`.
+- **Gap 1 (full vs simple folding)** — closed by making the prefilter and the scorer *the
+  same function* rather than by reconciling two. `ς`/`σ`, `ß`/`ss`, `և`/`եւ` and the
+  U+0130 forms are unified by shared tables applied identically in both arms, so the
+  recall full folding used to give is now an explicit product choice in one place.
+
+**Property optimised: the prefilter may over-select, never under-select.** A prefilter is a
+gate — a row it drops is a row `_match_confidence` never scores, which is what made this
+silent. The two arms being one definition is the strongest available form of that
+guarantee, and it is checked exhaustively rather than sampled: `_fold_sql` and `_normalize`
+are asserted equal on **every codepoint** (194,528 of them, ~1s), not on the 18-sample
+corpus, because SC-005 failures are by definition in the script nobody listed.
+
+The helper was **not** extracted to `commons/text.py` as recommended above: `commons/` is
+another session's file and a new cross-package dependency was out of scope. The single
+definition therefore lives inside `planner/nodes/resolve_area.py` for now, and
+`commons/merge.py::normalize_name` remains a second, independent Python fold — still safe
+(in-memory only) and still the next thing to bite when name matching moves into Postgres.
+**That extraction is the remaining work, and it is ADR-bearing.**
+
+Guardrail changes, so the record is honest about what was removed:
+
+| Pin | Fate |
+|---|---|
+| `KNOWN_FULL_FOLD_EXPANSIONS` — final sigma, Armenian ew, İ, ß | all four **removed**; the table is now empty, kept so a future divergence still has to be stated with a reason |
+| `KNOWN_COMPOSITION_SENSITIVE` — İ | **removed**; empty, same reason |
+| `test_even_the_repos_python_fold_still_misses_…` | renamed to `test_the_prefilter_no_longer_drops_a_row_the_python_scorer_would_have_accepted` and inverted to pin the healed behaviour |
+| `test_python_casefold_is_full_folding_and_duckdb_lower_is_simple` | **kept, unchanged in intent** — `casefold()` and `lower()` still differ, and that premise is what the new design is built on |
+
+The oracle was not weakened to make this pass: no sample was removed, no comparison
+loosened, and the corpus test was joined by a strictly stronger exhaustive one. Layer 3 now
+also recognises `replace`/`translate`/`regexp_replace`/`trim` as folding functions and
+descends into their first argument — a fold it did not recognise would have made the whole
+tripwire vacuous — and it scans the *assembled* `_DIVISIONS_QUERY`, since a generated query
+must not be a way around a static literal scan.
+
+Verified red-before-fix: with the new tests in place and only `planner/nodes/resolve_area.py`
+stashed back to `261a380`, 8 of the 9 new `tests/test_resolve_area.py` cases fail — five as
+`the DuckDB prefilter dropped 'Δέλτασ Ward'` (and `'ΔΈΛΤΑΣ WARD'`, `'STRASSE Ward'`,
+`'İota Ward'` decomposed, `'Iota Ward'`), three as `no attribute '_fold_sql'`.

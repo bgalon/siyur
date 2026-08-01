@@ -466,3 +466,76 @@ def test_module_hardcodes_no_coordinate_literal() -> None:
         )
     ]
     assert frozen == [], f"coordinate-shaped literal(s) in {Path(node.__file__).name}: {frozen}"
+
+
+# --- FAIL-005 residuals: the prefilter must never drop a row the scorer accepts ---------
+#
+# The DuckDB prefilter is a *gate*: a row it does not return is a row `_match_confidence`
+# never sees, so a fold the two engines disagree on is a silently empty answer rather than
+# a low score. These go through the real parquet, not a fake lookup, because the gate only
+# exists in SQL. Each label below is an invented name carrying one letter where Unicode's
+# **full** case folding and a database's **simple** `lower()` used to part company.
+
+#: Ends in a final sigma (ς) — the letter half of Greek place names end in.
+FOLD_AREA_SIGMA = "Δέλτας Ward"
+#: Carries U+0130 — the letter whose *lowercase* depends on how it was composed.
+FOLD_AREA_DOTTED = "İota Ward"
+#: Carries ß, which full folding expands to `ss` and `lower()` leaves alone.
+FOLD_AREA_SHARP = "Straße Ward"
+
+
+@pytest.fixture
+def folding_parquet(tmp_path: Path) -> str:
+    return write_divisions(
+        tmp_path / "folding.parquet",
+        [
+            ("division/sigma", FOLD_AREA_SIGMA, {}, "ODbL-1.0", wkt_square(30.0, 40.0)),
+            ("division/dotted", FOLD_AREA_DOTTED, {}, "ODbL-1.0", wkt_square(31.0, 41.0)),
+            ("division/sharp", FOLD_AREA_SHARP, {}, "ODbL-1.0", wkt_square(32.0, 42.0)),
+        ],
+    )
+
+
+@pytest.mark.parametrize(
+    ("typed", "expected"),
+    [
+        # FAIL-005 residual 1: full vs simple case folding. A user typing a medial sigma
+        # scored 1.0 in Python and was dropped by the SQL prefilter before anyone looked.
+        ("Δέλτασ Ward", "division/sigma"),
+        ("ΔΈΛΤΑΣ WARD", "division/sigma"),
+        ("STRASSE Ward", "division/sharp"),
+        # FAIL-005 residual 2: `nfc_normalize(lower(x))` normalized in the wrong order, so
+        # a stored NFC name and a decomposed query folded to different strings.
+        ("İota Ward", "division/dotted"),
+        ("İOTA WARD", "division/dotted"),
+        ("Iota Ward", "division/dotted"),
+    ],
+)
+def test_the_prefilter_returns_every_row_the_scorer_would_score_exactly(
+    typed: str, expected: str, folding_parquet: str
+) -> None:
+    """Each spelling reaches the scorer *and* scores 1.0 — one fold, not two."""
+    hits = OvertureDivisions(parquet=folding_parquet).search(typed)
+    assert [hit.source.id for hit in hits] == [expected], (
+        f"the DuckDB prefilter dropped {typed!r} — the SQL arm of the fold disagrees with "
+        "the Python arm again (FAIL-005)"
+    )
+    assert hits[0].confidence == node.EXACT_CONFIDENCE
+
+
+@pytest.mark.parametrize("stored", [FOLD_AREA_SIGMA, FOLD_AREA_DOTTED, FOLD_AREA_SHARP])
+def test_the_two_arms_of_the_fold_agree_on_the_names_in_the_parquet(
+    stored: str, folding_parquet: str
+) -> None:
+    """The gate and the scorer read the same key — asserted against a real DuckDB read.
+
+    Stated separately from the search above because it is the *invariant*, not a symptom:
+    if these two strings ever differ again, some other spelling is being dropped silently.
+    """
+    connection = duckdb.connect()
+    try:
+        row = connection.execute(f"SELECT {node._fold_sql('$v')}", {"v": stored}).fetchone()
+    finally:
+        connection.close()
+    assert row is not None
+    assert row[0] == node._normalize(stored)

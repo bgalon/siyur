@@ -103,29 +103,168 @@ PLAUSIBLE_CONFIDENCE: Final = 0.4
 _ATTRIBUTION_REQUIRED: Final[frozenset[str]] = frozenset({"ODbL-1.0", "CC-BY-4.0", "CC-BY-SA-4.0"})
 _AREAL_TYPES: Final[frozenset[str]] = frozenset({"Polygon", "MultiPolygon"})
 
-# Coarse, symmetric containment prefilter pushed into DuckDB — a division name may contain
-# the query ("Foo" ⊂ "Foo District") or the query may contain it ("Foo old town" ⊃ "Foo").
-# `contains()` takes no LIKE metacharacters, so the user's string needs no escaping.
+# ======================================================================================
+# One fold, two arms (FAIL-005)
+# ======================================================================================
+# The name prefilter is pushed into DuckDB while :func:`_match_confidence` re-scores in
+# Python, so **two engines fold the same strings**. Their folds must be derived from one
+# definition, never assumed equal: DuckDB's ``lower()`` is Unicode *simple* (1:1) case
+# folding, ``str.casefold()`` is *full* (1:N), and they disagree on 274 codepoints — far
+# too many to reconcile by hand, and the reason a Greek query once matched nothing.
 #
-# **Both sides are folded in SQL, and `$needle` is passed raw**, because DuckDB's `lower`
-# and Python's `str.casefold` are not the same function: casefold decomposes a precomposed
-# Greek vowel (U+1FC6 → U+03B7 U+0342) where `lower` leaves it composed, so a
-# Python-folded needle silently matched nothing. `nfc_normalize` on both sides is what makes
-# SQL agree with :func:`_normalize`. This is only a prefilter that bounds what is read —
-# `_match_confidence` re-scores every row it returns, in Python, with one folding.
-_DIVISIONS_QUERY: Final = """
+# So the fold is defined **once, here**, and emitted as two arms generated from the same
+# three tables — :func:`_normalize` (Python) and :func:`_fold_sql` (DuckDB):
+#
+#     whitespace-collapse → NFC → simple lowercase → NFC → 1:N expansions → 1:1 variants
+#
+# `tests/test_cross_engine_normalization.py` proves the two arms agree on **every**
+# codepoint, not on a sample. Three choices worth stating:
+#
+# 1. **Simple lowercase, not casefold, is the base** — precisely because simple
+#    lowercasing is what a database can reproduce. Python's ``str.lower()`` and DuckDB's
+#    ``lower()`` differ on exactly *one* codepoint (U+0130 İ), which the first expansion
+#    closes. Casefold would have left 274 open.
+# 2. **NFC on both ends.** Normalizing *first* is what makes the fold composition
+#    invariant (`lower(U+0130)` and `lower('I' + U+0307)` differ, and normalizing
+#    afterwards cannot undo that); normalizing *again* afterwards recomposes sequences
+#    that lowercasing itself produced (Η + U+0342 → η + U+0342 → U+1FC6).
+# 3. **The expansion/variant tables buy back recall**, deliberately: ς matches σ, ß
+#    matches ss, և matches եւ. That is now a product choice stated in one place, not an
+#    accident of which engine happened to run.
+#
+# The property this optimises for: **the prefilter can never drop a row the Python scorer
+# would have accepted**, because the prefilter and the scorer are the same function. A
+# prefilter is allowed to over-select; it is never allowed to under-select.
+
+#: Every codepoint Python's ``str.split()`` treats as whitespace — derived from Python
+#: itself rather than typed out, so the SQL arm cannot drift from :func:`_collapse`. The
+#: bound keeps import cheap and is pinned by a test that scans the whole codepoint space.
+_WHITESPACE_MAX: Final = 0x3001
+_FOLD_WHITESPACE: Final = "".join(
+    chr(code) for code in range(_WHITESPACE_MAX) if not chr(code).split()
+)
+
+#: 1:N mappings full case folding performs and a simple ``lower()`` does not. The first
+#: entry reconciles U+0130 (Python lowers İ to ``i`` + U+0307, DuckDB to ``i``); the rest
+#: are the letters that genuinely *are* a sequence — sharp s, ligatures, the Armenian ew.
+_FOLD_EXPANSIONS: Final[tuple[tuple[str, str], ...]] = (
+    ("i̇", "i"),
+    ("ß", "ss"),
+    ("ŉ", "ʼn"),
+    ("և", "եւ"),
+    ("ẚ", "aʾ"),
+    ("ﬀ", "ff"),
+    ("ﬁ", "fi"),
+    ("ﬂ", "fl"),
+    ("ﬃ", "ffi"),
+    ("ﬄ", "ffl"),
+    ("ﬅ", "st"),
+    ("ﬆ", "st"),
+    ("ﬓ", "մն"),
+    ("ﬔ", "մե"),
+    ("ﬕ", "մի"),
+    ("ﬖ", "վն"),
+    ("ﬗ", "մխ"),
+)
+
+#: 1:1 equivalences: separate codepoints for one letter that full folding unifies and
+#: ``lower()`` keeps apart — Greek final sigma and the symbol variants, the Cyrillic
+#: historic letters, long s. ``ς → σ`` is the one FAIL-005 was written about.
+_FOLD_VARIANTS: Final[dict[str, str]] = {
+    "ſ": "s",
+    "µ": "μ",
+    "ͅ": "ι",
+    "ι": "ι",
+    "ϐ": "β",
+    "ϵ": "ε",
+    "ϑ": "θ",
+    "ϴ": "θ",
+    "ϰ": "κ",
+    "ϖ": "π",
+    "ϱ": "ρ",
+    "ς": "σ",
+    "ϕ": "φ",
+    "ẛ": "ṡ",
+    "ᲀ": "в",
+    "ᲁ": "д",
+    "ᲂ": "о",
+    "ᲃ": "с",
+    "ᲄ": "т",
+    "ᲅ": "т",
+    "ᲆ": "ъ",
+    "ᲇ": "ѣ",
+    "ᲈ": "ꙋ",
+}
+_FOLD_TABLE: Final = str.maketrans(_FOLD_VARIANTS)
+
+
+def _quote(text: str) -> str:
+    """One SQL string literal — used only for this module's own generated fold tables."""
+    escaped = text.replace("'", "''")
+    return f"'{escaped}'"
+
+
+def _fold_sql(expr: str) -> str:
+    """The SQL arm of the fold: DuckDB's expression for :func:`_normalize` of ``expr``.
+
+    Generated from the same tables the Python arm reads, so the two cannot be edited apart.
+    """
+    blanks = " " * len(_FOLD_WHITESPACE)
+    folded = (
+        f"trim(regexp_replace(translate({expr}, {_quote(_FOLD_WHITESPACE)}, "
+        f"{_quote(blanks)}), ' +', ' ', 'g'))"
+    )
+    folded = f"nfc_normalize(lower(nfc_normalize({folded})))"
+    for source, replacement in _FOLD_EXPANSIONS:
+        folded = f"replace({folded}, {_quote(source)}, {_quote(replacement)})"
+    sources = _quote("".join(_FOLD_VARIANTS))
+    targets = _quote("".join(_FOLD_VARIANTS.values()))
+    return f"translate({folded}, {sources}, {targets})"
+
+
+def _collapse(text: str) -> str:
+    """Whitespace-collapsed, otherwise verbatim — the form sent to a source, unfolded."""
+    return " ".join(text.split())
+
+
+def _normalize(text: str) -> str:
+    """The Python arm of the fold: a case-, whitespace- and composition-insensitive key.
+
+    Script-agnostic — no transliteration, no language guess (FR-001) — and identical, by
+    construction, to what :func:`_fold_sql` computes inside DuckDB. See the block comment
+    above for why the base is ``str.lower()`` and not ``str.casefold()``.
+    """
+    folded = unicodedata.normalize("NFC", _collapse(text))
+    folded = unicodedata.normalize("NFC", folded.lower())
+    for source, replacement in _FOLD_EXPANSIONS:
+        folded = folded.replace(source, replacement)
+    return folded.translate(_FOLD_TABLE)
+
+
+#: Coarse, symmetric containment prefilter pushed into DuckDB — a division name may contain
+#: the query ("Foo" ⊂ "Foo District") or the query may contain it ("Foo old town" ⊃ "Foo").
+#: `contains()` takes no LIKE metacharacters, so the user's string needs no escaping.
+#:
+#: **Both operands are folded in SQL and `$needle` is passed raw.** Even though the two
+#: arms are now provably equal, a Python-folded needle would make that equality *load
+#: bearing at runtime* rather than merely pinned by a test — each engine folds what it
+#: compares. This only bounds what is read; `_match_confidence` re-scores every row.
+_PRIMARY_FOLD: Final = _fold_sql("names.primary")
+_ALTERNATE_FOLD: Final = _fold_sql("n")
+_NEEDLE_FOLD: Final = _fold_sql("$needle")
+_DIVISIONS_QUERY: Final = f"""
 SELECT id,
        names.primary AS primary_name,
        coalesce(map_values(names.common), []) AS alternate_names,
        sources,
        ST_AsWKB(geometry) AS wkb
 FROM read_parquet($src, hive_partitioning=1, filename=false)
-WHERE contains(nfc_normalize(lower(names.primary)), nfc_normalize(lower($needle)))
-   OR contains(nfc_normalize(lower($needle)), nfc_normalize(lower(names.primary)))
+WHERE contains({_PRIMARY_FOLD}, {_NEEDLE_FOLD})
+   OR contains({_NEEDLE_FOLD}, {_PRIMARY_FOLD})
    OR coalesce(list_bool_or(list_transform(
         list_filter(coalesce(map_values(names.common), []), n -> length(trim(n)) > 0),
-        n -> contains(nfc_normalize(lower(n)), nfc_normalize(lower($needle)))
-          OR contains(nfc_normalize(lower($needle)), nfc_normalize(lower(n))))), false)
+        n -> contains({_ALTERNATE_FOLD}, {_NEEDLE_FOLD})
+          OR contains({_NEEDLE_FOLD}, {_ALTERNATE_FOLD}))), false)
 ORDER BY id
 """
 
@@ -195,21 +334,6 @@ class Geocoder(Protocol):
     """Disambiguation fallback, consulted only when :class:`DivisionsLookup` is silent."""
 
     def search(self, name: str) -> Sequence[AreaCandidate]: ...
-
-
-def _collapse(text: str) -> str:
-    """Whitespace-collapsed, otherwise verbatim — the form sent to a source, unfolded."""
-    return " ".join(text.split())
-
-
-def _normalize(text: str) -> str:
-    """Case-, whitespace- and composition-insensitive comparison key.
-
-    Script-agnostic: no transliteration, no language guess (FR-001). ``NFC`` after
-    ``casefold`` because casefold *decomposes* some precomposed letters — two spellings of
-    the same Greek word must compare equal, and must also agree with the SQL prefilter.
-    """
-    return unicodedata.normalize("NFC", _collapse(text).casefold())
 
 
 def _match_confidence(needle: str, names: Iterable[str | None]) -> float:
