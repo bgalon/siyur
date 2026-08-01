@@ -15,6 +15,35 @@ always visible (Constitution Article V). The app shell is **precached via Workbo
 the skeleton loads offline. No product features beyond the empty map — DU-01+ adds real
 content; DU-06 swaps the tile transport to OPFS.
 
+## What Spec 001 adds (T042–T045)
+
+The cited commons rendered on the map. `src/map.ts` became **`src/map/`** (the DU-00
+import path `./map` still resolves, via `src/map/index.ts`, and the empty-map +
+precache behaviour is unchanged):
+
+| Module | Role |
+|---|---|
+| `src/map/map.ts` | DU-00 empty map + `createMapWithAttribution()` (built-in control off, ours on) |
+| `src/map/types.ts` | wire types for `GET /sites` (contract + `docs/data/poi-site.md`) |
+| `src/map/guards.ts` | **the provenance gate** — narrows every wire value; drops anything unstamped |
+| `src/map/attribution-chip.ts` | per-value source+license chip; `renderSourcedValue()` is the only data→DOM path |
+| `src/map/attribution.ts` | `OdblAttributionControl` — ODbL always, plus the response's `attribution[]` |
+| `src/map/sites.ts` | viewport `bbox` fetch, display-name preference, markers, `SitesLayer` |
+
+**Provenance is structural, not a review discipline.** `renderSourcedValue()` returns
+`null` for a value with no usable `source` stamp (`kind` **and** `license`), and nothing
+else in `web/` reads `.value` for display. A site with an unstamped `location` is dropped
+whole. The chip's text is built from that value's own stamp only — there is no license
+lookup table and no default attribution string, so the client cannot invent credit
+(FR-003 / FR-004 / SC-002).
+
+**Display name** resolves `en` → `<lang>-Latn` → source-script, so an English-first user
+always sees a readable name while the original script stays on the record (FR-008 / US3).
+
+`GET /sites` is built by a sibling task; the web tests mock `fetch` with the contract's
+worked example (`specs/001-research-cited-sites/contracts/sites.md`) — the contract is
+the interface.
+
 ## Toolchain
 
 Managed with **pnpm**. Pins (ADR-0003 spike-proven; stack-reference §Table A):

@@ -9,3 +9,91 @@ body {
   inset: 0;
   background: #0f1720;
 }
+
+/* --- Provenance stamps (docs/design/ux-handoff/README.md § Signature motifs) ---
+   Mono micro-chip: solid border = bundleable, dashed = leaves the bundle. The
+   chip's TEXT is never styled in — it comes from the value's own source stamp. */
+.siyur-chip {
+  display: inline-block;
+  margin-inline-start: 0.4em;
+  padding: 0.1em 0.4em;
+  border: 1px solid #8c8071; /* stone */
+  border-radius: 3px;
+  background: #efe9dc; /* paper-deep */
+  color: #2b2117; /* ink */
+  font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 8.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.siyur-chip[data-bundleable='false'] {
+  border-style: dashed;
+  border-color: #c96f3f; /* route — dashed = needs connectivity */
+}
+
+.siyur-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15em;
+  max-width: 100%;
+}
+
+.siyur-value__label {
+  margin-inline-end: 0.45em;
+  color: #6f6558;
+  font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 8.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+/* --- Site markers --- */
+.siyur-marker {
+  display: flex;
+  align-items: center;
+  gap: 0.35em;
+  cursor: pointer;
+}
+
+.siyur-marker__pin {
+  width: 11px;
+  height: 11px;
+  border: 2px solid #efe9dc;
+  border-radius: 99px;
+  background: #2b2117;
+  box-shadow: 0 2px 8px rgb(43 33 23 / 30%);
+  flex: none;
+}
+
+.siyur-marker__name {
+  padding: 0.15em 0.45em;
+  border-radius: 99px;
+  background: rgb(239 233 220 / 92%);
+  color: #2b2117;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* --- Site popup --- */
+.siyur-popup__row {
+  display: flex;
+  align-items: baseline;
+  padding: 0.2em 0;
+  font-size: 12px;
+}
+
+.siyur-popup__name .siyur-value__text {
+  font-weight: 700;
+}
+
+.siyur-popup__alt-name .siyur-value__text {
+  color: #6f6558;
+}
+
+/* --- Attribution control (ODbL always visible — Constitution Article V) --- */
+.siyur-attrib {
+  font-size: 11px;
+}

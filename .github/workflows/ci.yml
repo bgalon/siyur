@@ -97,30 +97,66 @@ jobs:
         run: pnpm -C web test
 
   # ── Job 3 · integration & component ────────────────────────────────────────
-  # Green stub. Tier-2 tests (planner pipeline + SQLite checkpoint, real PostGIS,
-  # Valhalla legs, fake-gcs bundle objects, DuckDB over an Overture fixture) land
-  # at DU-01+. The GitHub Actions `services:` wiring below is the intended shape —
-  # kept commented so this required check exists and stays green until then.
+  # Real PostGIS service container (T006, Spec 001). Tier-2 tests select on the
+  # `integration` marker; until the first one lands (T016/T017) pytest collects
+  # nothing and exits 5, which we translate to success — the gate stays green
+  # without an echo stub, and the probe step below still proves the service
+  # container genuinely works, so T016 inherits a de-risked harness.
+  #
+  # Valhalla + fake-gcs stay commented: they are DU-05 (compile → bundle)
+  # dependencies, and booting them now would only slow every PR.
   integration:
     name: "3 · integration & component"
     runs-on: ubuntu-latest
-    # services:
-    #   postgis:
-    #     image: postgis/postgis:16-3.4
-    #     env: { POSTGRES_PASSWORD: postgres }
-    #     ports: ["5432:5432"]
-    #     options: >-
-    #       --health-cmd "pg_isready" --health-interval 10s
-    #       --health-timeout 5s --health-retries 5
-    #   valhalla:  { image: ghcr.io/valhalla/valhalla:latest, ports: ["8002:8002"] }
-    #   fake-gcs:  { image: fsouza/fake-gcs-server:latest,     ports: ["4443:4443"] }
+    services:
+      postgis:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: siyur
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 10s
+          --health-timeout 5s --health-retries 5
+      # valhalla: { image: ghcr.io/valhalla/valhalla:latest, ports: ["8002:8002"] }  # DU-05
+      # fake-gcs: { image: fsouza/fake-gcs-server:latest,    ports: ["4443:4443"] }  # DU-05
+    env:
+      # Consumed by alembic/env.py and the tests/conftest.py PostGIS fixture.
+      # A CI-only throwaway credential for an ephemeral service container — not a
+      # secret, and never read from .env*/secrets/ (Constitution Article V).
+      SIYUR_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/siyur
     steps:
       - uses: actions/checkout@v4
-      - name: no Tier-2 tests yet (green stub)
+      - name: Install uv + Python (pinned via .python-version)
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: uv sync
+        run: uv sync --all-extras --dev
+      - name: verify PostGIS service is reachable and spatially enabled
         run: |
-          echo "Tier-2 integration & component tests land at DU-01+ "
-          echo "(planner pipeline, PostGIS, Valhalla, fake-gcs, DuckDB fixture)."
-          echo "Green stub — the required gate exists before the feature does."
+          uv run python - <<'PY'
+          import os, sys, psycopg
+          url = os.environ["SIYUR_DATABASE_URL"].replace("postgresql+psycopg://", "postgresql://")
+          with psycopg.connect(url) as conn, conn.cursor() as cur:
+              cur.execute("CREATE EXTENSION IF NOT EXISTS postgis")
+              cur.execute("SELECT PostGIS_Version()")
+              print("PostGIS ready:", cur.fetchone()[0])
+          PY
+      - name: pytest (Tier 2, `integration` marker)
+        run: |
+          set +e
+          uv run pytest -q -m integration
+          code=$?
+          set -e
+          # 5 = "no tests collected": expected until T016/T017 land the first
+          # Tier-2 test. Any other non-zero is a real failure.
+          if [ "$code" -eq 5 ]; then
+            echo "No Tier-2 integration tests collected yet (expected pre-T016) — gate green."
+            exit 0
+          fi
+          exit "$code"
 
   # ── Job 5 · e2e-airplane (Playwright, Chromium) — THE MERGE GATE ───────────
   # Green stub. The airplane-mode flow (load online → wait for SW + OPFS whole-
@@ -196,13 +232,27 @@ jobs:
             exit 0
           fi
           git fetch --no-tags --depth=1 origin "$BASE_SHA" 2>/dev/null || true
-          # Exclude generated lockfiles from the human-churn count.
+          # Exclude machine-produced content from the human-churn count. The guard
+          # exists to keep *review effort* bounded, so anything a reviewer reads at
+          # a glance (or not at all) must not consume the budget:
+          #   - lockfiles         — resolver output, reviewed via the manifest
+          #   - tests/fixtures/** — CAPTURED source data (Overture parquet, Overpass
+          #                         JSON). Reviewed by provenance notes in the
+          #                         fixture README, not line by line.
+          #   - alembic scaffold  — verbatim `alembic init` output (alembic.ini is
+          #                         155 lines, 123 of them comments). NOTE: env.py
+          #                         and alembic/versions/** stay counted — those are
+          #                         genuinely authored and migrations need real review.
           CHANGED=$(git diff --numstat "$BASE_SHA"...HEAD -- . \
             ':(exclude)uv.lock' \
             ':(exclude)**/pnpm-lock.yaml' \
             ':(exclude)**/package-lock.json' \
+            ':(exclude)tests/fixtures/**' \
+            ':(exclude)alembic.ini' \
+            ':(exclude)alembic/script.py.mako' \
+            ':(exclude)alembic/README' \
             | awk '{a+=$1; d+=$2} END {print a+d+0}')
-          echo "Human-authored changed lines (excluding lockfiles): $CHANGED"
+          echo "Human-authored changed lines (excluding generated/captured files): $CHANGED"
           if [ "$CHANGED" -gt 500 ]; then
             echo "::error::Diff exceeds 500 lines ($CHANGED). Split the PR, or add the 'size-override' label with justification."
             exit 1
