@@ -1,7 +1,13 @@
 """Commons persistence — the PostGIS schema (data-model §4, tech-design §2), T014.
 
-Four tables, one privacy boundary:
+Five tables, one privacy boundary:
 
+- ``area`` — a user's delimitation, resolved to one polygon (`api/areas.py`, T037). It is
+  what makes ``POST /areas/{area_id}/research`` able to answer ``404`` on an unknown id
+  honestly, and it is **per-user**: ``created_by`` is the auth subject and every read of
+  this table filters on it, exactly like :class:`UserNote`. An area is a personal
+  delimitation, not commons data — the *sites* a pass finds are shared, the "where I asked
+  about" is not.
 - ``site`` — one row per real-world place. ``fields`` (jsonb) holds the ``SourcedValue``
   map (names / categories / address / opening_hours); ``geom`` is a **GiST-indexed**
   ``geometry(Point,4326)`` that mirrors ``location.value`` — the model's ``location`` is
@@ -26,7 +32,7 @@ a file, never ``.env*`` (AGENTS.md), matching ``alembic/env.py``.
 from __future__ import annotations
 
 import os
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Any, Final
 from uuid import UUID, uuid4
 
@@ -43,6 +49,7 @@ from commons.geo import validate_point
 __all__ = [
     "DATABASE_URL_ENV",
     "SRID",
+    "Area",
     "Base",
     "Site",
     "SiteConflict",
@@ -81,6 +88,42 @@ class Base(DeclarativeBase):
 
 #: Imported lazily by ``alembic/env.py`` as ``target_metadata``.
 metadata = Base.metadata
+
+
+def _utcnow() -> datetime:
+    return datetime.now(UTC)
+
+
+class Area(Base):
+    """A resolved user delimitation — server-side area state (`contracts/areas.md`).
+
+    ``POST /areas`` writes one row; ``POST /areas/{area_id}/research`` reads it back, so an
+    unknown id is a real ``404`` across processes and restarts rather than a claim that only
+    holds until the server is redeployed.
+
+    The column is ``geometry(Geometry,4326)``, **not** ``geometry(Polygon,4326)``:
+    :func:`~planner.nodes.resolve_area.resolve_area` legitimately returns a ``MultiPolygon``
+    (an island group, a divided municipality, a user-drawn multi-part ring), and a
+    ``Polygon``-typed column rejects one outright. The areal check lives where the geometry
+    is built — ``resolve_area._validate_area`` refuses points, lines, empty and
+    self-intersecting rings before anything reaches here — so widening the column loses no
+    guarantee and buys genericity (FR-001).
+    """
+
+    __tablename__ = "area"
+
+    id: Mapped[UUID] = mapped_column(PgUuid(as_uuid=True), primary_key=True, default=uuid4)
+    #: EPSG:4326 ``Polygon``/``MultiPolygon``, stamped and validated by ``resolve_area``.
+    polygon: Mapped[WKBElement] = mapped_column(
+        Geometry(geometry_type="GEOMETRY", srid=SRID, spatial_index=False), nullable=False
+    )
+    #: The free-text name the user asked for, when they asked by name; ``None`` otherwise.
+    name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: The auth subject (``SessionUser.sub``). Every read of this table filters on it.
+    created_by: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
 
 
 class Site(Base):
