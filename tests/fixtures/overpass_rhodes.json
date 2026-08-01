@@ -1,0 +1,418 @@
+{
+  "version": 0.6,
+  "generator": "Overpass API 0.7.62.11 87bfad18",
+  "osm3s": {
+    "timestamp_osm_base": "2026-08-01T11:03:35Z",
+    "copyright": "The data included in this document is from www.openstreetmap.org. The data is made available under ODbL."
+  },
+  "elements": [
+    {
+      "type": "node",
+      "id": 126244310,
+      "lat": 36.4437233,
+      "lon": 28.227369,
+      "tags": {
+        "addr:postcode": "851 00",
+        "capital": "6",
+        "int_name": "Rodos",
+        "name": "Ρόδος",
+        "name:af": "Rhodosstad",
+        "name:ar": "رودس",
+        "name:az": "Rodos",
+        "name:be": "Родас",
+        "name:bg": "Родос",
+        "name:br": "Ródos",
+        "name:ca": "Rodes",
+        "name:cs": "Rhodos",
+        "name:cv": "Родос",
+        "name:cy": "Rhodes",
+        "name:da": "Rhodos",
+        "name:de": "Rhodos",
+        "name:el": "Ρόδος",
+        "name:en": "Rhodes",
+        "name:eo": "Rodoso",
+        "name:es": "Rodas",
+        "name:et": "Rhodos",
+        "name:eu": "Rodas",
+        "name:fa": "ردس",
+        "name:fi": "Rodos",
+        "name:fr": "Rhodes",
+        "name:fy": "Rodos",
+        "name:gl": "Rodas",
+        "name:he": "רודוס",
+        "name:hr": "Rodos",
+        "name:hu": "Rodosz",
+        "name:hy": "Հռոդոս",
+        "name:id": "Rodos",
+        "name:io": "Rodos",
+        "name:it": "Rodi",
+        "name:ja": "ロドス",
+        "name:ka": "როდოსი",
+        "name:ko": "로도스",
+        "name:la": "Rhodus",
+        "name:li": "Rodos",
+        "name:lt": "Rodas",
+        "name:lv": "Roda",
+        "name:mg": "Rodas",
+        "name:mk": "Родос",
+        "name:ml": "റോഡോസ്",
+        "name:mt": "Rodi",
+        "name:nb": "Rhodos",
+        "name:nl": "Rhodos",
+        "name:nn": "Ródos",
+        "name:os": "Родос",
+        "name:ota": "ردوس",
+        "name:pl": "Rodos",
+        "name:pt": "Rodes",
+        "name:ro": "Rodos",
+        "name:ru": "Родос",
+        "name:sk": "Rodos",
+        "name:sl": "Rodos",
+        "name:sr": "Родос",
+        "name:sr-Latn": "Rodos",
+        "name:sv": "Rhodos",
+        "name:tr": "Rodos",
+        "name:uk": "Родос",
+        "name:ur": "روڈس",
+        "name:vi": "Ródos",
+        "name:zh": "羅得",
+        "old_name": "Rodi",
+        "place": "city",
+        "population": "45310",
+        "population:date": "2021",
+        "source:population": "wikipedia",
+        "wikidata": "Q188731",
+        "wikipedia": "el:Ρόδος (πόλη)"
+      }
+    },
+    {
+      "type": "node",
+      "id": 259214085,
+      "lat": 36.4479324,
+      "lon": 28.2246713,
+      "tags": {
+        "amenity": "bus_station",
+        "bus": "yes",
+        "int_name": "RODA Bus Station (West Side Terminal)",
+        "name": "Σταθμός λεωφορείων Δ.Ε.Σ ΡΟΔΑ",
+        "operator": "Δ.Ε.Σ ΡΟΔΑ",
+        "public_transport": "station"
+      }
+    },
+    {
+      "type": "node",
+      "id": 261957511,
+      "lat": 36.4456404,
+      "lon": 28.2215767,
+      "tags": {
+        "bus": "yes",
+        "highway": "bus_stop",
+        "name": "Platanakia",
+        "public_transport": "stop_position"
+      }
+    },
+    {
+      "type": "node",
+      "id": 261957516,
+      "lat": 36.4413513,
+      "lon": 28.2220451,
+      "tags": {
+        "bus": "yes",
+        "highway": "bus_stop",
+        "name": "ΠΑΝΕΠΙΣΤΗΜΙΟ",
+        "name:el": "ΠΑΝΕΠΙΣΤΗΜΙΟ",
+        "name:en": "University",
+        "public_transport": "stop_position"
+      }
+    },
+    {
+      "type": "node",
+      "id": 297525681,
+      "lat": 36.4499573,
+      "lon": 28.216585,
+      "tags": {
+        "amenity": "fuel",
+        "brand": "Shell",
+        "brand:wikidata": "Q110716465",
+        "name": "SHELL",
+        "opening_hours": "24/7",
+        "operator": "ΣΤΑΥΡΙΑΝΑΚΗΣ Α. ΠΕΤΡΟΣ"
+      }
+    },
+    {
+      "type": "node",
+      "id": 422512117,
+      "lat": 36.4488955,
+      "lon": 28.2259238,
+      "tags": {
+        "amenity": "ferry_terminal",
+        "ferry": "yes",
+        "name": "Rhodes Town (Mandraki)",
+        "operator": "Faliraki Sea Lines",
+        "public_transport": "station"
+      }
+    },
+    {
+      "type": "node",
+      "id": 793101233,
+      "lat": 36.4444763,
+      "lon": 28.2260919,
+      "tags": {
+        "amenity": "restaurant",
+        "cuisine": "greek",
+        "name": "Myrovolis"
+      }
+    },
+    {
+      "type": "node",
+      "id": 793101328,
+      "lat": 36.4477122,
+      "lon": 28.2263974,
+      "tags": {
+        "description": "Info point only",
+        "name": "Waterhoppers",
+        "sport": "scuba_diving"
+      }
+    },
+    {
+      "type": "node",
+      "id": 793101362,
+      "lat": 36.4507135,
+      "lon": 28.2186153,
+      "tags": {
+        "addr:housenumber": "71",
+        "addr:postcode": "85100",
+        "addr:street": "Griva",
+        "amenity": "restaurant",
+        "cuisine": "greek",
+        "int_name": "Aspro Piato",
+        "name": "Άσπρο Πιάτο",
+        "name:de": "Aspro Piato",
+        "name:el": "Άσπρο Πιάτο",
+        "name:en": "White Plate",
+        "name:no": "Den Hvite Tallerken",
+        "website": "http://aspropiato.gr/",
+        "wheelchair": "yes"
+      }
+    },
+    {
+      "type": "node",
+      "id": 793101368,
+      "lat": 36.4418885,
+      "lon": 28.2264285,
+      "tags": {
+        "name": "Mango",
+        "tourism": "hotel",
+        "website": "https://www.mangorooms.gr/",
+        "wheelchair": "no"
+      }
+    },
+    {
+      "type": "node",
+      "id": 793824424,
+      "lat": 36.4489673,
+      "lon": 28.2266243,
+      "tags": {
+        "int_name": "Marina Mantraki",
+        "leisure": "marina",
+        "name": "Μαρίνα Μαντρακιού",
+        "seamark:harbour:category": "marina",
+        "seamark:type": "harbour"
+      }
+    },
+    {
+      "type": "node",
+      "id": 794491388,
+      "lat": 36.4460502,
+      "lon": 28.2280031,
+      "tags": {
+        "access": "yes",
+        "barrier": "sally_port",
+        "historic": "city_gate",
+        "name": "Πύλη Ταρσανά",
+        "name:el": "Πύλη Ταρσανά",
+        "name:en": "Gate of the Arsenal",
+        "wikipedia": "el:Οχυρώσεις_της_πόλης_της_Ρόδου#Πύλη_Ταρσανά"
+      }
+    },
+    {
+      "type": "node",
+      "id": 797727545,
+      "lat": 36.4504008,
+      "lon": 28.2175968,
+      "tags": {
+        "addr:housenumber": "1",
+        "addr:postcode": "85100",
+        "addr:street": "Γεωργίου Λέοντος",
+        "amenity": "restaurant",
+        "cuisine": "greek",
+        "name": "Tamam",
+        "phone": "+30 2241 073522"
+      }
+    },
+    {
+      "type": "node",
+      "id": 812182162,
+      "lat": 36.4473012,
+      "lon": 28.224908,
+      "tags": {
+        "amenity": "bus_station",
+        "bus": "yes",
+        "int_name": "KTEL Bus Station (East Side Terminal)",
+        "name": "Σταθμός λεωφορείων Κ.Τ.Ε.Λ.",
+        "operator": "Κ.Τ.Ε.Λ. Ρόδου",
+        "public_transport": "station",
+        "website": "https://www.ktelrodou.gr/"
+      }
+    },
+    {
+      "type": "node",
+      "id": 872722202,
+      "lat": 36.4507428,
+      "lon": 28.2249611,
+      "tags": {
+        "amenity": "place_of_worship",
+        "denomination": "greek_orthodox",
+        "int_name": "Evagelismos",
+        "name": "Ευαγγελισμός",
+        "religion": "christian"
+      }
+    },
+    {
+      "type": "node",
+      "id": 872722209,
+      "lat": 36.4502256,
+      "lon": 28.2236273,
+      "tags": {
+        "addr:city": "Ρόδος",
+        "addr:housenumber": "43",
+        "addr:postcode": "851 00",
+        "addr:street": "Εθελοντών Δωδεκανησίων",
+        "amenity": "police",
+        "name": "Υποδιεύθυνση Ασφαλείας Ρόδου",
+        "name:el": "Υποδιεύθυνση Ασφαλείας Ρόδου",
+        "name:it": "ex Caserma Principe di Piemonte",
+        "phone": "+302241044138"
+      }
+    },
+    {
+      "type": "node",
+      "id": 905080435,
+      "lat": 36.4474132,
+      "lon": 28.2218978,
+      "tags": {
+        "amenity": "bar",
+        "closed": "yes",
+        "description": "groesste Coctail Bar in Rhodos",
+        "disused": "yes",
+        "name": "Therme"
+      }
+    },
+    {
+      "type": "node",
+      "id": 907356971,
+      "lat": 36.4488651,
+      "lon": 28.2251225,
+      "tags": {
+        "bench": "no",
+        "bin": "no",
+        "bus": "yes",
+        "highway": "bus_stop",
+        "lit": "yes",
+        "name": "Rhodes City Tour Hop On Hop Off",
+        "public_transport": "platform",
+        "shelter": "no",
+        "wheelchair": "limited"
+      }
+    },
+    {
+      "type": "node",
+      "id": 915458803,
+      "lat": 36.4435565,
+      "lon": 28.2258151,
+      "tags": {
+        "amenity": "restaurant",
+        "cuisine": "regional",
+        "internet_access": "wlan",
+        "name": "Romeo",
+        "outdoor_seating": "yes"
+      }
+    },
+    {
+      "type": "node",
+      "id": 915458806,
+      "lat": 36.4439262,
+      "lon": 28.2258161,
+      "tags": {
+        "amenity": "cafe",
+        "name": "Karpathos"
+      }
+    },
+    {
+      "type": "node",
+      "id": 948338313,
+      "lat": 36.4425208,
+      "lon": 28.2256561,
+      "tags": {
+        "name": "Olympos",
+        "tourism": "hotel"
+      }
+    },
+    {
+      "type": "node",
+      "id": 1201703372,
+      "lat": 36.4479264,
+      "lon": 28.2246513,
+      "tags": {
+        "bus": "yes",
+        "name": "Σταθμός λεωφορείων: Ρόδος - Αεροδρόμιο - Αρχαία Κάμειρο",
+        "network": "West Coast Line",
+        "operator": "Δ.Ε.Σ ΡΟΔΑ",
+        "public_transport": "stop_position",
+        "ref": "West Coast Line"
+      }
+    },
+    {
+      "type": "node",
+      "id": 1370728213,
+      "lat": 36.4432639,
+      "lon": 28.2292675,
+      "tags": {
+        "addr:city": "Rhodes",
+        "addr:country": "GR",
+        "addr:housenumber": "33",
+        "addr:street": "Aristotelous",
+        "amenity": "restaurant",
+        "cuisine": "greek",
+        "name": "Alexis 4Seasons",
+        "note:de": "Dachterasse mit Ausblick auf den Hafen und die Altstadt",
+        "phone": "+302241070522",
+        "website": "http://www.alexis4seasons.com"
+      }
+    },
+    {
+      "type": "node",
+      "id": 1370730209,
+      "lat": 36.4428245,
+      "lon": 28.2297717,
+      "tags": {
+        "amenity": "fountain",
+        "int_name": "Fountain",
+        "name": "Μικρό Συντριβάνι"
+      }
+    },
+    {
+      "type": "node",
+      "id": 1370730227,
+      "lat": 36.4436351,
+      "lon": 28.2282751,
+      "tags": {
+        "amenity": "fountain",
+        "int_name": "Fountain",
+        "name": "Μεγάλο Συντριβάνι",
+        "name:de": "Megalo Sintrivani",
+        "name:el": "Μεγάλο Συντριβάνι"
+      }
+    }
+  ]
+}
