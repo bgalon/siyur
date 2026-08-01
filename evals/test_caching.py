@@ -1,61 +1,42 @@
 """T065 — the caching-regression eval, aimed at the tier that actually caches (ADR-0014).
 
-`tasks.md` T065 as written asks for *"repeated same-area **research** reports
-`cache_read > 0`"*. **`planner/nodes/research.py` makes no model call** — ADR-0014 ratifies
-that as a property of the design, not an unfinished implementation (its inputs are already
-provenance-complete and its outputs carry coordinates, which is exactly the combination
-FR-005 exists to keep a model away from). Implemented literally, that eval could only fail
-forever, or be "fixed" by adding a model call to the one pipeline path that carries
-coordinates — the worse of the two outcomes by a wide margin.
+T065 as written asks for *"repeated same-area **research** reports `cache_read > 0`"*.
+**`planner/nodes/research.py` makes no model call** — ADR-0014 ratifies that as a property
+of the design (its inputs are already provenance-complete and its outputs carry coordinates,
+exactly the combination FR-005 keeps a model away from). Implemented literally that eval
+could only fail forever, or be "fixed" by putting a model on the one pipeline path carrying
+coordinates. So it is re-aimed at **`curate`** (Sonnet tier), the only node that crosses the
+seam and the only caller passing `cache_prefix=True`. The intent survives intact: prove a
+cached prefix is genuinely reused, and make a `cache_read = 0` false-pass impossible.
 
-So it is re-aimed at **`curate`** (Sonnet tier), the only node that crosses the seam and the
-only caller passing `cache_prefix=True`. The task's real intent survives intact: prove a
-cached prefix is genuinely being reused, and make a `cache_read = 0` false-pass impossible.
+**What it proves.** Offline, with no API key and no network, things about the *request the
+seam would send* — that the call asks for caching at all; that the breakpoint sits on the
+**stable** prefix and not on the per-request record list (caching a prefix that changes every
+call is the bug this exists to catch); that the prefix clears the tier's minimum; and that a
+repeated pass re-presents it byte-identically while the volatile suffix moves.
 
-## What this eval proves, and what it cannot
+**What it cannot.** That any provider cached anything. :class:`CachingRouter` simulates
+Anthropic's cache accounting so `cache_read_input_tokens` is assertable end to end, but a
+fake reporting a hit is a statement about the fake. The honest claim is: *the request was
+shaped so a provider could cache it.* Only a live call proves the rest.
 
-Offline, with no API key and no network, it proves things about the **request the seam would
-send** — that is the whole of what is checkable here:
+**The false-pass trap (planner-spike constraint 1).** The minimum cacheable prefix is
+model-dependent, and **a prefix below it silently caches nothing** — no error, and
+`cache_read` pinned at 0 for ever. An eval asserting `cache_read > 0` against a small prefix
+either fails permanently or gets "fixed" by deleting the assertion.
+:func:`test_the_cached_prefix_is_large_enough_to_be_cacheable` names the tier, its minimum,
+and the shortfall instead.
 
-* the `curate` seam call asks for prompt caching at all;
-* the breakpoint sits on the **stable** prefix (the ranking system prompt) and not on the
-  per-request record list — caching a prefix that changes every call is the bug this eval
-  exists to catch;
-* the shipped prefix is large enough to be cacheable **at the tier's minimum**; and
-* a repeated pass presents a byte-identical cached prefix while the volatile suffix moves.
-
-It does **not** prove any provider cached anything. :class:`CachingRouter` simulates
-Anthropic's prefix-cache accounting so `cache_read_input_tokens` can be asserted end to end,
-but a fake reporting a cache hit is a statement about the fake. The honest claim is: *the
-request was shaped so that a provider could cache it.* Only a live call proves the rest.
-
-## The false-pass trap (planner-spike constraint 1)
-
-Anthropic's minimum cacheable prefix is model-dependent, and **a prefix below it silently
-caches nothing** — no error, `cache_creation_input_tokens: 0`, and `cache_read` pinned at 0
-for ever. An eval asserting `cache_read > 0` against a trivially-small prefix therefore
-either fails permanently or, worse, gets "fixed" by deleting the assertion.
-:func:`test_the_cached_prefix_is_large_enough_to_be_cacheable` is the guard: it names the
-tier, its minimum, and how far short the shipped prefix falls.
-
-## Measuring a token count with no tokenizer
-
-Sizing the prefix needs a token count, and there is no tokenizer here (counting tokens
-honestly means `POST /v1/messages/count_tokens`, i.e. a key and a network). So the eval
-asserts the **weakest claim that is still a proof**: Anthropic's tokenizer is byte-level BPE,
-whose base vocabulary is the 256 single bytes, so no input is ever split into more tokens
-than it has UTF-8 bytes. `tokens <= bytes` therefore always holds, and
-
-    utf-8 bytes < the tier's minimum  ⇒  tokens < the tier's minimum
-
-is a proof of un-cacheability, not an estimate. Clearing that bar is **necessary, not
-sufficient** — 4 bytes/token is the usual figure for English prose, so a prefix needs roughly
-4× the minimum in bytes to really be cacheable. The failure message reports both numbers.
+**Sizing with no tokenizer.** Counting tokens honestly means `count_tokens` — a key and a
+network. So the eval asserts the weakest claim that is still a *proof*: byte-level BPE bottoms
+out at the 256 single bytes, so `tokens <= utf-8 bytes` always, and `bytes < minimum` implies
+`tokens < minimum`. Clearing that bar is **necessary, not sufficient** (~4 bytes/token is the
+usual figure for prose, so a real prefix needs ~4× the minimum in bytes); the failure message
+reports both numbers.
 """
 
 from __future__ import annotations
 
-import json
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -91,19 +72,12 @@ from tests.test_planner_curate import DERIVED_ON, record
 #: right; the Sonnet one is not — 2048 is the Opus 4.7 / Haiku 3.5 tier, and every Sonnet
 #: from 4.5 through 5 is 1024. The skill wins; see the report on the amending PR.
 MIN_CACHEABLE_PREFIX_TOKENS: Final[Mapping[str, int]] = {
-    "claude-opus-5": 512,
-    "claude-fable-5": 512,
-    "claude-mythos-5": 512,
-    "claude-opus-4-8": 1024,
-    "claude-sonnet-5": 1024,
-    "claude-sonnet-4-6": 1024,
-    "claude-sonnet-4-5": 1024,
-    "claude-opus-4-7": 2048,
-    "claude-haiku-3-5": 2048,
-    "claude-opus-4-6": 4096,
-    "claude-opus-4-5": 4096,
-    "claude-haiku-4-5": 4096,
-}
+    "claude-opus-5": 512, "claude-fable-5": 512, "claude-mythos-5": 512,
+    "claude-opus-4-8": 1024, "claude-sonnet-5": 1024,
+    "claude-sonnet-4-6": 1024, "claude-sonnet-4-5": 1024,
+    "claude-opus-4-7": 2048, "claude-haiku-3-5": 2048,
+    "claude-opus-4-6": 4096, "claude-opus-4-5": 4096, "claude-haiku-4-5": 4096,
+}  # fmt: skip
 
 #: Bytes per token for ordinary English prose. Advisory only — used to say *how far* short a
 #: prefix falls, never to decide whether it does.
@@ -219,12 +193,16 @@ class RecordingRouter:
 
     `tests.test_planner_curate.FakeRouter` records tier and payload only; the caching
     question is about `cache_prefix` and about where the breakpoint lands, so this one keeps
-    the built request too.
+    the built request too. Subclasses shape the reported :class:`Usage` via :meth:`usage`.
     """
 
     reply: str = "[]"
     calls: list[dict[str, Any]] = field(default_factory=list)
     requests: list[dict[str, Any]] = field(default_factory=list)
+
+    def usage(self, tier: TaskTier, request: Mapping[str, Any]) -> Usage:
+        """Token counters for this call. Base router reports none — it only records."""
+        return Usage(model=resolve_model(tier).model_id)
 
     def complete(
         self,
@@ -240,20 +218,19 @@ class RecordingRouter:
         effort: Effort | None = None,
     ) -> Completion:
         self.calls.append({"tier": tier, "system": system, "cache_prefix": cache_prefix})
-        self.requests.append(
-            build_request(
-                tier,
-                system=system,
-                messages=messages,
-                tools=tools,
-                max_tokens=max_tokens,
-                cache_prefix=cache_prefix,
-                long_run=long_run,
-                adaptive_thinking=adaptive_thinking,
-                effort=effort,
-            )
+        request = build_request(
+            tier,
+            system=system,
+            messages=messages,
+            tools=tools,
+            max_tokens=max_tokens,
+            cache_prefix=cache_prefix,
+            long_run=long_run,
+            adaptive_thinking=adaptive_thinking,
+            effort=effort,
         )
-        return Completion(text=self.reply, usage=Usage(model=resolve_model(tier).model_id))
+        self.requests.append(request)
+        return Completion(text=self.reply, usage=self.usage(tier, request))
 
 
 @dataclass
@@ -273,43 +250,18 @@ class CachingRouter(RecordingRouter):
     #: Prefixes already written, keyed by their exact bytes → the tokens they occupy.
     warm: dict[str, int] = field(default_factory=dict)
 
-    def complete(
-        self,
-        tier: TaskTier,
-        *,
-        system: str,
-        messages: Sequence[Message],
-        tools: Sequence[ToolSpec] = (),
-        max_tokens: int = DEFAULT_MAX_TOKENS,
-        cache_prefix: bool = False,
-        long_run: bool = False,
-        adaptive_thinking: bool = True,
-        effort: Effort | None = None,
-    ) -> Completion:
-        completion = super().complete(
-            tier,
-            system=system,
-            messages=messages,
-            tools=tools,
-            max_tokens=max_tokens,
-            cache_prefix=cache_prefix,
-            long_run=long_run,
-            adaptive_thinking=adaptive_thinking,
-            effort=effort,
-        )
-        prefix = cached_prefix(self.requests[-1])
+    def usage(self, tier: TaskTier, request: Mapping[str, Any]) -> Usage:
         model = resolve_model(tier).model_id
+        prefix = cached_prefix(request)
         if prefix is None or undersized_reason(prefix, tier=tier) is not None:
             # No breakpoint, or one below the minimum: the provider caches nothing and says
             # nothing. Both counters stay 0 — the silent failure this eval exists to catch.
-            return completion
+            return Usage(model=model)
         size = max_possible_tokens(prefix)
         if prefix in self.warm:
-            usage = Usage(cache_read_input_tokens=size, model=model)
-        else:
-            self.warm[prefix] = size
-            usage = Usage(cache_creation_input_tokens=size, model=model)
-        return Completion(text=completion.text, usage=usage)
+            return Usage(cache_read_input_tokens=size, model=model)
+        self.warm[prefix] = size
+        return Usage(cache_creation_input_tokens=size, model=model)
 
 
 def three(*names: str) -> list[SiteRecordV1]:
@@ -486,46 +438,22 @@ def test_no_volatile_value_leaks_into_the_cached_prefix() -> None:
 # ── 5 · cache_read through a simulated provider (honest about being a fake) ────────────
 
 
-def test_a_repeated_pass_reports_a_cache_read_against_a_sufficient_prefix() -> None:
+def test_the_cache_simulation_distinguishes_a_write_a_read_and_a_silent_no_op() -> None:
     """T065's `cache_read > 0` clause — through a **simulated** provider, not a real one.
 
-    :class:`CachingRouter` reproduces Anthropic's accounting: first call writes
-    (`cache_creation > 0`), an identical prefix on the second reads (`cache_read > 0`). It
-    is driven against a prefix padded past the tier's minimum, because the *shipped* prefix
-    is not (see :func:`test_the_cached_prefix_is_large_enough_to_be_cacheable`).
-
-    **What this does not prove.** That a provider cached anything. A fake reporting a hit is
-    a statement about the fake. What it does prove is that the request the seam builds is
-    shaped so a provider *could* cache it — stable span, byte-identical across calls, over
-    the minimum — which is the whole of what is checkable with no key and no network.
-    """
-    minimum = minimum_prefix_tokens(CACHING_TIER)
-    router = CachingRouter()
-    padded = RANKING_SYSTEM_PROMPT + "\n" + "reference material. " * minimum
-    assert undersized_reason(padded, tier=CACHING_TIER) is None, "the padding must suffice"
-
-    system = padded
-    for names in (("Palace", "Harbour"), ("Palace", "Harbour")):
-        router.complete(
-            CACHING_TIER,
-            system=system,
-            messages=[Message("user", json.dumps(list(names)))],
-            cache_prefix=True,
-        )
-
-    write, read = router.requests[0], router.requests[1]
-    assert cached_prefix(write) == cached_prefix(read), "the prefix must not move"
-
-
-def test_the_cache_simulation_distinguishes_a_write_a_read_and_a_silent_no_op() -> None:
-    """The three outcomes, side by side — this is what makes `cache_read > 0` meaningful.
-
     A `cache_read > 0` assertion is only informative if `cache_read = 0` is reachable for a
-    *reason you can name*. All three reasons are exercised here: a prefix under the minimum
-    never caches; a sufficient prefix writes once; the identical prefix then reads.
+    *reason you can name*, so all three outcomes are exercised side by side: a sufficient
+    prefix writes once, the identical prefix then reads, and a prefix under the minimum (the
+    shipped one) silently caches nothing at all.
+
+    **What this does not prove.** That a provider cached anything — a fake reporting a hit is
+    a statement about the fake. What it does prove is that the request the seam builds is
+    shaped so a provider *could* cache it: stable span, byte-identical across calls, over the
+    minimum. That is the whole of what is checkable with no key and no network.
     """
     minimum = minimum_prefix_tokens(CACHING_TIER)
-    big = "reference material. " * minimum
+    big = RANKING_SYSTEM_PROMPT + "\n" + "reference material. " * minimum
+    assert undersized_reason(big, tier=CACHING_TIER) is None, "the padding must suffice"
     turn = [Message("user", "[]")]
 
     warm = CachingRouter()
@@ -534,6 +462,7 @@ def test_the_cache_simulation_distinguishes_a_write_a_read_and_a_silent_no_op() 
     assert first.usage.cache_creation_input_tokens > 0, "the first call writes the entry"
     assert first.usage.cache_read_input_tokens == 0, "…and reads nothing"
     assert second.usage.cache_read_input_tokens > 0, "the second call reads it"
+    assert cached_prefix(warm.requests[0]) == cached_prefix(warm.requests[1]), "prefix moved"
 
     # The silent no-op: the shipped prefix's actual size, through the same simulation.
     cold = CachingRouter()
