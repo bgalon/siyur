@@ -42,8 +42,6 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Final
 
-import pytest
-
 from commons.llm import (
     DEFAULT_MAX_TOKENS,
     ROUTING_TABLE,
@@ -343,18 +341,6 @@ def test_the_cache_breakpoint_covers_the_stable_prefix_and_not_the_record_list()
 # ── 3 · the prefix is realistically sized (the false-pass trap) ────────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "LIVE DEFECT — planner/nodes/curate.py::RANKING_SYSTEM_PROMPT is 535 UTF-8 bytes "
-        "(~133 tokens), far under Sonnet 5's 1024-token minimum cacheable prefix. curate() "
-        "correctly passes cache_prefix=True and the breakpoint is correctly placed, but "
-        "Anthropic caches nothing below the minimum and reports no error, so the lever is "
-        "off while looking on. Fixing it means editing planner/nodes/curate.py (and the "
-        "prompts/research.md §3.2 mirror + version bump) — owned by another session. "
-        "Remove this xfail in the same PR that grows the prefix."
-    ),
-)
 def test_the_cached_prefix_is_large_enough_to_be_cacheable() -> None:
     """Planner-spike constraint 1 — the load-bearing half of T065.
 
@@ -362,6 +348,11 @@ def test_the_cached_prefix_is_large_enough_to_be_cacheable() -> None:
     `cache_read` is 0 for ever, and no error is raised. An eval that only asserted
     `cache_read > 0` would fail permanently here with nothing to say about *why*, and the
     obvious "fix" is to delete the assertion. This says why, and by how much.
+
+    **This was red on arrival — FAIL-006.** It shipped `xfail(strict=True)` against a 535-byte
+    (~133-token) ranking prompt under Sonnet 5's 1024-token minimum. `RANKING_SYSTEM_PROMPT`
+    was rewritten (`prompts/research.md` v2, §3.5) and the marker removed in the same PR that
+    fixed it, which is what `strict=True` was there to force.
     """
     reason = undersized_reason(RANKING_SYSTEM_PROMPT, tier=CACHING_TIER)
     assert reason is None, reason
@@ -443,8 +434,12 @@ def test_the_cache_simulation_distinguishes_a_write_a_read_and_a_silent_no_op() 
 
     A `cache_read > 0` assertion is only informative if `cache_read = 0` is reachable for a
     *reason you can name*, so all three outcomes are exercised side by side: a sufficient
-    prefix writes once, the identical prefix then reads, and a prefix under the minimum (the
-    shipped one) silently caches nothing at all.
+    prefix writes once, the identical prefix then reads, and a prefix under the minimum
+    silently caches nothing at all.
+
+    The under-minimum prefix is a **deliberately small one**, not the shipped prompt: until
+    FAIL-006 was fixed the shipped prompt *was* the demonstration, which is precisely the
+    state this file exists to end.
 
     **What this does not prove.** That a provider cached anything — a fake reporting a hit is
     a statement about the fake. What it does prove is that the request the seam builds is
@@ -464,12 +459,15 @@ def test_the_cache_simulation_distinguishes_a_write_a_read_and_a_silent_no_op() 
     assert second.usage.cache_read_input_tokens > 0, "the second call reads it"
     assert cached_prefix(warm.requests[0]) == cached_prefix(warm.requests[1]), "prefix moved"
 
-    # The silent no-op: the shipped prefix's actual size, through the same simulation.
+    # The silent no-op, through the same simulation. `undersized_reason` is asserted first so
+    # this branch cannot quietly become a second copy of the passing case above.
+    tiny = "Rank the given ids by traveller salience. Reply with ids only."
+    assert undersized_reason(tiny, tier=CACHING_TIER) is not None, (
+        "this branch must be driven by a prefix that is genuinely under the minimum"
+    )
     cold = CachingRouter()
     for _ in range(2):
-        completion = cold.complete(
-            CACHING_TIER, system=RANKING_SYSTEM_PROMPT, messages=turn, cache_prefix=True
-        )
+        completion = cold.complete(CACHING_TIER, system=tiny, messages=turn, cache_prefix=True)
     assert completion.usage.cache_read_input_tokens == 0, (
         "an under-minimum prefix must report no cache read even on a repeat — this is the "
         "false-pass trap: cache_read = 0 here means 'nothing was cacheable', not 'the cache "
