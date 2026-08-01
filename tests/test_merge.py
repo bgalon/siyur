@@ -1,0 +1,270 @@
+"""Unit tests — the merge join rule (`commons/merge.py`), T031 of Spec 001.
+
+Ground truth: `docs/design/tech-design.md` §1.2 / `docs/data/poi-site.md` "Merge" /
+`specs/001-research-cited-sites/data-model.md` §5 rule 5. The load-bearing assertion in
+this file is **`test_neighbours_with_different_names_do_not_merge`**: two records 5 m
+apart with different names must stay two records. Distance alone never merges — the
+discovery spike measured a *median* name similarity of ≈0.1 among sub-20 m pairs, so a
+distance-only join would fuse a whole old town into one POI.
+"""
+
+from __future__ import annotations
+
+from datetime import date
+
+import pytest
+from pyproj import Geod
+from shapely import Point
+
+from commons.geo import GeometryError, Wgs84Point
+from commons.merge import (
+    EPSILON_METERS,
+    TAU_NAME_SIMILARITY,
+    best_name_similarity,
+    decide_match,
+    distance_m,
+    name_similarity,
+    name_similarity_by_language,
+    normalize_name,
+)
+from commons.models import SiteRecordV1, SourcedValue, SourceRef
+
+OVERTURE = SourceRef(kind="overture", id="08f394…gers", license="CDLA-Permissive-2.0")
+OSM = SourceRef(
+    kind="osm",
+    id="node/123456",
+    license="ODbL-1.0",
+    attribution="© OpenStreetMap contributors",
+)
+OBSERVED = date(2026, 7, 22)
+# An arbitrary anchor; nothing in `commons/` may hardcode a place (FR-001 genericity) —
+# in a *test* a concrete coordinate is the fixture, not product behaviour.
+ANCHOR = (28.2247, 36.4443)
+_GEOD = Geod(ellps="WGS84")
+
+
+def _offset(metres: float, *, azimuth: float = 90.0, origin: tuple[float, float] = ANCHOR) -> Point:
+    """A point exactly ``metres`` away from ``origin`` along ``azimuth`` (WGS84 geodesic)."""
+    lon, lat, _ = _GEOD.fwd(origin[0], origin[1], azimuth, metres)
+    return Point(lon, lat)
+
+
+def _record(
+    *,
+    names: dict[str, str],
+    location: Point | None = None,
+    gers_id: str | None = None,
+    source: SourceRef = OVERTURE,
+) -> SiteRecordV1:
+    """A minimal valid slice-001 record: stamped names + a stamped location."""
+    return SiteRecordV1(
+        gers_id=gers_id,
+        names={
+            tag: SourcedValue[str].stamp(
+                value=value, source=source, confidence=0.8, observed_at=OBSERVED
+            )
+            for tag, value in names.items()
+        },
+        location=SourcedValue[Wgs84Point].stamp(
+            value=location if location is not None else Point(*ANCHOR),
+            source=source,
+            confidence=0.9,
+            observed_at=OBSERVED,
+        ),
+    )
+
+
+# ── distance: metric, not degrees ──────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("metres", [0.0, 5.0, 24.9, 25.1, 250.0])
+def test_distance_is_geodesic_metres(metres: float) -> None:
+    """`distance_m` inverts `Geod.fwd`, i.e. it really is metres on the WGS84 ellipsoid."""
+    assert distance_m(Point(*ANCHOR), _offset(metres)) == pytest.approx(metres, abs=1e-6)
+
+
+def test_distance_is_symmetric_and_zero_for_the_same_point() -> None:
+    here, there = Point(*ANCHOR), _offset(17.0)
+    assert distance_m(here, there) == pytest.approx(distance_m(there, here))
+    assert distance_m(here, here) == pytest.approx(0.0, abs=1e-6)
+
+
+@pytest.mark.parametrize("azimuth", [0.0, 90.0, 180.0, 270.0])
+def test_distance_does_not_depend_on_bearing(azimuth: float) -> None:
+    """A degree of longitude is not a degree of latitude — a planar ε would fail this."""
+    assert distance_m(Point(*ANCHOR), _offset(20.0, azimuth=azimuth)) == pytest.approx(
+        20.0, abs=1e-6
+    )
+
+
+def test_distance_rejects_a_swapped_coordinate_pair() -> None:
+    """(lon, lat) discipline: a swapped pair with |lon| > 90 fails loudly, not silently."""
+    with pytest.raises(GeometryError):
+        distance_m(Point(*ANCHOR), Point(36.4443, 128.0))
+
+
+# ── name similarity: deterministic, offline, script-preserving ─────────────────────
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("St. Nicholas  Tower", "st nicholas tower"),
+        ("PALACE of the Grand-Master", "palace of the grand master"),
+        ("Ρόδος", "ροδοσ"),  # accents + final sigma folded, **script preserved**
+    ],
+)
+def test_normalize_name_folds_case_diacritics_and_punctuation(raw: str, expected: str) -> None:
+    assert normalize_name(raw) == expected
+
+
+def test_normalize_name_never_transliterates() -> None:
+    """Merge compares within a language; transliteration belongs to ingestion (§3)."""
+    assert normalize_name("Ρόδος") != normalize_name("Rodos")
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        ("Clock Tower", "Clocktower"),
+        ("Mandraki Harbour", "Mandraki Harbor"),
+        ("Clock Tower", "Archaeological Museum"),
+        ("", "Elli Beach"),
+    ],
+)
+def test_name_similarity_is_symmetric_and_bounded(left: str, right: str) -> None:
+    forward, backward = name_similarity(left, right), name_similarity(right, left)
+    assert forward == backward  # exact, not approx: reproducible merges need it
+    assert 0.0 <= forward <= 1.0
+
+
+def test_name_similarity_identical_after_normalisation_is_one() -> None:
+    assert name_similarity("Elli Beach", "  elli   beach! ") == 1.0
+
+
+def test_name_similarity_compares_only_shared_language_keys() -> None:
+    """Cross-script comparison scores ≈0 (spike) — so it is never done."""
+    left = _record(names={"en": "Rhodes", "el": "Ρόδος"})
+    right = _record(names={"el": "Ρόδος", "ja": "ロドス"})
+    assert set(name_similarity_by_language(left, right)) == {"el"}
+
+
+def test_records_sharing_no_name_key_have_no_name_signal() -> None:
+    left = _record(names={"en": "Rhodes"})
+    right = _record(names={"el": "Ρόδος"})
+    assert best_name_similarity(left, right) == (None, 0.0)
+
+
+def test_best_name_similarity_picks_the_strongest_agreement() -> None:
+    left = _record(names={"en": "Clock Tower", "el": "Ρολόι"})
+    right = _record(names={"en": "Clocktower", "el": "Καφενείο"})
+    tag, score = best_name_similarity(left, right)
+    assert tag == "en"
+    assert score == pytest.approx(name_similarity("Clock Tower", "Clocktower"))
+
+
+# ── the join rule ──────────────────────────────────────────────────────────────────
+
+
+def test_shared_gers_id_joins_regardless_of_distance_or_name() -> None:
+    left = _record(names={"en": "Grand Master Palace"}, gers_id="08f394…gers")
+    right = _record(
+        names={"en": "Παλάτι"}, location=_offset(400.0), gers_id="08f394…gers", source=OSM
+    )
+    decision = decide_match(left, right)
+    assert decision.matched is True
+    assert decision.rule == "gers_id"
+
+
+def test_different_gers_ids_never_join_even_when_identical_and_adjacent() -> None:
+    """GERS is authoritative: two ids means two places — no fuzzy retry."""
+    left = _record(names={"en": "Clock Tower"}, gers_id="08f394…a")
+    right = _record(names={"en": "Clock Tower"}, location=_offset(1.0), gers_id="08f394…b")
+    decision = decide_match(left, right)
+    assert decision.matched is False
+    assert decision.rule is None
+
+
+def test_one_sided_gers_id_falls_through_to_the_fuzzy_rule() -> None:
+    """Overture↔OSM share no ids in practice, so this is the common path."""
+    left = _record(names={"en": "Clock Tower"}, gers_id="08f394…gers")
+    right = _record(names={"en": "Clocktower"}, location=_offset(4.0), source=OSM)
+    decision = decide_match(left, right)
+    assert decision.matched is True
+    assert decision.rule == "spatial_name"
+
+
+# --- the one that matters most: distance alone never merges ---
+
+
+def test_neighbours_with_different_names_do_not_merge() -> None:
+    """Two differently-named POIs 5 m apart stay two records (validation rule 5).
+
+    This is the dense-old-town case the spike measured: proximity is not identity.
+    """
+    left = _record(names={"en": "Clock Tower"})
+    right = _record(names={"en": "Café Elli"}, location=_offset(5.0), source=OSM)
+    decision = decide_match(left, right)
+    assert decision.matched is False
+    assert decision.distance_m is not None
+    assert decision.distance_m <= EPSILON_METERS  # well inside ε …
+    assert decision.name_similarity is not None
+    assert decision.name_similarity < TAU_NAME_SIMILARITY  # … and still no merge
+    assert "distance alone never merges" in decision.reason
+
+
+def test_co_located_records_with_no_shared_language_do_not_merge() -> None:
+    """No shared name key ⇒ no name signal ⇒ no merge, even at 0 m."""
+    left = _record(names={"en": "Clock Tower"})
+    right = _record(names={"el": "Ρολόι"}, source=OSM)
+    assert decide_match(left, right).matched is False
+
+
+# --- ε boundary (τ satisfied) ---
+# Just inside / just outside by 0.1 m rather than exactly ε: the ellipsoid inverse is
+# accurate to ~1e-8 m, so no (lon, lat) pair measures *exactly* 25.000000000 m.
+
+
+@pytest.mark.parametrize(
+    ("metres", "expected"),
+    [(0.0, True), (24.0, True), (EPSILON_METERS - 0.1, True), (EPSILON_METERS + 0.1, False)],
+)
+def test_epsilon_boundary(metres: float, expected: bool) -> None:
+    left = _record(names={"en": "Mandraki Harbour"})
+    right = _record(names={"en": "Mandraki Harbor"}, location=_offset(metres), source=OSM)
+    assert name_similarity("Mandraki Harbour", "Mandraki Harbor") >= TAU_NAME_SIMILARITY
+    assert decide_match(left, right).matched is expected
+
+
+# --- τ boundary (ε satisfied) ---
+# Two real-world-shaped name pairs that bracket τ=0.6 closely: 0.652 and 0.585.
+_JUST_ABOVE_TAU = ("Agios Fanourios", "Agios Fanourios Orthodox Church")
+_JUST_BELOW_TAU = ("Kahal Shalom", "Kahal Kadosh Shalom Synagogue")
+
+
+@pytest.mark.parametrize(("pair", "expected"), [(_JUST_ABOVE_TAU, True), (_JUST_BELOW_TAU, False)])
+def test_tau_boundary(pair: tuple[str, str], expected: bool) -> None:
+    similarity = name_similarity(*pair)
+    assert (similarity >= TAU_NAME_SIMILARITY) is expected, similarity
+    left = _record(names={"en": pair[0]})
+    right = _record(names={"en": pair[1]}, location=_offset(3.0), source=OSM)
+    decision = decide_match(left, right)
+    assert decision.matched is expected
+    assert decision.distance_m is not None and decision.distance_m < EPSILON_METERS
+
+
+def test_far_apart_with_identical_names_does_not_merge() -> None:
+    """Name alone is not enough either — both tests must pass."""
+    left = _record(names={"en": "Agios Nikolaos"})
+    right = _record(names={"en": "Agios Nikolaos"}, location=_offset(900.0), source=OSM)
+    assert decide_match(left, right).matched is False
+
+
+def test_decision_is_symmetric() -> None:
+    """Merging must not depend on which record the loop happens to visit first."""
+    left = _record(names={"en": "Elli Beach"})
+    right = _record(names={"en": "Elly Beach"}, location=_offset(12.0), source=OSM)
+    forward, backward = decide_match(left, right), decide_match(right, left)
+    assert forward.matched is backward.matched is True
+    assert forward.distance_m == pytest.approx(backward.distance_m)
+    assert forward.name_similarity == backward.name_similarity
