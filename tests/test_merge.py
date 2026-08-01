@@ -568,3 +568,194 @@ def test_und_still_requires_the_name_signal_distance_alone_never_merges() -> Non
     assert decision.matched is False
     assert decision.name_similarity is not None and decision.name_similarity < TAU_NAME_SIMILARITY
     assert len(merge_records([overture_side, osm_side])) == 2
+
+
+# ══ refresh is non-destructive *and* convergent (T051) ═════════════════════════════
+#
+# `repository.upsert_sites` runs a refresh as `merge_cluster([stored, incoming])` written
+# back onto the existing row, so `merge_cluster` is where the FR-006 refresh guarantee
+# actually lives. Two halves, and both must hold at once:
+#
+#   * **non-destructive** — a refresh only ever adds. A prior source is never overwritten:
+#     it stays the winner, or becomes a `FieldConflict` candidate, and is always in the
+#     ledger. New `observed_at`s and new `FieldConflict`s enrich; nothing is erased.
+#   * **convergent** — "never discard" must not decay into "grows forever". Applying the
+#     same observation twice has to reach a fixed point, or every refresh cycle inflates
+#     the stored `site.fields` blob with copies of what is already there.
+
+
+def _refresh(stored: SiteRecordV1, observation: SiteRecordV1) -> SiteRecordV1:
+    """One refresh pass, shaped exactly like `commons/repository.py`'s: the stored commons
+    record re-merged with a freshly observed one, the result landing on the stored row."""
+    return merge_cluster([stored, observation]).record
+
+
+def test_a_refresh_keeps_both_the_winner_and_the_prior_source_reachable() -> None:
+    """The core T051 claim: a fresh observation of a field a source already answered adds
+    a candidate, it does not replace one. Both source refs stay reachable in the record."""
+    stored = merge_cluster(
+        [_record(names={"en": "Clock Tower"}, source=OVERTURE, address="1 Odos Orfeos")]
+    ).record
+    fresher = _record(
+        names={"en": "Clock Tower"},
+        source=OSM,
+        address="Orfeos 1",
+        observed_at=OBSERVED + timedelta(days=30),
+    )
+
+    refreshed = _refresh(stored, fresher)
+
+    winner = refreshed.address
+    assert winner is not None
+    # Source trust outranks recency, so the *prior* value survives a newer observation —
+    # a refresh proposes, the winner policy disposes; neither one deletes.
+    assert (winner.value, winner.source) == ("1 Odos Orfeos", OVERTURE)
+    conflict = next(c for c in refreshed.conflicts if c.field == "address")
+    assert {c.value for c in conflict.candidates} == {"1 Odos Orfeos", "Orfeos 1"}
+    assert {c.source for c in conflict.candidates} == {OVERTURE, OSM}
+    assert source_refs(refreshed) == {OVERTURE, OSM}
+
+
+def test_a_newer_observation_enriches_and_leaves_the_older_value_reachable() -> None:
+    """When the fresher value *does* win, the one it displaced is still in the record."""
+    stale_ref = SourceRef(kind="osm", id="node/1", license="ODbL-1.0")
+    fresh_ref = SourceRef(kind="osm", id="node/2", license="ODbL-1.0")
+    then = OBSERVED - timedelta(days=400)
+    stored = merge_cluster(
+        [_record(names={"en": "X"}, source=stale_ref, address="old", observed_at=then)]
+    ).record
+
+    refreshed = _refresh(
+        stored, _record(names={"en": "X"}, source=fresh_ref, address="new", observed_at=OBSERVED)
+    )
+
+    winner = refreshed.address
+    assert winner is not None
+    assert (winner.value, winner.observed_at) == ("new", OBSERVED)
+    conflict = next(c for c in refreshed.conflicts if c.field == "address")
+    # Enriched, not erased: the superseded value keeps its own `observed_at` stamp.
+    assert {(c.value, c.observed_at) for c in conflict.candidates} == {
+        ("old", then),
+        ("new", OBSERVED),
+    }
+    assert source_refs(refreshed) == {stale_ref, fresh_ref}
+
+
+def test_a_refresh_adds_genuinely_new_information_without_disturbing_the_old() -> None:
+    """A name in a new language and a new category are *coverage*, not disagreement: they
+    land untouched alongside the existing values, whose stamps are byte-identical after."""
+    stored = merge_cluster(
+        [_record(names={"en": "Clock Tower"}, source=OVERTURE, categories=("attraction.castle",))]
+    ).record
+
+    refreshed = _refresh(
+        stored,
+        _record(
+            names={"el": "Ρολόι"},
+            source=OSM,
+            categories=("attraction.museum",),
+            observed_at=OBSERVED + timedelta(days=30),
+        ),
+    )
+
+    assert refreshed.names["en"] == stored.names["en"]  # whole `SourcedValue`, stamp included
+    assert (refreshed.names["el"].value, refreshed.names["el"].source) == ("Ρολόι", OSM)
+    assert {c.value for c in refreshed.categories} == {"attraction.castle", "attraction.museum"}
+    assert next(c for c in refreshed.categories if c.value == "attraction.castle") == next(
+        c for c in stored.categories if c.value == "attraction.castle"
+    )
+    assert refreshed.conflicts == ()  # new information is not a conflict
+    assert source_refs(refreshed) == {OVERTURE, OSM}
+
+
+def test_re_merging_a_record_with_itself_is_idempotent() -> None:
+    """The degenerate refresh — nothing new observed — must be a byte-for-byte no-op."""
+    merged = merge_cluster(
+        [
+            _record(
+                names={"en": "Clock Tower"},
+                source=OVERTURE,
+                address="1 Odos Orfeos",
+                categories=("attraction.castle",),
+            ),
+            _record(
+                names={"en": "Clock Tower"},
+                source=OSM,
+                address="Orfeos 1",
+                categories=("attraction.museum",),
+            ),
+        ]
+    ).record
+
+    assert _refresh(merged, merged).model_dump_json() == merged.model_dump_json()
+
+
+def test_repeated_refresh_reaches_a_fixed_point_instead_of_growing() -> None:
+    """Regression: `merge_cluster` deduped the carried-forward conflicts and the newly
+    derived ones *separately*, then concatenated the two groups. Re-merging a stored
+    record with the observation that caused its conflict re-derives that exact conflict,
+    so an identical copy was stored beside the original on the first refresh (and stuck
+    there — `_unique` collapsed the input copies on the next pass, so growth was bounded
+    at one spurious copy, never unbounded). `site_conflict` rows are deduped by the
+    repository, so the only symptom was `site.fields` blob noise. A refresh must converge:
+    the same observation applied again changes nothing at all."""
+    stored = merge_cluster(
+        [_record(names={"en": "Clock Tower"}, source=OVERTURE, address="1 Odos Orfeos")]
+    ).record
+    observation = _record(names={"en": "Clock Tower"}, source=OSM, address="Orfeos 1")
+
+    first = _refresh(stored, observation)
+    assert len(first.conflicts) == 1
+
+    current = first
+    for _ in range(5):
+        current = _refresh(current, observation)
+        assert len(current.conflicts) == 1
+        assert source_refs(current) == {OVERTURE, OSM}
+    # Fixed point, not merely bounded: the whole persisted blob stops changing.
+    assert current.model_dump_json() == first.model_dump_json()
+
+
+def test_the_conflict_dedupe_never_collapses_different_candidate_sources() -> None:
+    """The guard on the dedupe above. Two conflicts on one field that differ in even one
+    candidate are different information; collapsing them would drop a source ref, which is
+    a far worse bug than the blob growth the dedupe exists to stop (FR-009)."""
+    stored = merge_cluster(
+        [
+            _record(names={"en": "Clock Tower"}, source=OVERTURE, address="1 Odos Orfeos"),
+            _record(names={"en": "Clock Tower"}, source=WIKIVOYAGE, address="Odos Ippoton 1"),
+        ]
+    ).record
+    # Overture outranks Wikivoyage, so the stored conflict is {OVERTURE, WIKIVOYAGE} and
+    # the refresh derives a *different* one, {OVERTURE, OSM}. Both must survive.
+    observation = _record(names={"en": "Clock Tower"}, source=OSM, address="Orfeos 1")
+    refreshed = _refresh(stored, observation)
+
+    address_conflicts = [c for c in refreshed.conflicts if c.field == "address"]
+    assert len(address_conflicts) == 2
+    assert {
+        candidate.source for conflict in address_conflicts for candidate in conflict.candidates
+    } == {OVERTURE, WIKIVOYAGE, OSM}
+    assert source_refs(refreshed) == {OVERTURE, WIKIVOYAGE, OSM}
+    # …and keeping both still converges rather than compounding.
+    assert _refresh(refreshed, observation).model_dump_json() == refreshed.model_dump_json()
+
+
+@settings(max_examples=200, deadline=None)
+@given(st.lists(_ROW, min_size=1, max_size=4))
+def test_a_second_identical_refresh_is_a_no_op(
+    rows: list[tuple[int, int, int, int, int, int]],
+) -> None:
+    """Property: whatever the cluster, refreshing twice with the same observation is
+    indistinguishable from refreshing once — byte-identical blob, identical source refs.
+
+    (The FR-009 "no source ref is lost" half is `test_no_source_ref_is_lost`, which reads
+    `MergeResult.source_refs`; two agreeing sources leave only the ledger's copy of the
+    loser, so a *record* alone is legitimately a subset of its inputs' refs.)"""
+    records = [_row_record(row) for row in rows]
+    stored = merge_cluster(records).record
+    once = merge_cluster([stored, records[0]])
+    twice = merge_cluster([once.record, records[0]])
+    assert twice.record.model_dump_json() == once.record.model_dump_json()
+    assert source_refs(twice.record) == source_refs(once.record)
+    assert twice.source_refs == once.source_refs
