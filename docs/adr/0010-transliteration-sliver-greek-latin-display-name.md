@@ -43,3 +43,34 @@ Drivers: a deterministic engine is the only one that makes SC-004's ≥95% bar *
 - **Provenance-inheritance assertion** (in the same test): the `el-Latn` `SourcedValue.source` equals the `el` value's `SourceRef` (license/attribution/`bundleable` carried through), so `test_no_unbundleable_in_bundle` continues to hold on derived names.
 - **FAIL-001 linkage**: this test is the regression eval that closes the FAIL-001 "source script untrustworthy" loop for the name path.
 - **TODO (lands with DU-02/DU-03 implementation):** `commons/translit.py`, `tests/test_translit.py`, and the concrete transliteration package pin in `pyproject.toml`.
+
+## Amendment — 2026-08-01 (resolve-then-pin outcome: no package — PyICU is a confirmed CI build hazard)
+
+*drafted-by: claude-code · approved-by: pending (Ben to ratify) · Date: 2026-08-01*
+
+Spec 001 Phase 1 Setup (T001, `pyproject.toml` dependency audit) resolved the "open sub-decision deferred to implementation" this ADR left open: **PyICU vs a pure-python alternative**, per the ADR-0007 resolve-then-pin discipline.
+
+**PyICU, concretely evaluated:**
+- `uv pip install --dry-run pyicu` resolves a candidate (`2.16.2`), but PyPI publishes **only an sdist** for every PyICU release (confirmed via the PyPI JSON API — zero `bdist_wheel`/`bdist_wheel` entries for any platform), so `uv`/`pip` must compile the C extension from source on every install, everywhere, including CI runners.
+- A real build attempt (`uv run --with pyicu python -c "import icu"`) failed immediately: `RuntimeError: Please install pkg-config on your system or set the ICU_VERSION environment variable` — PyICU requires `pkg-config` **and** system `libicu`-dev headers at build time, neither of which is preinstalled on a bare `ubuntu-latest` GitHub Actions runner.
+- `.github/workflows/**` edits are review-gated (ADR-0006); this session cannot add an `apt-get install libicu-dev` CI step to work around it.
+
+This is exactly the build hazard ADR-0010's original text anticipated ("PyICU needs a system libicu — if that's a build hazard, pick the pragmatic alternative").
+
+**Alternatives re-considered, and why none is a like-for-like swap:**
+- `anyascii` (ISC, pure-python, no build step) and `Unidecode`/`transliterate` (GPL-family licensing, a code-license compliance risk this repo has not accepted elsewhere) are all **ASCII-folding** libraries — the same category this ADR's original **E3 was already rejected** for ("lossy/inaccurate for Greek diacritics and polytonic forms"). Concretely: naive per-character folding renders Greek digraphs wrong for a display name (`μπ` → `mp` instead of the ELOT‑743 `b`; `ντ` → `nt` instead of `d`), and none of these libraries has a hook for the FAIL-001 script-validation guard this ADR requires before deriving. Adopting one would silently re-open the rejected option, not satisfy it.
+
+**Decision:** pin **no transliteration package** in `pyproject.toml`. `commons/translit.py` (DU-03, not built by this task) should implement a **small, hand-rolled, deterministic Greek→Latin rule table** in-repo — Greek digraphs (`μπ`→`b`, `ντ`→`d`, `γγ`/`γκ`→`g`/`ng`, `τσ`→`ts`, `τζ`→`tz`) plus monotonic-accent stripping, following the public ELOT 743 / ISO 843 mapping PyICU's `Greek-Latin` transform itself implements. This keeps E1's actual substance — deterministic, rule-based, digraph-aware, snapshot-testable, script-validated before deriving — with **zero runtime dependency**: no C-extension build hazard, no GPL entanglement, no wheel availability risk. It is a smaller commitment than either rejected option, and it ports the same way a future language's table would (per the original ADR's accepted-cost note).
+
+### Consequences (amendment)
+
+- Good: closes the open sub-decision with an evaluated, not guessed, answer; keeps CI green with zero new system-package or workflow-file dependency.
+- Good: avoids a GPL-family code dependency the repo has not otherwise accepted.
+- Bad / accepted cost: the hand-rolled table will not match ICU's full `Greek-Latin` transform's coverage of rare/archaic polytonic forms — acceptable under the original ADR's **≥95%**, not 100%, bar (SC-004); the original-script value remains the always-available fallback.
+- Accepted: this narrows (not reopens) the original decision — the *approach* (E1 + P1) is unchanged; only the *engine* changes from "ICU via a package" to "ICU's public rules, hand-implemented."
+
+### Confirmation (amendment)
+
+- Same as the original ADR's Confirmation section (`tests/test_translit.py`, snapshot-gated, ≥95% bar, provenance-inheritance assertion, FAIL-001 script-mismatch case) — unaffected by the engine change, since the contract was always "deterministic transform, testable to a fixed expected output," not "must be backed by ICU specifically."
+- New: `pyproject.toml`'s dependency comment block (spec-001 Phase 1 setup, T001) records this decision inline, so a future reader doesn't have to rediscover why no transliteration package is pinned.
+- **TODO (unchanged, lands with DU-03):** `commons/translit.py` + `tests/test_translit.py` still not built by this task.

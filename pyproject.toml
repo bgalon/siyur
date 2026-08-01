@@ -10,8 +10,15 @@ readme = "README.md"
 # (shapely 2.1.x / h3 4.5.x / osmnx 2.1.x / geopandas 1.1.x). The planner-seam
 # (pydantic-ai, litellm — ADR-0004, NOT langgraph) and eval libs (deepeval,
 # agentevals) land here at DU-00 unit d, pinned against the versions uv resolved
-# at scaffolding time (ADR-0007) — not guessed. The Anthropic-native adapter's
-# `anthropic` SDK is deferred to the seam implementation (commons/llm.py, DU-02).
+# at scaffolding time (ADR-0007) — not guessed. Spec-001 Phase 1 setup (T001)
+# adds the rest of the slice-001 dependency set the same way (resolve-then-pin):
+# geoalchemy2/httpx (ingestion + PostGIS bridge), anthropic (the seam's M1
+# provider SDK — import stays confined to commons/llm.py, guarded by
+# tests/test_llm_seam.py at DU-02), testcontainers/syrupy (dev group, Tier-2 +
+# snapshot testing). No transliteration package is pinned — see ADR-0010
+# amendment (PyICU confirmed a CI build hazard: no wheels, requires
+# pkg-config + system libicu-dev we cannot add without editing CI workflows,
+# which is review-gated per ADR-0006).
 dependencies = [
     # --- geospatial core (see AGENTS.md "Geo APIs" table — do NOT emit v-old idioms) ---
     "shapely~=2.1",
@@ -34,10 +41,24 @@ dependencies = [
     # --- planner model seam (ADR-0004: PydanticAI orchestration + LiteLLM routing) ---
     "pydantic-ai~=2.21",
     "litellm~=1.94",
+    # Anthropic-native adapter SDK (ADR-0004 M1 adapter), pinned now at spec-001 Phase 1
+    # setup rather than deferred to DU-02 (ADR-0007 point 4's original plan) so the whole
+    # slice-001 dependency set resolves together, mirroring how pydantic-ai/litellm were
+    # pre-pinned at DU-00 before planner code existed. Import stays confined to
+    # commons/llm.py (the seam) — tests/test_llm_seam.py (DU-02) is the guard.
+    "anthropic~=0.120",
     # --- persistence (planner checkpoint + PostGIS access, migrations) ---
     "sqlalchemy~=2.0",
     "alembic~=1.14",
     "psycopg[binary]~=3.2",
+    # GeoAlchemy2 = the SQLAlchemy <-> PostGIS geometry-column bridge (commons/db.py,
+    # DU-02/03: `site.geom geometry(Point,4326)` GiST-indexed) — sits alongside
+    # sqlalchemy/psycopg, not the seam.
+    "geoalchemy2~=0.20",
+    # httpx = the Overpass HTTP client (commons/sources/osm.py, ADR-0009 R2) — already a
+    # transitive dep of pydantic-ai/fastapi's stack; pinned directly since product code
+    # imports it, not just test infra.
+    "httpx~=0.28",
 ]
 
 [dependency-groups]
@@ -51,6 +72,9 @@ dev = [
     # --- eval harness libs (test-strategy tiers; harness itself lands at unit e) ---
     "deepeval~=4.1",
     "agentevals~=0.0.9",
+    # --- Tier-2 integration + snapshot testing (spec-001 Phase 1 setup) ---
+    "testcontainers~=4.15",
+    "syrupy~=5.5",
 ]
 
 [tool.uv]
