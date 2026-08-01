@@ -19,11 +19,11 @@ import type {
   SourcedValue,
 } from './types'
 
-export function isRecord(v: unknown): v is Record<string, unknown> {
+function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
 }
 
-export function isNonEmptyString(v: unknown): v is string {
+function isNonEmptyString(v: unknown): v is string {
   return typeof v === 'string' && v.trim().length > 0
 }
 
