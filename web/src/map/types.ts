@@ -1,0 +1,64 @@
+/**
+ * Wire types for `GET /sites` — the shape defined by
+ * `specs/001-research-cited-sites/contracts/sites.md` and the `SiteRecordV1`
+ * schema card (`docs/data/poi-site.md`).
+ *
+ * These describe data that has ALREADY been validated by {@link ../guards}.
+ * Anything straight off `fetch()` is `unknown` until a guard narrows it — the
+ * client must never assume a value carries a provenance stamp (FR-003).
+ */
+
+/** Where a value came from. `docs/data/poi-site.md` § SourceRef. */
+export interface SourceRef {
+  /** `overture` | `osm` | `wikivoyage` | `wikipedia` | `wikidata` | `commons` | … */
+  readonly kind: string
+  /** GERS id / OSM `type/id` / QID / article title / URL. */
+  readonly id?: string | null
+  readonly url?: string | null
+  /** SPDX string, `"proprietary"` or `"user-owned"`. Drives `bundleable`. */
+  readonly license: string
+  /** The exact string to render when the license requires credit (ODbL, CC BY-SA). */
+  readonly attribution?: string | null
+}
+
+/**
+ * The atomic unit: a fact plus its stamp. Everything Siyur shows is a
+ * `SourcedValue`, never a bare fact (Constitution Article V).
+ */
+export interface SourcedValue<T> {
+  readonly value: T
+  readonly source: SourceRef
+  readonly bundleable?: boolean
+  readonly confidence?: number
+  readonly observed_at?: string
+}
+
+/** GeoJSON Point in EPSG:4326 — `[lon, lat]`. */
+export interface GeoPoint {
+  readonly type: 'Point'
+  readonly coordinates: readonly [number, number]
+}
+
+/**
+ * A commons record. Keys of `names` are **BCP-47 subtags** (`en`, `el`,
+ * `el-Latn`), not bare language codes.
+ */
+export interface SiteRecordV1 {
+  readonly id: string
+  readonly gers_id?: string | null
+  readonly schema_ver?: string
+  readonly names: Readonly<Record<string, SourcedValue<string>>>
+  readonly location: SourcedValue<GeoPoint>
+  readonly categories?: readonly SourcedValue<string>[]
+  readonly address?: SourcedValue<string> | null
+  readonly opening_hours?: SourcedValue<string> | null
+  readonly conflicts?: readonly unknown[]
+  readonly updated_at?: string
+}
+
+/** `200` body of `GET /sites?bbox=…`. */
+export interface SitesResponse {
+  readonly sites: readonly SiteRecordV1[]
+  /** Union of required attribution strings across every returned value. */
+  readonly attribution: readonly string[]
+}

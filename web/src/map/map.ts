@@ -4,13 +4,11 @@ import maplibregl, {
   type StyleSpecification,
 } from 'maplibre-gl'
 
-/**
- * ODbL attribution. Constitution Article V requires ODbL attribution to render on
- * EVERY map, including this empty DU-00 skeleton. It stays put once real OSM/Overture
- * tile sources arrive (they add their own source attributions alongside it).
- */
-export const ODBL_ATTRIBUTION =
-  '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a> contributors, ODbL'
+import { ODBL_ATTRIBUTION, OdblAttributionControl } from './attribution'
+
+// The ODbL notice now lives with the control that renders it (`attribution.ts`),
+// re-exported here so the DU-00 import path (`src/map`) is unchanged.
+export { ODBL_ATTRIBUTION } from './attribution'
 
 /**
  * Minimal, self-contained style: version-8, no sources, a single background layer.
@@ -46,4 +44,19 @@ export function createMap(
     attributionControl: { customAttribution: ODBL_ATTRIBUTION },
     ...options,
   })
+}
+
+/**
+ * Create the map with the data-driven attribution control (T044) instead of the
+ * built-in one, so there is exactly one attribution line. The ODbL notice still
+ * renders unconditionally; `/sites` responses add their required credits on top.
+ */
+export function createMapWithAttribution(
+  container: HTMLElement | string,
+  options: Partial<MapOptions> = {},
+): { map: MapLibreMap; attribution: OdblAttributionControl } {
+  const map = createMap(container, { attributionControl: false, ...options })
+  const attribution = new OdblAttributionControl()
+  map.addControl(attribution, 'bottom-right')
+  return { map, attribution }
 }
