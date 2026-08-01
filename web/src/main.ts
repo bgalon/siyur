@@ -2,6 +2,7 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import './style.css'
 import { registerSW } from 'virtual:pwa-register'
 import {
+  boundsOfPolygon,
   createMapWithAttribution,
   mountAreaReuse,
   mountDelimitControl,
@@ -18,9 +19,13 @@ import {
 registerSW({ immediate: true })
 
 /**
- * Auth plumbing (Google SSO → JWT) belongs to the api/auth task. Until it lands
- * this yields `null`, every call goes out unauthenticated, and the endpoints
- * answer `401` — which the surfaces report rather than papering over.
+ * The API authenticates with a **signed session cookie**, not a bearer token
+ * (`api/security.py`). `fetch` defaults to `credentials: 'same-origin'`, so the
+ * cookie rides along on its own once the app and the API share an origin — which
+ * is what `vite.config.ts`'s dev proxy arranges. This hook stays because the
+ * surfaces accept an optional token and a future non-cookie deployment would
+ * need one; today it is correctly `null`, and an unauthenticated call still gets
+ * a `401` that the surfaces report rather than paper over.
  */
 const getToken = (): string | null => null
 
@@ -31,6 +36,14 @@ const onError = (error: unknown): void => {
 const container = document.getElementById('map')
 if (container) {
   const { map, attribution } = createMapWithAttribution(container)
+
+  // Dev-only handle. MapLibre's handlers ignore synthetic wheel/click events, so
+  // an automated browser check (and the DU-07 airplane-mode e2e) has no way to
+  // position the map without one. `import.meta.env.DEV` is statically replaced at
+  // build time, so this whole block is dropped from the production bundle.
+  if (import.meta.env.DEV) {
+    ;(window as unknown as { __siyurMap?: unknown }).__siyurMap = map
+  }
 
   // --- Phase 1 shell (ux-handoff README § Screens 1 "Define the area"): a
   // full-bleed map, a floating control pill over it, and a bottom sheet holding
@@ -78,7 +91,22 @@ if (container) {
   // --- The delimit step (US1's "delimit the area"). The bbox comes from the
   // map, the name from the user; nothing here is bound to a place.
   const delimit = async (area: AreaRequest): Promise<void> => {
-    await resolveAndApply(reuse, { area, token: getToken() })
+    const resolution = await resolveAndApply(reuse, { area, token: getToken() })
+    // Frame what was just resolved. `createMap` opens on the whole world, so
+    // without this an old town resolves to a sub-pixel speck and the map reads
+    // as empty even when the commons holds hundreds of cited places for it.
+    const bounds = boundsOfPolygon(resolution.polygon)
+    if (bounds) {
+      // Copied into mutable tuples: `fitBounds` takes a mutable `LngLatBoundsLike`,
+      // while `boundsOfPolygon` returns a readonly extent on purpose.
+      map.fitBounds(
+        [
+          [bounds[0][0], bounds[0][1]],
+          [bounds[1][0], bounds[1][1]],
+        ],
+        { padding: 48, maxZoom: 17, duration: 600 },
+      )
+    }
   }
 
   mountDelimitControl(controls, {

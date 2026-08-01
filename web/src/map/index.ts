@@ -5,6 +5,7 @@
  */
 
 export { EMPTY_STYLE, ODBL_ATTRIBUTION, createMap, createMapWithAttribution } from './map'
+export { boundsOfPolygon, type LngLatBoundsLike } from './bounds'
 export { OSM_ATTRIBUTION, OdblAttributionControl, isOdblAttribution } from './attribution'
 export {
   chipTextFromSource,

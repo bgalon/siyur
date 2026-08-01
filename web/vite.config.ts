@@ -18,6 +18,29 @@ import { VitePWA } from 'vite-plugin-pwa'
 //   aligned; a non-root CDN path would require base + SW-scope re-alignment (untested).
 export default defineConfig({
   base: '/',
+  // Dev-only same-origin proxy to the FastAPI service. The client calls `/areas`,
+  // `/sites`, `/auth`, `/me` as same-origin paths (see web/src/map/sites.ts), so
+  // without this the dev server 404s them and the map stays empty — which is
+  // exactly the symptom that reads as "the backend is broken" when it is not.
+  //
+  // Same-origin rather than CORS on purpose: the session is a cookie
+  // (api/security.py), and `same_site='lax'` means a cross-origin XHR would not
+  // send it. Proxying keeps one origin, so the cookie rides along and dev matches
+  // the deployed shape (one origin, API behind it) instead of diverging from it.
+  //
+  // Dev server only — `vite build` does not read `server`, so nothing here reaches
+  // the bundle. Point it elsewhere with SIYUR_API_ORIGIN.
+  server: {
+    proxy: Object.fromEntries(
+      ['/areas', '/sites', '/auth', '/me', '/healthz'].map((path) => [
+        path,
+        {
+          target: process.env.SIYUR_API_ORIGIN ?? 'http://127.0.0.1:8000',
+          changeOrigin: false,
+        },
+      ]),
+    ),
+  },
   worker: {
     // DU-06: the OPFS/PMTiles reader is an ES module worker. Set now, no worker exists yet.
     format: 'es',
