@@ -8,7 +8,16 @@
  * response to a marker.
  */
 
-import type { GeoPoint, SiteRecordV1, SitesResponse, SourceRef, SourcedValue } from './types'
+import type {
+  AreaCoverage,
+  AreaResolution,
+  GeoPoint,
+  GeoPolygon,
+  SiteRecordV1,
+  SitesResponse,
+  SourceRef,
+  SourcedValue,
+} from './types'
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -113,4 +122,72 @@ export function sanitiseSitesResponse(raw: unknown): SitesResponse {
     ? body.attribution.filter(isNonEmptyString)
     : []
   return { sites, attribution }
+}
+
+/* ------------------------------------------------- POST /areas (US2) ------- */
+
+/** A closed EPSG:4326 ring of `[lon, lat]` pairs, or `null` if any pair is bad. */
+function sanitiseRing(raw: unknown): [number, number][] | null {
+  if (!Array.isArray(raw) || raw.length < 4) return null
+  const ring: [number, number][] = []
+  for (const pair of raw) {
+    if (!Array.isArray(pair)) return null
+    const [lon, lat] = pair as unknown[]
+    if (!isGeoPoint({ type: 'Point', coordinates: [lon, lat] })) return null
+    ring.push([lon as number, lat as number])
+  }
+  return ring
+}
+
+/** The resolved polygon, or `null` — the client never repairs a bad geometry. */
+export function sanitisePolygon(raw: unknown): GeoPolygon | null {
+  if (!isRecord(raw) || raw.type !== 'Polygon' || !Array.isArray(raw.coordinates)) return null
+  const rings: [number, number][][] = []
+  for (const ring of raw.coordinates) {
+    const clean = sanitiseRing(ring)
+    if (!clean) return null
+    rings.push(clean)
+  }
+  return rings.length > 0 ? { type: 'Polygon', coordinates: rings } : null
+}
+
+/**
+ * Narrow the wire `coverage` block.
+ *
+ * `covered` is taken **strictly** from the server's own boolean — the client
+ * does not infer coverage from the count. A malformed block therefore reads as
+ * *not* covered, which is safe in both directions: nothing here ever starts a
+ * research pass, so the worst case is a "start researching" CTA over an area the
+ * server will answer with a reuse hint (`force_refresh=false`, T050).
+ *
+ * `refresh_available` is the one field that may be raised rather than read: the
+ * contract states it is *always* true when covered and FR-006 requires the
+ * refresh option to be offered, so a covered area always gets one.
+ */
+export function sanitiseCoverage(raw: unknown): AreaCoverage {
+  const body = isRecord(raw) ? raw : {}
+  const count = body.known_site_count
+  const covered = body.covered === true
+  return {
+    known_site_count:
+      typeof count === 'number' && Number.isFinite(count) && count >= 0 ? Math.trunc(count) : 0,
+    covered,
+    stalest_observed_at: isNonEmptyString(body.stalest_observed_at)
+      ? body.stalest_observed_at
+      : null,
+    refresh_available: body.refresh_available === true || covered,
+  }
+}
+
+/**
+ * Sanitise a whole `POST /areas` body. Returns `null` without an `area_id` —
+ * there is nothing to reuse or refresh without one.
+ */
+export function sanitiseAreaResolution(raw: unknown): AreaResolution | null {
+  if (!isRecord(raw) || !isNonEmptyString(raw.area_id)) return null
+  return {
+    area_id: raw.area_id,
+    polygon: sanitisePolygon(raw.polygon),
+    coverage: sanitiseCoverage(raw.coverage),
+  }
 }

@@ -13,6 +13,24 @@ export {
   type RenderSourcedValueOptions,
 } from './attribution-chip'
 export {
+  AreaRequestError,
+  AreaResponseError,
+  AreaReuseSurface,
+  DEFAULT_AREAS_ENDPOINT,
+  buildCoverageCard,
+  coverageAction,
+  describeStaleness,
+  researchPath,
+  resolveAndApply,
+  resolveArea,
+  type AreaReuseOptions,
+  type AreaRequest,
+  type CoverageAction,
+  type CoverageCardOptions,
+  type ResearchRequest,
+  type ResolveAreaOptions,
+} from './areas'
+export {
   DEFAULT_SITES_ENDPOINT,
   SitesLayer,
   SitesRequestError,
@@ -24,6 +42,7 @@ export {
   displayNameTag,
   fetchSites,
   formatBbox,
+  mountAreaReuse,
   mountSitesLayer,
   type BboxSource,
   type FetchSitesOptions,
@@ -35,7 +54,19 @@ export {
   isStamped,
   isStampedLocation,
   isStampedString,
+  sanitiseAreaResolution,
+  sanitiseCoverage,
+  sanitisePolygon,
   sanitiseSite,
   sanitiseSitesResponse,
 } from './guards'
-export type { GeoPoint, SiteRecordV1, SitesResponse, SourceRef, SourcedValue } from './types'
+export type {
+  AreaCoverage,
+  AreaResolution,
+  GeoPoint,
+  GeoPolygon,
+  SiteRecordV1,
+  SitesResponse,
+  SourceRef,
+  SourcedValue,
+} from './types'
