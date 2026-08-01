@@ -1,0 +1,36 @@
+# Local Tier-2 dependency: PostGIS, matching the CI service container shape
+# (see the commented `integration` job in .github/workflows/ci.yml — same image,
+# same port, same POSTGRES_PASSWORD default) so `uv run pytest` behaves the same
+# locally and in Actions (test-strategy.md Tier 2). Minimal on purpose: just the
+# database this slice needs (`commons/db.py` + Alembic, tech-design §2). `api`/
+# `web`/Valhalla/fake-gcs containers land with the units that need them.
+#
+# Credentials come from the process environment with dev-only defaults baked in
+# via compose's `${VAR:-default}` syntax — there is no `.env` file here and none
+# should be added (AGENTS.md: never read or write `.env*`/`secrets/`). Override
+# any of SIYUR_DB_*  by exporting it in your shell before `docker compose up`.
+#
+# App code (Alembic, commons/db.py) does not read these POSTGRES_* vars directly
+# — it reads a single SIYUR_DATABASE_URL connection string from the environment
+# (see alembic/env.py). For local dev against this container:
+#   export SIYUR_DATABASE_URL="postgresql+psycopg://siyur:siyur@localhost:5432/siyur"
+
+services:
+  postgis:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_DB: ${SIYUR_DB_NAME:-siyur}
+      POSTGRES_USER: ${SIYUR_DB_USER:-siyur}
+      POSTGRES_PASSWORD: ${SIYUR_DB_PASSWORD:-siyur}
+    ports:
+      - "${SIYUR_DB_PORT:-5432}:5432"
+    volumes:
+      - siyur_postgis_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${SIYUR_DB_USER:-siyur} -d ${SIYUR_DB_NAME:-siyur}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  siyur_postgis_data:
