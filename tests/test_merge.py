@@ -26,9 +26,11 @@ from commons.merge import (
     EPSILON_METERS,
     TAU_NAME_SIMILARITY,
     best_name_similarity,
+    cluster_records,
     decide_match,
     distance_m,
     merge_cluster,
+    merge_records,
     name_similarity,
     name_similarity_by_language,
     normalize_name,
@@ -308,22 +310,24 @@ _POOL_CATEGORIES = ("attraction.castle", "attraction.museum", "beach")
 _ROW = st.tuples(*(st.integers(0, bound) for bound in (3, 3, 10, 60, 30, 2)))
 
 
+def _row_record(row: tuple[int, int, int, int, int, int]) -> SiteRecordV1:
+    name, source, confidence, metres, days, category = row
+    return _record(
+        names={"en": _POOL_NAMES[name]},
+        location=_offset(float(metres)),
+        source=_SOURCES[source],
+        confidence=confidence / 10,
+        observed_at=OBSERVED + timedelta(days=days),
+        categories=(_POOL_CATEGORIES[category],),
+        address=f"{metres} Odos Ippoton",
+    )
+
+
 @settings(max_examples=200, deadline=None)
 @given(st.lists(_ROW, min_size=1, max_size=6))
 def test_no_source_ref_is_lost(rows: list[tuple[int, int, int, int, int, int]]) -> None:
     """Property (FR-009): merging never adds or drops a source ref, whatever it decides."""
-    records = [
-        _record(
-            names={"en": _POOL_NAMES[name]},
-            location=_offset(float(metres)),
-            source=_SOURCES[source],
-            confidence=confidence / 10,
-            observed_at=OBSERVED + timedelta(days=days),
-            categories=(_POOL_CATEGORIES[category],),
-            address=f"{metres} Odos Ippoton",
-        )
-        for name, source, confidence, metres, days, category in rows
-    ]
+    records = [_row_record(row) for row in rows]
     assert merge_cluster(records).source_refs == _refs(records)
 
 
@@ -458,3 +462,75 @@ def test_a_single_record_cluster_still_yields_a_result_with_its_ledger() -> None
 def test_merge_cluster_refuses_an_empty_cluster() -> None:
     with pytest.raises(ValueError, match="at least one record"):
         merge_cluster([])
+
+
+# ── clustering: the join rule end-to-end ───────────────────────────────────────────
+
+
+@settings(max_examples=200, deadline=None)
+@given(st.lists(_ROW, min_size=1, max_size=6))
+def test_merge_records_loses_no_source_ref(rows: list[tuple[int, int, int, int, int, int]]) -> None:
+    """The FR-009 property again, now across clustering: whatever the join rule decides,
+    the union of source refs over all merged records equals the union over the inputs."""
+    records = [_row_record(row) for row in rows]
+    results = merge_records(records)
+    assert frozenset(ref for result in results for ref in result.source_refs) == _refs(records)
+
+
+def test_merge_records_keeps_distinct_neighbours_apart() -> None:
+    """The join rule holds end-to-end: 5 m apart, differently named ⇒ two records out."""
+    records = [
+        _record(names={"en": "Clock Tower"}, source=OVERTURE),
+        _record(names={"en": "Café Elli"}, location=_offset(5.0), source=OSM),
+    ]
+    results = merge_records(records)
+    assert len(results) == 2
+    assert frozenset(ref for r in results for ref in r.source_refs) == _refs(records)
+
+
+def test_merge_records_collapses_three_sources_for_one_place() -> None:
+    records = [
+        _record(names={"en": "Clock Tower"}, source=OVERTURE, address="1 Odos Orfeos"),
+        _record(names={"en": "Clocktower"}, location=_offset(6.0), source=OSM, address="Orfeos 1"),
+        _record(names={"en": "Clock Tower"}, location=_offset(9.0), source=WIKIDATA),
+    ]
+    (result,) = merge_records(records)
+    assert result.merged_from == tuple(r.id for r in records)
+    assert result.source_refs == {OVERTURE, OSM, WIKIDATA}
+
+
+def test_a_fuzzy_chain_cannot_collapse_two_authoritative_ids() -> None:
+    """GERS identity outranks a transitive fuzzy chain (A↔B, B↔C, but gers(A) ≠ gers(C))."""
+    a = _record(names={"en": "Clock Tower"}, gers_id="08f394…a", source=OVERTURE)
+    b = _record(names={"en": "Clocktower"}, location=_offset(3.0), source=OSM)
+    c = _record(names={"en": "Clock Tower"}, location=_offset(6.0), gers_id="08f394…c")
+    assert len(cluster_records([a, b, c])) == 2
+    assert {r.record.gers_id for r in merge_records([a, b, c])} == {"08f394…a", "08f394…c"}
+
+
+def test_merge_is_independent_of_input_order() -> None:
+    """The whole merge, not just the winner: same inputs in any order ⇒ same output."""
+    records = [
+        _record(names={"en": "Clock Tower"}, source=OVERTURE, categories=("a",), address="one"),
+        _record(names={"en": "Clocktower"}, location=_offset(4.0), source=OSM, address="two"),
+        _record(names={"en": "Clock Tower"}, location=_offset(7.0), source=WIKIDATA),
+    ]
+    dumps = {
+        merge_records(order)[0].record.model_dump_json()
+        for order in itertools.permutations(records)
+    }
+    assert len(dumps) == 1
+
+
+def test_a_merged_record_with_a_geometry_conflict_round_trips_through_json() -> None:
+    """`site`/`site_conflict` are jsonb: a location disagreement must still serialise."""
+    (result,) = merge_records(
+        [
+            _record(names={"en": "Clock Tower"}, source=OVERTURE),
+            _record(names={"en": "Clocktower"}, location=_offset(4.0), source=OSM),
+        ]
+    )
+    conflict = next(c for c in result.record.conflicts if c.field == "location")
+    assert all(c.value["type"] == "Point" for c in conflict.candidates)  # GeoJSON, not shapely
+    restored = SiteRecordV1.model_validate_json(result.record.model_dump_json())
+    assert source_refs(restored) == _refs([result.record]) == {OVERTURE, OSM}

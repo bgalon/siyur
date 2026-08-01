@@ -61,7 +61,7 @@ from pydantic import BaseModel
 from pyproj import Geod
 from shapely import Point
 
-from commons.geo import validate_point
+from commons.geo import point_to_geojson, validate_point
 from commons.licenses import SourceKind
 from commons.models import FieldConflict, SiteRecordV1, SourcedValue, SourceRef
 
@@ -73,10 +73,12 @@ __all__ = [
     "MatchDecision",
     "MergeResult",
     "best_name_similarity",
+    "cluster_records",
     "decide_match",
     "distance_m",
     "iter_sourced_values",
     "merge_cluster",
+    "merge_records",
     "name_similarity",
     "name_similarity_by_language",
     "normalize_name",
@@ -279,6 +281,25 @@ def _value_key(value: object) -> str:
     return str(value)
 
 
+def _as_conflict_candidate(candidate: SourcedValue[Any]) -> SourcedValue[Any]:
+    """Re-shape a candidate for storage inside a ``FieldConflict``.
+
+    Candidates land in ``site_conflict.candidates jsonb`` (data-model §4), so geometry is
+    carried as **GeoJSON**: the record's own ``location`` keeps its shapely ``Point``, but
+    a ``SourcedValue[Any]`` holding a raw ``Point`` has no serializer and would make the
+    merged record undumpable. The stamp is copied verbatim — no provenance is altered.
+    """
+    if not isinstance(candidate.value, Point):
+        return candidate
+    return SourcedValue[Any](
+        value=point_to_geojson(candidate.value),
+        source=candidate.source,
+        bundleable=candidate.bundleable,
+        confidence=candidate.confidence,
+        observed_at=candidate.observed_at,
+    )
+
+
 def _winner_key(candidate: SourcedValue[Any]) -> tuple[float, int, int, str, str, str]:
     """Ascending sort key for the winner policy; ``min()`` elects the winner.
 
@@ -355,6 +376,49 @@ def source_refs(record: SiteRecordV1) -> frozenset[SourceRef]:
     return frozenset(refs)
 
 
+# ── clustering: which records are the same place ───────────────────────────────────
+
+
+@dataclass(slots=True)
+class _Cluster:
+    """A growing group of records believed to be one place (union-find over indices)."""
+
+    members: list[int]
+    gers_ids: set[str]
+
+
+def cluster_records(records: Sequence[SiteRecordV1]) -> tuple[tuple[int, ...], ...]:
+    """Group record **indices** into same-place clusters using :func:`decide_match`.
+
+    Pairs are visited in input order and unioned transitively (a↔b, b↔c ⇒ {a,b,c}) with
+    one guard: a union that would put **two different ``gers_id``s in one cluster is
+    refused** — GERS is authoritative identity and a fuzzy chain must not overrule it.
+    Union-first (§1.2) accepts the residual chaining risk elsewhere; the ε∧τ conjunction
+    is what keeps chains short, and keeping two records is always the cheaper error.
+    """
+    clusters = [
+        _Cluster(members=[i], gers_ids=set() if r.gers_id is None else {r.gers_id})
+        for i, r in enumerate(records)
+    ]
+    owner = {index: index for index in range(len(records))}
+
+    for left in range(len(records)):
+        for right in range(left + 1, len(records)):
+            a, b = owner[left], owner[right]
+            if a == b or not decide_match(records[left], records[right]).matched:
+                continue
+            if len(clusters[a].gers_ids | clusters[b].gers_ids) > 1:
+                continue  # authoritative ids disagree — refuse the chain
+            keep, drop = (a, b) if a < b else (b, a)
+            clusters[keep].members.extend(clusters[drop].members)
+            clusters[keep].gers_ids |= clusters[drop].gers_ids
+            for member in clusters[drop].members:
+                owner[member] = keep
+            clusters[drop].members = []
+
+    return tuple(tuple(sorted(c.members)) for c in clusters if c.members)
+
+
 # ── per-field merge ────────────────────────────────────────────────────────────────
 
 #: Single-valued ``SourcedValue | None`` fields, merged by :meth:`_FieldMerger.pick`.
@@ -391,7 +455,7 @@ class _FieldMerger:
             self.conflicts.append(
                 FieldConflict(
                     field=field,
-                    candidates=tuple(ordered),
+                    candidates=tuple(map(_as_conflict_candidate, ordered)),
                     resolution=f"picked:{ordered[0].source.id}",
                 )
             )
@@ -469,8 +533,7 @@ def merge_cluster(records: Sequence[SiteRecordV1]) -> MergeResult:
         # Deterministic identity: the smallest input UUID. The repository (T030) re-keys
         # onto the existing commons row on upsert — nothing may assume this id is new.
         id=min(r.id for r in records),
-        # A cluster holds at most one distinct gers_id — GERS is authoritative identity,
-        # so the clustering layer never puts two of them in one cluster.
+        # `cluster_records` guarantees at most one distinct gers_id per cluster.
         gers_id=gers_ids[0] if gers_ids else None,
         names=names,
         location=location,
@@ -493,4 +556,17 @@ def merge_cluster(records: Sequence[SiteRecordV1]) -> MergeResult:
         record=record,
         provenance=tuple(merger.provenance),
         merged_from=tuple(r.id for r in records),
+    )
+
+
+def merge_records(records: Iterable[SiteRecordV1]) -> tuple[MergeResult, ...]:
+    """Cluster candidate records by the join rule, then merge each cluster per-field.
+
+    The whole thing in one call: ingestion hands over stamped records from every adapter,
+    this returns one :class:`MergeResult` per real-world place. Output order follows first
+    appearance in the input, so a re-run reproduces it.
+    """
+    ordered = tuple(records)
+    return tuple(
+        merge_cluster([ordered[index] for index in cluster]) for cluster in cluster_records(ordered)
     )
