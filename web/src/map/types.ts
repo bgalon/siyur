@@ -92,3 +92,44 @@ export interface AreaResolution {
   readonly polygon: GeoPolygon | null
   readonly coverage: AreaCoverage
 }
+
+/* ------------------------------------ POST /areas/{id}/research (SSE) ------ */
+
+/**
+ * A `status` frame — the progress of one research pass
+ * (`contracts/research.md`). Every field is optional on the wire except
+ * `phase`, so everything the client did not receive reads as `null`/`false`
+ * rather than as a default it invented.
+ */
+export interface ResearchStatus {
+  /** `resolve_area` | `research` | `curate` | … — the server's own phase name. */
+  readonly phase: string
+  readonly msg: string | null
+  /** `overture` | `osm` | … — present on per-source frames. */
+  readonly source: string | null
+  /** How many records that source yielded; `null` when the frame omitted it. */
+  readonly found: number | null
+  /** The source answered partially (e.g. Overpass 504) — FR-012. */
+  readonly degraded: boolean
+}
+
+/**
+ * The `summary` frame — totals for the pass.
+ *
+ * `degraded_sources` is the honesty field (FR-012): a non-empty list means the
+ * answer is **partial** and must be shown as partial. `readable` is the client's
+ * own flag — `false` when the frame could not be parsed at all, so the surface
+ * can say "totals unknown" instead of reporting a zeroed-out summary as fact.
+ */
+export interface ResearchSummary {
+  readonly sites: number
+  readonly new: number
+  readonly reused: number
+  readonly conflicts: number
+  /** Per-source counts, e.g. `{ overture: 31, osm: 18 }`. */
+  readonly sources: Readonly<Record<string, number>>
+  /** Sources that answered partially or not at all. Empty ⇒ complete. */
+  readonly degraded_sources: readonly string[]
+  /** `false` ⇒ the frame was unparseable; the numbers above mean nothing. */
+  readonly readable: boolean
+}
