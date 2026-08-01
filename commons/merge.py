@@ -154,15 +154,49 @@ def name_similarity(left: str, right: str) -> float:
     return SequenceMatcher(None, first, second, autojunk=False).ratio()
 
 
-def name_similarity_by_language(left: SiteRecordV1, right: SiteRecordV1) -> dict[str, float]:
-    """Per-BCP-47-key name similarity, over the keys **both** records carry.
+#: BCP-47 "undetermined". Sources that publish a display name without saying which
+#: language it is in (Overture ``names.primary``, a bare OSM ``name`` tag) key it here
+#: rather than guessing a language — see ``commons/sources/``.
+UNDETERMINED: Final[str] = "und"
 
-    Only identical keys are compared (``en``↔``en``, ``el-Latn``↔``el-Latn``): that is
-    the "same language, post-transliteration" rule. Records sharing no name key get an
-    empty mapping — and therefore no name signal, and therefore no fuzzy join.
+
+def name_similarity_by_language(left: SiteRecordV1, right: SiteRecordV1) -> dict[str, float]:
+    """Per-BCP-47-key name similarity, over the keys the records can be compared on.
+
+    Identical keys are compared (``en``↔``en``, ``el-Latn``↔``el-Latn``): that is the
+    "same language, post-transliteration" rule.
+
+    ``und`` ("undetermined") is the deliberate exception. A source that publishes a
+    display name without declaring its language keys it ``und``, so requiring an exact
+    key match would make a cross-source join impossible in exactly the case the join
+    exists for: the same real place, named identically, seen by two sources with
+    different tagging conventions. The Rhodes fixture is the concrete case —
+    ``Πύλη Ταρσανά`` 3.4 m apart, keyed ``und`` by Overture and ``el`` by OSM — which
+    scored 0.00 and refused to merge before ``und`` was made comparable.
+
+    So an ``und`` value on one side is compared against **every** key on the other, and
+    the score is filed under the *determined* tag (the informative one). This does not
+    weaken the join rule: ε **and** τ must still both hold, and ``und`` carries no claim
+    about language that this could contradict — it is the absence of a claim.
     """
-    shared = sorted(set(left.names) & set(right.names))
-    return {tag: name_similarity(left.names[tag].value, right.names[tag].value) for tag in shared}
+    scores = {
+        tag: name_similarity(left.names[tag].value, right.names[tag].value)
+        for tag in sorted(set(left.names) & set(right.names))
+    }
+
+    def cross(undetermined: SiteRecordV1, tagged: SiteRecordV1) -> None:
+        if UNDETERMINED not in undetermined.names:
+            return
+        value = undetermined.names[UNDETERMINED].value
+        for tag, other in tagged.names.items():
+            if tag == UNDETERMINED:
+                continue  # und↔und already handled by the exact-key pass above
+            # Keep the strongest reading when both passes score the same tag.
+            scores[tag] = max(scores.get(tag, 0.0), name_similarity(value, other.value))
+
+    cross(left, right)
+    cross(right, left)
+    return scores
 
 
 def best_name_similarity(left: SiteRecordV1, right: SiteRecordV1) -> tuple[str | None, float]:

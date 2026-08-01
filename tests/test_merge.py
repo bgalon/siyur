@@ -534,3 +534,37 @@ def test_a_merged_record_with_a_geometry_conflict_round_trips_through_json() -> 
     assert all(c.value["type"] == "Point" for c in conflict.candidates)  # GeoJSON, not shapely
     restored = SiteRecordV1.model_validate_json(result.record.model_dump_json())
     assert source_refs(restored) == _refs([result.record]) == {OVERTURE, OSM}
+
+
+# --- `und` (undetermined language) cross-key matching -------------------------------
+# Regression: Overture publishes `names.primary` and OSM a bare `name` tag with no
+# language, so both key `und`. Requiring an exact key match made the cross-source join
+# impossible in exactly the case it exists for. The Rhodes fixture anchor — the same
+# real gate, named identically, 3.4 m apart, keyed `und` by Overture and `el` by OSM —
+# scored 0.00 and refused to merge.
+
+
+def test_und_name_matches_a_tagged_name_in_another_language() -> None:
+    """`und` is the absence of a language claim, so it may match any tagged name."""
+    overture_side = _record(names={"und": "Πύλη Ταρσανά"}, source=OVERTURE)
+    osm_side = _record(
+        names={"el": "Πύλη Ταρσανά", "en": "Gate of the Arsenal"},
+        location=_offset(3.4),
+        source=OSM,
+    )
+    tag, score = best_name_similarity(overture_side, osm_side)
+    assert (tag, score) == ("el", 1.0)  # filed under the *determined* tag, not `und`
+
+    (result,) = merge_records([overture_side, osm_side])
+    assert source_refs(result.record) == {OVERTURE, OSM}  # no source lost
+
+
+def test_und_still_requires_the_name_signal_distance_alone_never_merges() -> None:
+    """Making `und` comparable must not weaken ε+τ into a distance-only join."""
+    overture_side = _record(names={"und": "Marine Gate"}, source=OVERTURE)
+    osm_side = _record(names={"el": "Φούρνος Κοκκίνη"}, location=_offset(3.4), source=OSM)
+
+    decision = decide_match(overture_side, osm_side)
+    assert decision.matched is False
+    assert decision.name_similarity is not None and decision.name_similarity < TAU_NAME_SIMILARITY
+    assert len(merge_records([overture_side, osm_side])) == 2
