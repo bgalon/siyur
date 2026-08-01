@@ -38,10 +38,13 @@ SETTINGS = [REPO / ".claude" / "settings.json", REPO / ".claude" / "settings.loc
 # `Bash(git status:*)` -> ("Bash", "git status:*");  `Edit(./docs/**)` -> ("Edit", "./docs/**")
 _RULE = re.compile(r"^(\w+)\((.*)\)$")
 
+Rules = list[tuple[str, str]]
+Row = dict[str, object]
 
-def load_rules(section: str) -> list[tuple[str, str]]:
+
+def load_rules(section: str) -> Rules:
     """Every (tool, pattern) pair in the named permissions section, both files."""
-    rules: list[tuple[str, str]] = []
+    rules: Rules = []
     for path in SETTINGS:
         if not path.is_file():
             continue
@@ -51,7 +54,10 @@ def load_rules(section: str) -> list[tuple[str, str]]:
             continue
         for entry in perms.get(section, []):
             match = _RULE.match(entry)
-            rules.append(match.groups() if match else (entry, "*"))
+            if match:
+                rules.append((match.group(1), match.group(2)))
+            else:
+                rules.append((entry, "*"))
     return rules
 
 
@@ -75,14 +81,14 @@ def matches(rule_pattern: str, target: str) -> bool:
     return target == rule_pattern
 
 
-def target_of(row: dict) -> str | None:
+def target_of(row: Row) -> str | None:
     for key in ("command", "file_path", "notebook_path", "pattern", "url", "skill"):
         if row.get(key):
             return str(row[key])
     return None
 
 
-def classify(row: dict, allow, deny, ask) -> str:
+def classify(row: Row, allow: Rules, deny: Rules, ask: Rules) -> str:
     tool, target = row.get("tool_name"), target_of(row)
     if target is None:
         return "UNKNOWN"
