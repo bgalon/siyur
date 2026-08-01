@@ -127,11 +127,13 @@ Also outstanding: **T059**, wiring transliteration into `planner/nodes/curate.py
 
 ```bash
 gh pr list --state open                   # should be empty
-git worktree list                         # should be just the repo root
+git worktree list                         # repo root + agent/introduce-pr-worktree-workflow
 uv run pytest -q -k merge                 # 56 merge tests
 uv run pytest -q -k translit              # transliteration + FAIL-001 guard
 uv run pytest tests/test_llm_seam.py -q   # seam-purity AST tripwire
 ```
+
+That second one is not stale from this session — `agent/introduce-pr-worktree-workflow` predates it and is **not** merged into `main`, so it was deliberately left alone. Every worktree this session created has been removed.
 
 To see the seam tripwire actually bite:
 
