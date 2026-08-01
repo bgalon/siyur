@@ -12,6 +12,8 @@
       "Edit(./.gitignore)",
       "Edit(./.claude/**)",
       "Write(./.claude/**)",
+      "Edit(./scripts/**)",
+      "Write(./scripts/**)",
       "Bash(git status:*)",
       "Bash(git diff:*)",
       "Bash(git log:*)",
@@ -49,12 +51,7 @@
       "Bash(find:*)",
       "Bash(grep:*)",
       "Bash(rg:*)",
-      "Bash(uv run:*)",
-      "Bash(uv sync:*)",
-      "Bash(uv add:*)",
-      "Bash(uv lock:*)",
-      "Bash(uv export:*)",
-      "Bash(uv pip:*)",
+      "Bash(uv:*)",
       "Bash(uvx:*)",
       "Bash(pytest:*)",
       "Bash(ruff:*)",
@@ -66,9 +63,7 @@
       "Bash(npm:*)",
       "Bash(npx:*)",
       "Bash(node:*)",
-      "Bash(docker compose:*)",
-      "Bash(docker ps:*)",
-      "Bash(docker logs:*)",
+      "Bash(docker:*)",
       "Bash(git push:*)",
       "Bash(git fetch:*)",
       "Bash(git pull:*)",
@@ -86,7 +81,32 @@
       "Bash(curl http://localhost:*)",
       "Bash(curl http://127.0.0.1:*)",
       "WebFetch",
-      "WebSearch"
+      "WebSearch",
+
+      "Bash(git --no-pager:*)",
+      "Bash(git remote:*)",
+      "Bash(python3:*)",
+      "Bash(/bin/sleep:*)",
+      "Bash(sleep:*)",
+      "Bash(cd:*)",
+      "Bash(export:*)",
+      "Bash(unset:*)",
+      "Bash(.specify/scripts/bash/:*)",
+      "Bash(curl -s https://pypi.org/pypi/:*)",
+      "Bash(curl -s https://overturemaps-us-west-2.s3.amazonaws.com:*)",
+      "Bash(curl -sI https://overturemaps-us-west-2.s3.amazonaws.com:*)",
+      "Skill(adr)",
+      "Skill(devlog)",
+      "Skill(failure)",
+      "Skill(claude-api)",
+      "Skill(speckit-specify)",
+      "Skill(speckit-plan)",
+      "Skill(speckit-tasks)",
+      "Skill(speckit-implement)",
+      "Skill(speckit-analyze)",
+      "Skill(speckit-clarify)",
+      "Skill(speckit-checklist)",
+      "Skill(speckit-converge)"
     ],
     "ask": [
       "Bash(gh:*)",
@@ -120,6 +140,14 @@
       {
         "hooks": [
           { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/log_event.py UserPromptSubmit" }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/log_event.py PreToolUse" }
         ]
       }
     ],
