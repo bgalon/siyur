@@ -526,6 +526,15 @@ def merge_cluster(records: Sequence[SiteRecordV1]) -> MergeResult:
 
     A single-record cluster still returns a :class:`MergeResult` (with its provenance
     ledger), so callers have exactly one shape to persist.
+
+    **Refresh is non-destructive and convergent (T051).** ``repository.upsert_sites`` runs
+    a refresh as ``merge_cluster([stored, incoming])`` onto the *existing* row, so this
+    function is where the guarantee lives: every field is unioned rather than replaced, a
+    losing prior value stays reachable as a :class:`~commons.models.FieldConflict`
+    candidate (and always in the ledger), and conflicts recorded by an earlier pass travel
+    forward. Non-destructive must not mean *unbounded*, though: applying the same
+    observation twice has to reach a fixed point, which is why the carried-forward and the
+    newly-derived conflicts are deduped in one pass below.
     """
     if not records:
         raise ValueError("merge_cluster() needs at least one record")
@@ -549,10 +558,23 @@ def merge_cluster(records: Sequence[SiteRecordV1]) -> MergeResult:
         for name in ("categories", "notes", "links")
     }
     # Conflicts already on the inputs travel with them: a re-merge enriches, and must
-    # never drop a disagreement (or its sources) recorded by an earlier pass.
+    # never drop a disagreement (or its sources) recorded by an earlier pass. The
+    # newly-derived conflicts are deduped **in the same pass** as the carried-forward
+    # ones, not concatenated after them: on a refresh, re-merging a stored record with
+    # the observation that produced its conflict re-derives that very conflict, so two
+    # separate dedupes stored an identical copy alongside the original (bounded at one
+    # spurious copy per conflict — `site_conflict` rows are deduped in the repository, so
+    # the symptom was `site.fields` blob noise). `_unique` is `__eq__`-based and pydantic
+    # compares every field, so a collapse only ever removes a conflict whose candidates —
+    # and therefore whose source refs — are all present in the one kept: FR-009 is safe,
+    # and any conflict differing in even one candidate survives untouched.
+    conflict_groups: list[Sequence[FieldConflict]] = [
+        *(r.conflicts for r in records),
+        merger.conflicts,
+    ]
     conflicts = tuple(
         sorted(
-            (*_unique(r.conflicts for r in records), *merger.conflicts),
+            _unique(conflict_groups),
             key=lambda c: (c.field, c.resolution, len(c.candidates)),
         )
     )
