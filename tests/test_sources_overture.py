@@ -86,18 +86,29 @@ def test_license_is_read_per_record_not_from_the_theme(
         assert {value.source.license for value in values_of(record)} == {expected}
 
 
-def test_apache_rows_are_quarantined_and_allowlisted_ones_are_not(
+def test_every_per_record_license_in_the_fixture_is_bundleable(
     result: base.FetchResult,
 ) -> None:
-    """`Apache-2.0` is absent from the DATA-LICENSES.md allowlist ⇒ not bundleable.
+    """All three licenses Overture mixes into one theme reach the bundle (ADR-0012).
 
-    Flagged for Ben as a possible registry gap — the adapter stamps what the registry
-    says, so this documents the current behaviour rather than blessing it.
+    This test previously asserted the opposite for `Apache-2.0` and flagged the registry
+    gap it had found: the license was absent from the DATA-LICENSES.md allowlist, so the
+    adapter — correctly stamping what the registry said rather than what seemed right —
+    quarantined 33 of the fixture's 200 rows. Ben resolved it on 2026-08-01 by adding
+    Apache-2.0 to the allowlist, since it is permissive and ODbL (share-alike, strictly
+    more restrictive) was already allowed.
+
+    The adapter is unchanged: it still reads each row's own `sources` entry and derives
+    `bundleable` from the registry. Only the registry moved.
     """
-    quarantined = {
+    per_license = {
         value.source.license: value.bundleable for record in result for value in values_of(record)
     }
-    assert quarantined == {"CDLA-Permissive-2.0": True, "CC0-1.0": True, "Apache-2.0": False}
+    assert per_license == {
+        "CDLA-Permissive-2.0": True,
+        "CC0-1.0": True,
+        "Apache-2.0": True,
+    }
 
 
 def test_coordinates_come_from_the_fixture_and_are_never_synthesised(

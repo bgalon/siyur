@@ -32,10 +32,18 @@ Columns: **Source** · **License (SPDX)** · **In-app attribution required** · 
 ## The quarantine rule (enforced, merge-blocking)
 
 A value may be stamped `bundleable=true` **only if** its `source.license` ∈
-**{ODbL, CDLA-Permissive-2.0, CC0, CC-BY-4.0, CC-BY-SA-4.0, PD, OFL, LGPL-as-dependency}**.
+**{ODbL, CDLA-Permissive-2.0, Apache-2.0, CC0, CC-BY-4.0, CC-BY-SA-4.0, PD, OFL, LGPL-as-dependency}**.
 `open_web` and `review_provider` sources are **always** `bundleable=false`. **No bundle may contain a `bundleable=false`
 value.** This is the invariant `SourcedValue` exists to carry (tech-design §1.0); it is verified by
 `evals/test_structural.py::test_no_unbundleable_in_bundle` and by the DU-06 airplane-mode e2e (zero network requests).
+
+**Apache-2.0 (added 2026-08-01, ADR-0012).** Overture places mixes licenses *within* one theme — in the committed
+200-row Rhodes fixture, 165 rows are CDLA-Permissive-2.0, **33 are Apache-2.0** (Foursquare-sourced) and 2 are CC0-1.0.
+Omitting Apache-2.0 silently dropped **16.5%** of Overture places from every bundle, while ODbL — which carries
+share-alike and is *more* restrictive — was allowlisted. Apache-2.0 is permissive and bundle-safe; its §4 obligations
+are **retain the copyright/patent/trademark/attribution notices, ship a copy of the license, and reproduce any NOTICE
+file contents**. The DU-05 ATTRIBUTION pipeline discharges these the same way it already does for ODbL and CC-BY; the
+NOTICE-reproduction step is the one new mechanic Apache-2.0 adds, and it is a DU-05 acceptance criterion.
 
 ## API terms (planning-time only — respect, cache, honest User-Agent)
 

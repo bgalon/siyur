@@ -29,12 +29,16 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DATA_LICENSES = REPO_ROOT / "DATA-LICENSES.md"
 
 # Licenses that appear in the registry (or in the wild) but are **not** on the data
-# allowlist — Apache-2.0 is the live one: the registry warns some Overture/Foursquare rows
-# carry it, and the quarantine rule does not list it, so such values are not bundleable.
+# allowlist. The NC/ND Creative Commons variants are the live ones — Wikimedia Commons
+# images carry per-file licenses and the registry excludes NC/ND explicitly, so a
+# per-file stamp must never be assumed bundleable from its CC family alone.
+#
+# Apache-2.0 was on this list until 2026-08-01 and is now allowlisted (ADR-0012): it is
+# permissive, and omitting it quarantined 16.5% of Overture places while ODbL — which
+# carries share-alike — was allowed. Pinned by the named test below.
 NOT_ALLOWLISTED = [
     "proprietary",
     "user-owned",
-    "Apache-2.0",
     "MIT",
     "BSD-3-Clause",
     "AGPL-3.0",
@@ -71,6 +75,22 @@ def test_non_allowlisted_license_is_not_bundleable(license_id: str) -> None:
     assert bundleable("overture", license_id) is False
 
 
+@pytest.mark.parametrize("spelling", ["Apache-2.0", "apache-2.0", "Apache-License-2.0"])
+def test_apache_2_0_is_bundleable(spelling: str) -> None:
+    """ADR-0012: Overture's Foursquare rows are Apache-2.0 and must reach the bundle.
+
+    Regression guard for the registry gap this closed — 33 of the 200 committed Overture
+    fixture rows carry Apache-2.0, so leaving it off the allowlist silently dropped
+    16.5% of places from every offline bundle while ODbL, which carries share-alike and
+    is strictly more restrictive, was allowed.
+    """
+    assert normalize_license(spelling) == "Apache-2.0"
+    assert is_allowlisted(spelling) is True
+    assert bundleable("overture", spelling) is True
+    # The kind gate still wins: permissive licensing never rescues a quarantined source.
+    assert bundleable("open_web", spelling) is False
+
+
 @pytest.mark.parametrize(
     ("spelling", "canonical"),
     [
@@ -90,7 +110,7 @@ def test_registry_shorthand_normalises_to_the_spdx_spelling(spelling: str, canon
 
 
 def test_unknown_license_normalises_to_none_rather_than_raising() -> None:
-    assert normalize_license("Apache-2.0") is None
+    assert normalize_license("MIT") is None
 
 
 def test_allowlist_matches_the_registry_document() -> None:
@@ -144,7 +164,7 @@ def test_bundleable_true_over_a_non_allowlisted_license_is_refused() -> None:
     with pytest.raises(ValidationError, match="quarantine"):
         _sourced("open_web", "all-rights-reserved", bundleable_flag=True)
     with pytest.raises(ValidationError, match="not on the bundleable allowlist"):
-        _sourced("overture", "Apache-2.0", bundleable_flag=True)
+        _sourced("overture", "CC-BY-NC-4.0", bundleable_flag=True)
 
 
 def test_bundleable_true_over_a_never_bundleable_kind_is_refused() -> None:
