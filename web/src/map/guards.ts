@@ -13,6 +13,8 @@ import type {
   AreaResolution,
   GeoPoint,
   GeoPolygon,
+  ResearchStatus,
+  ResearchSummary,
   SiteRecordV1,
   SitesResponse,
   SourceRef,
@@ -190,4 +192,65 @@ export function sanitiseAreaResolution(raw: unknown): AreaResolution | null {
     polygon: sanitisePolygon(raw.polygon),
     coverage: sanitiseCoverage(raw.coverage),
   }
+}
+
+/* --------------------------------- research SSE frames (US1 / FR-012) ------ */
+
+/** A non-negative integer count on the wire. */
+function isCount(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0
+}
+
+const countOrZero = (v: unknown): number => (isCount(v) ? Math.trunc(v) : 0)
+
+/**
+ * Narrow a `status` frame. Returns `null` without a `phase` — a progress line
+ * that cannot name its phase is not progress the user can read, and the client
+ * will not label it "working…" on the server's behalf.
+ */
+export function sanitiseResearchStatus(raw: unknown): ResearchStatus | null {
+  if (!isRecord(raw) || !isNonEmptyString(raw.phase)) return null
+  return {
+    phase: raw.phase,
+    msg: isNonEmptyString(raw.msg) ? raw.msg : null,
+    source: isNonEmptyString(raw.source) ? raw.source : null,
+    found: isCount(raw.found) ? Math.trunc(raw.found) : null,
+    degraded: raw.degraded === true,
+  }
+}
+
+/**
+ * Narrow the `summary` frame.
+ *
+ * `readable` is keyed to `sites`, the one field the contract always sends: an
+ * unparseable frame therefore yields zeroed totals **flagged as meaningless**,
+ * so nothing downstream can report "0 sites found" as a finding when the truth is
+ * "we never learned the total" (FR-012).
+ */
+export function sanitiseResearchSummary(raw: unknown): ResearchSummary {
+  const body = isRecord(raw) ? raw : {}
+
+  const sources: Record<string, number> = {}
+  if (isRecord(body.sources)) {
+    for (const [name, count] of Object.entries(body.sources)) {
+      if (isNonEmptyString(name) && isCount(count)) sources[name] = Math.trunc(count)
+    }
+  }
+
+  return {
+    sites: countOrZero(body.sites),
+    new: countOrZero(body.new),
+    reused: countOrZero(body.reused),
+    conflicts: countOrZero(body.conflicts),
+    sources,
+    degraded_sources: Array.isArray(body.degraded_sources)
+      ? body.degraded_sources.filter(isNonEmptyString)
+      : [],
+    readable: isCount(body.sites),
+  }
+}
+
+/** The `area_id` a `done` frame closes over, or `null` if it carried none. */
+export function sanitiseResearchDone(raw: unknown): string | null {
+  return isRecord(raw) && isNonEmptyString(raw.area_id) ? raw.area_id : null
 }

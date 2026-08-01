@@ -31,6 +31,29 @@ export {
   type ResolveAreaOptions,
 } from './areas'
 export {
+  DelimitControl,
+  isUsableBbox,
+  mountDelimitControl,
+  viewportBbox,
+  type Bbox,
+  type DelimitControlOptions,
+} from './delimit'
+export {
+  ResearchProgressSurface,
+  ResearchRequestError,
+  ResearchStreamError,
+  SseFrameParser,
+  describeStatus,
+  mountResearchProgress,
+  runResearch,
+  streamResearch,
+  type ResearchHandlers,
+  type ResearchProgressOptions,
+  type ResearchState,
+  type SseFrame,
+  type StreamResearchOptions,
+} from './research'
+export {
   DEFAULT_SITES_ENDPOINT,
   SitesLayer,
   SitesRequestError,
@@ -57,6 +80,9 @@ export {
   sanitiseAreaResolution,
   sanitiseCoverage,
   sanitisePolygon,
+  sanitiseResearchDone,
+  sanitiseResearchStatus,
+  sanitiseResearchSummary,
   sanitiseSite,
   sanitiseSitesResponse,
 } from './guards'
@@ -65,6 +91,8 @@ export type {
   AreaResolution,
   GeoPoint,
   GeoPolygon,
+  ResearchStatus,
+  ResearchSummary,
   SiteRecordV1,
   SitesResponse,
   SourceRef,
