@@ -82,7 +82,13 @@ dev = [
 # transitive `langchain` (via agentevals→openevals) to the advisory-fixed release.
 # Dev/eval-only, never in the product runtime; keeps the security gate at zero
 # ignores so it reddens only on genuinely new CVEs.
-constraint-dependencies = ["langchain>=1.3.9"]
+#
+# `cryptography>=50.0.0` fixes PYSEC-2026-3552, pulled in transitively by the
+# Google-OIDC login path (authlib → joserfc/pyjwt, google-auth). Unlike the
+# langchain pin above this one IS in the product runtime: it is the library
+# verifying Google's token signatures, so the advisory is on the security-critical
+# path (api/AGENTS.md) rather than in a dev-only tool.
+constraint-dependencies = ["langchain>=1.3.9", "cryptography>=50.0.0"]
 
 [build-system]
 requires = ["hatchling"]
