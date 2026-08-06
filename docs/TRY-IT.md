@@ -12,6 +12,19 @@ Full session context: [`docs/devlog/2026-08-01-spec001-parallel-build-and-three-
 uv sync
 ```
 
+### The short way: `scripts/dev.sh`
+
+Sections 3–5 below are the whole stack by hand, and they are worth reading once because they say what each piece actually does. When you just want it running:
+
+```bash
+scripts/dev.sh start     # PostGIS + migrations + API + web, then prints a sign-in cookie
+scripts/dev.sh status    # what is actually up
+scripts/dev.sh stop      # stops the servers, keeps your researched data
+scripts/dev.sh stop --purge   # …and drops the database volume
+```
+
+It refuses to start when a port is taken rather than relocating, because the failure it prevents is silent: Vite moves to the next free port on its own, and whatever holds the original one then answers with an SPA fallback — HTML, status `200`. Override with `SIYUR_API_PORT`, `SIYUR_WEB_PORT`, `SIYUR_DB_PORT` (`5432` is commonly taken by another project's Postgres).
+
 ---
 
 ## 1. The whole test suite — about a minute, no setup
