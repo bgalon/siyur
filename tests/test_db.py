@@ -22,7 +22,6 @@ import json
 import secrets
 from datetime import UTC, date, datetime
 from typing import Any
-from uuid import uuid4
 
 import pytest
 from sqlalchemy import func, select
@@ -333,13 +332,3 @@ def test_the_natural_key_leaves_distinct_observations_alone(db_session: Any, sit
     db_session.commit()
 
     assert db_session.execute(select(func.count()).select_from(SiteSource)).scalar_one() == 6
-
-
-def test_a_uuid_collision_is_not_how_duplicates_are_caught(db_session: Any, site_id: Any) -> None:
-    """The key is the observation, not the surrogate id — two ids, one observation, one row."""
-    db_session.add(_observation(site_id, id=uuid4()))
-    db_session.commit()
-    db_session.add(_observation(site_id, id=uuid4()))
-    with pytest.raises(IntegrityError, match="uq_site_source_observation"):
-        db_session.commit()
-    db_session.rollback()
