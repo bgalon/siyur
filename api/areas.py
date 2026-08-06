@@ -11,6 +11,10 @@ an unknown area_id`` be true across restarts and across processes instead of onl
 next deploy. Areas are **per-user**: an area is a personal delimitation (the *sites* a pass
 finds are shared commons, "where I asked about" is not), so every read filters on
 ``created_by = user.sub`` and someone else's id is a ``404``, never someone else's polygon.
+The row also records ``researched_at`` once a pass **commits**, which is what turns
+``coverage.covered`` from "we hold a site in here somewhere" into "this was researched"
+(ADR-0018). That read stays per-user, so a second user re-researches ground the first already
+covered — see :func:`~commons.repository.coverage` for why that scope was not widened here.
 
 **2. The API owns the transaction boundary.** :func:`commons.repository.upsert_sites`
 flushes and does not commit, so this module commits **after the stream completes** and rolls
@@ -37,7 +41,7 @@ import json
 import logging
 import threading
 from collections.abc import Iterator, Mapping, Sequence
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Any
 from uuid import UUID
 
@@ -47,7 +51,7 @@ from geoalchemy2.shape import from_shape, to_shape
 from pydantic import BaseModel, ConfigDict
 from shapely.geometry import mapping
 from shapely.geometry.base import BaseGeometry
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 from starlette.responses import Response
 
@@ -104,9 +108,16 @@ class AreaRequestBody(BaseModel):
 
 
 class CoverageResponse(BaseModel):
-    """What the commons already knows about the area — drives reuse/refresh (US2/FR-006)."""
+    """What is already known about the area — drives reuse/refresh (US2/FR-006).
+
+    ``covered`` means *"this area has been researched"* (see
+    :func:`~commons.repository.coverage`), and ``researched_fraction`` is the evidence for it,
+    so a client can tell a genuinely-covered area from one that merely contains some sites.
+    """
 
     known_site_count: int
+    #: ``0.0``–``1.0``: how much of the requested polygon has actually been researched.
+    researched_fraction: float
     covered: bool
     stalest_observed_at: date | None
     refresh_available: bool
@@ -161,9 +172,29 @@ def _unresolved_detail(error: AreaNotResolved) -> dict[str, Any]:
 def _coverage_body(found: Coverage) -> CoverageResponse:
     return CoverageResponse(
         known_site_count=found.known_site_count,
+        researched_fraction=found.researched_fraction,
         covered=found.covered,
         stalest_observed_at=found.stalest_observed_at,
         refresh_available=found.refresh_available,
+    )
+
+
+def _mark_researched(session: Session, area_id: UUID, subject: str) -> None:
+    """Record that a pass over this area **completed** — the state ``covered`` reads.
+
+    Scoped to ``created_by`` like every other read/write of this table, even though
+    :func:`_load_area` already proved ownership: the scope filter is the invariant, not a
+    check someone remembered to do once upstream.
+
+    A pass that finished with degraded sources still counts. The area *was* looked at, and
+    what each source did or did not answer is reported in-band by the ``status``/``summary``
+    frames (FR-012); folding that into a boolean here would silently re-research a whole area
+    because one adapter was slow.
+    """
+    session.execute(
+        update(Area)
+        .where(Area.id == area_id, Area.created_by == subject)
+        .values(researched_at=datetime.now(UTC))
     )
 
 
@@ -243,18 +274,23 @@ def _reuse_frames(area_id: UUID, found: Coverage) -> Iterator[str]:
 
 
 def _research_frames(
-    session: Session, area_id: UUID, first: Event, rest: Iterator[Event]
+    session: Session, area_id: UUID, subject: str, first: Event, rest: Iterator[Event]
 ) -> Iterator[str]:
     """Stream the pipeline, then commit — the transaction boundary the repository leaves open.
 
     The commit happens only after the last frame is produced. Any failure (including a
     client disconnect, which arrives as ``GeneratorExit``) falls through to ``close()``,
     which rolls the whole pass back: never a half-written area.
+
+    ``researched_at`` is stamped **inside that same transaction**, so "this area has been
+    researched" and "the records it found" become true together or not at all. A pass that
+    dies mid-stream leaves the area unresearched and the next ask runs it again.
     """
     try:
         yield _sse(first.event, first.data)
         for event in rest:
             yield _sse(event.event, event.data)
+        _mark_researched(session, area_id, subject)
         session.commit()
     except Exception as error:  # noqa: BLE001 — the status code is long gone; say so in-band
         session.rollback()
@@ -310,7 +346,8 @@ def create_area(
     session.add(area)
     session.flush()
     area_id = area.id
-    found = coverage(session, resolved.polygon)
+    # The row just flushed has no `researched_at`, so it cannot report itself as covered.
+    found = coverage(session, resolved.polygon, researched_by=user.sub)
     session.commit()
 
     return AreaResponse(
@@ -338,7 +375,7 @@ def research_area(
     with factory() as session:
         area = _load_area(session, area_id, user.sub)
         polygon: BaseGeometry = to_shape(area.polygon)
-        known = coverage(session, polygon)
+        known = coverage(session, polygon, researched_by=user.sub)
 
     # T050: a covered area is reused by default; a refresh is opt-in (FR-006 / US2).
     if known.covered and not force_refresh:
@@ -381,7 +418,7 @@ def research_area(
         raise
 
     return StreamingResponse(
-        _research_frames(session, area_id, first, stream),
+        _research_frames(session, area_id, user.sub, first, stream),
         media_type=SSE_MEDIA_TYPE,
         headers=SSE_HEADERS,
     )

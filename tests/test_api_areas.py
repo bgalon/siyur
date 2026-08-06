@@ -22,21 +22,24 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from geoalchemy2.shape import from_shape
 from shapely.geometry import box, mapping
-from sqlalchemy import Engine, create_engine
+from shapely.geometry.base import BaseGeometry
+from sqlalchemy import Engine, create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from api.app import create_app
 from api.config import Settings
+from commons.db import SRID, Area
 from commons.merge import merge_records
 from commons.models import SourceRef
 from commons.repository import sites_within, upsert_sites
@@ -125,6 +128,10 @@ def seed_commons(session: Session, *, osm_only: bool = False) -> int:
 
     Returns the number of ``site`` rows written. ``osm_only`` keeps the Greek-named,
     ODbL-stamped subset — enough for the sites contract and far quicker than 225 upserts.
+
+    Seeding the commons is **not** the same as researching an area, and since ADR-0018 the
+    two are no longer conflated: this writes records, :func:`record_research` records that
+    somebody looked. A test that wants ``covered=true`` needs both.
     """
     records = list(osm(node=OVERPASS_JSON).fetch(AREA))
     if not osm_only:
@@ -133,6 +140,18 @@ def seed_commons(session: Session, *, osm_only: bool = False) -> int:
     report = upsert_sites(session, results)
     session.commit()
     return report.created
+
+
+def record_research(session: Session, polygon: BaseGeometry, sub: str = "google-sub-a") -> None:
+    """A completed research pass over ``polygon`` for ``sub`` — the state ``covered`` reads."""
+    session.add(
+        Area(
+            polygon=from_shape(polygon, srid=SRID),
+            created_by=sub,
+            researched_at=datetime.now(UTC),
+        )
+    )
+    session.commit()
 
 
 @dataclass
@@ -267,6 +286,7 @@ def test_an_empty_commons_reports_no_coverage(app: FastAPI) -> None:
     assert body["polygon"]["type"] == "Polygon"
     assert body["coverage"] == {
         "known_site_count": 0,
+        "researched_fraction": 0.0,
         "covered": False,
         "stalest_observed_at": None,
         "refresh_available": False,
@@ -277,6 +297,7 @@ def test_an_empty_commons_reports_no_coverage(app: FastAPI) -> None:
 def test_coverage_count_is_the_st_within_count(app: FastAPI, db_session: Session) -> None:
     """The contract's ``known_site_count`` is PostGIS's answer, not a re-derived one."""
     seed_commons(db_session, osm_only=True)
+    record_research(db_session, AREA)
     expected = len(sites_within(db_session, AREA))
     assert expected > 0, "the fixture must seed sites, or this asserts nothing"
 
@@ -284,6 +305,7 @@ def test_coverage_count_is_the_st_within_count(app: FastAPI, db_session: Session
 
     assert body["coverage"]["known_site_count"] == expected
     assert body["coverage"]["covered"] is True
+    assert body["coverage"]["researched_fraction"] == pytest.approx(1.0)
     # FR-006 / US2: a covered area always offers a refresh.
     assert body["coverage"]["refresh_available"] is True
     assert body["coverage"]["stalest_observed_at"] is not None
@@ -299,12 +321,65 @@ def test_reposting_a_covered_area_reports_covered_and_refresh_available(
     assert first["coverage"]["covered"] is False
 
     seed_commons(db_session, osm_only=True)
+    record_research(db_session, AREA)
 
     second = client.post("/areas", json={"bbox": BBOX}).json()
     assert second["coverage"]["covered"] is True
     assert second["coverage"]["refresh_available"] is True
     # A second delimitation is a second area row — the commons behind it is shared.
     assert second["area_id"] != first["area_id"]
+
+
+@integration
+def test_the_enlarged_viewport_around_a_researched_area_is_not_covered(
+    app: FastAPI, db_session: Session
+) -> None:
+    """The ADR-0018 regression, at the contract boundary this time.
+
+    ``delimit.ts`` sends the map viewport, so "pan out one step" is a strictly larger bbox
+    around the one that was researched. Under ``covered = known_site_count > 0`` the whole
+    enlarged region came back covered — the client then shows existing data and a refresh
+    affordance *instead of researching* (FR-006), for ground nobody has looked at, with
+    nothing in the response to say so.
+    """
+    seed_commons(db_session, osm_only=True)
+    record_research(db_session, AREA)
+    minx, miny, maxx, maxy = AREA.bounds
+    enlarged = [minx - 0.5, miny - 0.5, maxx + 0.5, maxy + 0.5]
+
+    body = signed_in_client(app).post("/areas", json={"bbox": enlarged}).json()
+
+    # The sites are genuinely in there — this is the state the old rule mistook for coverage.
+    assert body["coverage"]["known_site_count"] > 0
+    assert body["coverage"]["covered"] is False
+    assert body["coverage"]["researched_fraction"] < 0.01
+
+
+@integration
+def test_a_completed_research_pass_is_what_makes_an_area_covered(
+    app: FastAPI, db_session: Session
+) -> None:
+    """The other half of the fix: the endpoint records completion, so reuse has state to read.
+
+    ``research_adapters=()`` means the pass finds nothing at all — and that is the sharper
+    version of the claim. ``covered`` flips on the *pass*, not on the records: an area
+    researched and found empty is covered (SC-006), which a site-count rule can never say.
+    """
+    client = signed_in_client(app)
+    first = client.post("/areas", json={"bbox": NOWHERE_BBOX}).json()
+    assert first["coverage"]["covered"] is False
+    area_id = UUID(first["area_id"])
+    delimited = db_session.get(Area, area_id)
+    assert delimited is not None and delimited.researched_at is None, "delimited, not researched"
+
+    assert client.post(f"/areas/{area_id}/research", json={}).status_code == 200
+
+    db_session.expire_all()
+    stamped = db_session.execute(select(Area.researched_at).where(Area.id == area_id)).scalar_one()
+    assert stamped is not None, "a committed pass must record that it happened"
+    second = client.post("/areas", json={"bbox": NOWHERE_BBOX}).json()
+    assert second["coverage"]["known_site_count"] == 0, "the empty area really is empty"
+    assert (second["coverage"]["covered"], second["coverage"]["refresh_available"]) == (True, True)
 
 
 @integration

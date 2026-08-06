@@ -7,7 +7,9 @@ Five tables, one privacy boundary:
   honestly, and it is **per-user**: ``created_by`` is the auth subject and every read of
   this table filters on it, exactly like :class:`UserNote`. An area is a personal
   delimitation, not commons data — the *sites* a pass finds are shared, the "where I asked
-  about" is not.
+  about" is not. ``researched_at`` records that a pass over the polygon actually completed,
+  which is what :func:`~commons.repository.coverage` reads to answer "was this looked at"
+  instead of "does this contain a site" (ADR-0018).
 - ``site`` — one row per real-world place. ``fields`` (jsonb) holds the ``SourcedValue``
   map (names / categories / address / opening_hours); ``geom`` is a **GiST-indexed**
   ``geometry(Point,4326)`` that mirrors ``location.value`` — the model's ``location`` is
@@ -134,6 +136,18 @@ class Area(Base):
     is built — ``resolve_area._validate_area`` refuses points, lines, empty and
     self-intersecting rings before anything reaches here — so widening the column loses no
     guarantee and buys genericity (FR-001).
+
+    **``researched_at`` is what makes "covered" answerable.** Delimiting an area records the
+    polygon; *researching* it is a separate event, and until 0004 nothing recorded that the
+    second one happened. :func:`~commons.repository.coverage` needs it: without a researched
+    extent the only available proxy was "does this polygon contain a site", which reports a
+    region nobody has ever looked at as covered the moment one known site drifts inside it
+    (ADR-0018). The rows this table already holds are therefore genuinely unknowable — they
+    stay ``NULL``, i.e. *not researched*, which over-researches rather than silently skipping.
+
+    This column also makes the table load-bearing for a **read**, which it was not before, so
+    ``polygon`` now carries a GiST index. ADR-0015's per-user scoping is unchanged: coverage
+    unions only the *caller's* researched areas.
     """
 
     __tablename__ = "area"
@@ -150,6 +164,14 @@ class Area(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow
     )
+    #: When a research pass over this polygon last **committed**; ``None`` = never researched.
+    #: Set by `api/areas.py` after the stream completes, so a pass that failed or was
+    #: abandoned mid-stream leaves the area honestly unresearched.
+    researched_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+
+    __table_args__ = (Index("ix_area_polygon", "polygon", postgresql_using="gist"),)
 
 
 class Site(Base):

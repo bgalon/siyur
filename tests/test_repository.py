@@ -30,11 +30,13 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
+from geoalchemy2.shape import from_shape
 from shapely.geometry import Point, box
+from shapely.geometry.base import BaseGeometry
 from sqlalchemy import Engine, delete, func, select
 from sqlalchemy.orm import Session
 
-from commons.db import Site, SiteConflict, SiteSource, to_db_point
+from commons.db import SRID, Area, Site, SiteConflict, SiteSource, to_db_point
 from commons.merge import merge_records, source_refs
 from commons.models import SiteRecordV1, SourcedValue, SourceRef
 from commons.repository import (
@@ -70,6 +72,25 @@ GATE_OSM = "node/794491388"
 NEIGHBOUR_GERS = "00cf4dda-3a5d-4865-a962-d50d4e1ec17d"
 
 USER = SourceRef(kind="user", id="user-a", license="user-owned")
+
+#: Two auth subjects — coverage's researched-extent half is per-user (ADR-0015).
+SUBJECT = "google-sub-a"
+OTHER = "google-sub-b"
+
+
+def record_research_over(session: Session, polygon: BaseGeometry, *, by: str = SUBJECT) -> Area:
+    """A **completed** research pass over ``polygon`` — what `api/areas.py` commits.
+
+    Written straight to ``area`` rather than driven through the endpoint on purpose: these
+    are the repository's tests, and the state coverage reads is a row with ``researched_at``
+    set. `tests/test_api_areas.py` covers the other half — that the endpoint actually sets it.
+    """
+    area = Area(
+        polygon=from_shape(polygon, srid=SRID), created_by=by, researched_at=datetime.now(UTC)
+    )
+    session.add(area)
+    session.flush()
+    return area
 
 
 @pytest.fixture(scope="module")
@@ -287,7 +308,7 @@ def test_a_record_written_in_one_session_is_readable_in_another(
     with Session(db_engine) as other:
         assert load_site(other, site_id) == result.record
         assert [record.id for record in sites_in_bbox(other, BBOX)] == [site_id]
-        assert coverage(other, AREA).known_site_count == 1
+        assert coverage(other, AREA, researched_by=OTHER).known_site_count == 1
 
 
 def test_coverage_counts_st_within_and_reports_the_stalest_observation(
@@ -297,24 +318,132 @@ def test_coverage_counts_st_within_and_reports_the_stalest_observation(
     results = merge_records([overture[GATE_GERS], overture[NEIGHBOUR_GERS], osm[GATE_OSM]])
     assert len(results) == 2, "the gate merges across sources; the 27 m neighbour does not"
     upsert_sites(db_session, results)
+    record_research_over(db_session, AREA)
     db_session.commit()
 
-    whole = coverage(db_session, AREA)
+    whole = coverage(db_session, AREA, researched_by=SUBJECT)
     assert whole.known_site_count == sum(1 for r in results if AREA.covers(r.record.location.value))
     assert whole.known_site_count == 2
+    assert whole.researched_fraction == pytest.approx(1.0)
     assert (whole.covered, whole.refresh_available) == (True, True)
     assert whole.stalest_observed_at == STALE, "the minimum across the covered sites' ledger"
 
     # Tighten onto the Overture-only neighbour: the OSM observation is no longer in scope.
     neighbour = overture[NEIGHBOUR_GERS].location.value
     tight = box(neighbour.x - 1e-4, neighbour.y - 1e-4, neighbour.x + 1e-4, neighbour.y + 1e-4)
-    only = coverage(db_session, tight)
+    only = coverage(db_session, tight, researched_by=SUBJECT)
     assert (only.known_site_count, only.stalest_observed_at) == (1, FRESH)
+    assert only.covered is True, "a sub-extent of a researched area is researched"
 
-    empty = coverage(db_session, box(-9.5, -9.5, -9.0, -9.0))
+    empty = coverage(db_session, box(-9.5, -9.5, -9.0, -9.0), researched_by=SUBJECT)
     assert empty.known_site_count == 0
     assert (empty.covered, empty.refresh_available) == (False, False)
+    assert empty.researched_fraction == 0.0
     assert empty.stalest_observed_at is None
+
+
+# ── the ADR-0018 defect: `covered` is not "contains a site" ────────────────────────
+
+
+def test_a_much_larger_polygon_containing_a_researched_one_is_not_covered(
+    db_session: Session, overture: dict[str, SiteRecordV1]
+) -> None:
+    """**The regression.** Research a small bbox; ask about a far larger one around it.
+
+    This is the ADR-0018 failure made concrete, and it is the reason ``covered`` stopped
+    being ``known_site_count > 0``. The client delimits by map viewport, so "pan out one
+    zoom step" produces exactly this shape: a polygon that still contains every site the
+    small pass found, and almost none of the ground it covered. Under the old rule the whole
+    enlarged region reported ``covered: true`` and `api/areas.py` served reuse frames instead
+    of researching — silently, with a populated map and no way for the user to tell.
+
+    The enlarged polygon is ~1° square around a ~1.6 km × 1.2 km old town: >99.9 % of what is
+    being asked about has never been looked at.
+    """
+    upsert_sites(db_session, merge_records([overture[GATE_GERS]]))
+    record_research_over(db_session, AREA)
+    db_session.commit()
+
+    minx, miny, maxx, maxy = AREA.bounds
+    enlarged = box(minx - 0.5, miny - 0.5, maxx + 0.5, maxy + 0.5)
+    found = coverage(db_session, enlarged, researched_by=SUBJECT)
+
+    assert found.known_site_count > 0, "the seeded site is inside the enlarged polygon"
+    assert found.covered is False, "a region nobody researched reported itself as covered"
+    assert found.researched_fraction < 0.01
+    # …and the small area it *did* research is still covered, so FR-006 is untouched.
+    assert coverage(db_session, AREA, researched_by=SUBJECT).covered is True
+
+
+def test_a_half_researched_polygon_reports_the_half_it_looked_at(db_session: Session) -> None:
+    """The middle of the range the boolean alone cannot express (the additive field's job)."""
+    minx, miny, maxx, maxy = AREA.bounds
+    western_half = box(minx, miny, (minx + maxx) / 2, maxy)
+    record_research_over(db_session, western_half)
+    db_session.commit()
+
+    found = coverage(db_session, AREA, researched_by=SUBJECT)
+
+    assert found.researched_fraction == pytest.approx(0.5, abs=0.01)
+    assert (found.covered, found.refresh_available) == (False, False)
+
+
+def test_a_researched_area_that_found_nothing_is_still_covered(db_session: Session) -> None:
+    """SC-006 — "nothing found here" is a correct answer, not an unresearched one.
+
+    The property cell-counting coverage cannot have: an empty quarter that was genuinely
+    looked at would look unresearched forever, and every re-delimitation would re-run a pass
+    guaranteed to find nothing again.
+    """
+    record_research_over(db_session, AREA)
+    db_session.commit()
+
+    found = coverage(db_session, AREA, researched_by=SUBJECT)
+
+    assert found.known_site_count == 0
+    assert (found.covered, found.refresh_available) == (True, True)
+
+
+def test_overlapping_passes_do_not_add_up_to_more_than_the_whole(db_session: Session) -> None:
+    """Three passes over the same old town are one researched extent, not 300 % of one."""
+    for _ in range(3):
+        record_research_over(db_session, AREA)
+    db_session.commit()
+
+    assert coverage(db_session, AREA, researched_by=SUBJECT).researched_fraction == pytest.approx(
+        1.0
+    )
+
+
+def test_another_users_research_does_not_cover_my_area_but_their_sites_are_mine(
+    db_session: Session, overture: dict[str, SiteRecordV1]
+) -> None:
+    """ADR-0015 held: the commons is shared, the delimitation that produced it is not.
+
+    Deliberately asserted in both directions, because only the pair states the policy: the
+    *records* another subject's pass wrote are fully visible (ADR-0008 — the commons is a
+    global resource), while their researched **extent** is not, so it cannot make my area
+    report itself covered. The cost is a redundant pass for the second user; the alternative
+    is making one user's delimitations observable to another, which is PRD §13 #4's call.
+    """
+    upsert_sites(db_session, merge_records([overture[GATE_GERS]]))
+    record_research_over(db_session, AREA, by=OTHER)
+    db_session.commit()
+
+    mine = coverage(db_session, AREA, researched_by=SUBJECT)
+    theirs = coverage(db_session, AREA, researched_by=OTHER)
+
+    assert mine.known_site_count == theirs.known_site_count == 1
+    assert (mine.covered, mine.researched_fraction) == (False, 0.0)
+    assert theirs.covered is True
+
+
+def test_an_area_delimited_but_never_researched_covers_nothing(db_session: Session) -> None:
+    """The distinction the schema did not hold before 0004: asking is not researching."""
+    db_session.add(Area(polygon=from_shape(AREA, srid=SRID), created_by=SUBJECT))
+    db_session.commit()
+
+    assert coverage(db_session, AREA, researched_by=SUBJECT).covered is False
 
 
 def test_attribution_comes_only_from_the_stamps(
