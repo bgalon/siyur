@@ -1,52 +1,34 @@
 """idempotence as a database invariant: unique keys on site_source / site_conflict
 
 `commons/repository.py` deduped its two ledger tables in **Python** — it read the existing
-rows, canonicalised each ``jsonb`` payload with ``json.dumps(sort_keys=True)``, and skipped
-what it had already seen. That made "a refresh appends nothing" (T054) a property of one
-code path rather than of the data: two sessions refreshing the same area both finish
-*reading* before either *writes*, so both find the key absent and both append it. Only a
-constraint can close that window, and this migration adds it.
+rows, canonicalised each ``jsonb`` payload, and skipped what it had already seen. That made
+"a refresh appends nothing" (T054) a property of one code path rather than of the data: two
+sessions refreshing the same area both finish *reading* before either *writes*, so both find
+the key absent and both append it. Only a constraint can close that window.
 
-**Why the keys are hashed rather than indexed directly.** A btree index tuple is capped at
-2704 bytes, and a plain composite unique index over a ``jsonb`` column does not merely index
-poorly — it makes the ``INSERT`` *fail*::
-
-    ERROR:  index row size 3024 exceeds btree version 4 maximum 2704 for index "..."
-    HINT:   Consider a function index of an MD5 hash of the value, ...
-
-``site_conflict.candidates`` is an array of fully stamped ``SourcedValue``s and reaches
-kilobytes on a well-sourced field, so the direct index would reject legitimate writes: the
-exact failure the constraint exists to prevent, inverted. This takes Postgres's own advice.
-
-**Which equality the hash expresses.** ``jsonb`` parses to a normalised binary form (keys
-sorted, duplicates dropped, whitespace gone), so ``jsonb_out`` is already a canonical
-serialisation and ``md5(col::text)`` is order-independent natively — ``{"a":1,"b":2}`` and
-``{"b":2,"a":1}`` collide, which is the property the Python ``sort_keys=True`` form used to
-provide. It is deliberately **not** byte-equal to that Python form (Postgres orders keys by
-length-then-bytes and emits ``{"a": 1}`` with a space), and no longer needs to be: the
-repository stopped canonicalising anything, so exactly one engine now decides whether two
-payloads are the same. That is FAIL-005's lesson — the fix there was not to make two engines'
-folds agree, it was to remove the need for them to agree.
-
-``md5``/``jsonb_out`` are ``IMMUTABLE``, which an index expression requires; ``sha256`` is
-not usable here because it takes ``bytea`` and ``convert_to`` is ``STABLE``. ``observed_at``
-stays a **plain** key column — both because ``date_out`` is ``STABLE`` and, more importantly,
-because it is what keeps ``site_source`` genuinely append-only: the same value observed on a
-**later date** is a new observation and must still insert.
+The keys hash their ``jsonb`` halves as ``md5(col::text)`` rather than indexing the columns
+directly. The full rationale — btree's 2704-byte index-tuple limit, why ``jsonb``'s canonical
+text is already key-order-independent, why not ``sha256``, and how this leaves exactly one
+engine deciding JSON equality (FAIL-005 / ADR-0017) — lives with the expression itself in
+``commons.db.jsonb_digest`` and is not restated here. ``observed_at`` stays a **plain** key
+column: it is what keeps ``site_source`` genuinely append-only, since the same value observed
+on a later date is a new observation and must still insert.
 
 Two deliberate asymmetries between ``upgrade`` and ``downgrade``:
 
 1. ``upgrade`` **deletes pre-existing duplicates** before creating the indexes — a migration
-   that only works on an empty table is a trap, and any database written by the pre-existing
+   that only works on an empty table is a trap, and any database written by the previous
    read-then-write path may legitimately hold them. Only exact duplicates under the very key
    the index is about to enforce are removed, keeping the lowest ``id`` of each group, so no
-   distinct observation and no source ref can be lost. It is idempotent and a no-op on a
-   database that has none.
-2. ``downgrade`` drops the indexes but **cannot resurrect those rows**. It does not try:
-   the deleted rows were byte-identical restatements of rows that survive, so the reversal
-   restores the *schema* exactly and the data only up to duplicates that carried no
-   information. This is the one thing this migration does not round-trip, stated here rather
-   than discovered later.
+   distinct observation and no source ref can be lost. It is a no-op where there are none.
+2. ``downgrade`` drops the indexes but **cannot resurrect those rows**. It does not try: the
+   deleted rows were byte-identical restatements of rows that survive, so the reversal
+   restores the *schema* exactly and the data up to duplicates that carried no information.
+   This is the one thing this migration does not round-trip, stated rather than discovered.
+
+The SQL below is written out per table rather than generated from a table name: a migration
+is a historical record, and static statements are what make it reviewable (and keep dynamic
+SQL construction out of a file that runs with DDL privileges).
 
 Revision ID: 0003_dedupe_natural_keys
 Revises: 0002_area
@@ -66,8 +48,8 @@ down_revision: str | Sequence[str] | None = "0002_area"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-#: ``(table, index name, key expressions)`` — the expressions are the literal SQL the index
-#: is built from, and must stay in step with ``commons.db.SITE_*_NATURAL_KEY``, which is what
+#: ``(table, index name, key expressions)``. The expressions are the literal SQL the index is
+#: built from and must stay in step with ``commons.db.SITE_*_NATURAL_KEY``, which is what
 #: ``commons/repository.py`` infers on in its ``ON CONFLICT`` clause.
 KEYS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     (
@@ -82,37 +64,41 @@ KEYS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ),
 )
 
-
-def _drop_duplicates(table: str, key: tuple[str, ...]) -> None:
-    """Delete every row but the lowest-``id`` one of each group equal under ``key``.
-
-    Ordered by the primary key, so the survivor is deterministic rather than
-    whichever row the heap happened to return first.
+#: One ``DELETE`` per ledger table, partitioned by exactly the key its index is about to
+#: enforce and ordered by the primary key, so the surviving row is deterministic rather than
+#: whichever one the heap happened to return first.
+DEDUPE: tuple[str, ...] = (
     """
-    op.execute(
-        sa.text(
-            f"""
-            DELETE FROM {table}
-            WHERE id IN (
-                SELECT id FROM (
-                    SELECT id,
-                           row_number() OVER (
-                               PARTITION BY {", ".join(key)}
-                               ORDER BY id
-                           ) AS rn
-                    FROM {table}
-                ) ranked
-                WHERE rn > 1
-            )
-            """  # noqa: S608 — `table`/`key` are module constants, never caller input.
-        )
+    DELETE FROM site_source WHERE id IN (
+        SELECT id FROM (
+            SELECT id, row_number() OVER (
+                PARTITION BY site_id, field, observed_at,
+                             md5(source::text), md5(value::text)
+                ORDER BY id
+            ) AS rn
+            FROM site_source
+        ) ranked WHERE rn > 1
     )
+    """,
+    """
+    DELETE FROM site_conflict WHERE id IN (
+        SELECT id FROM (
+            SELECT id, row_number() OVER (
+                PARTITION BY site_id, field, md5(candidates::text), resolution
+                ORDER BY id
+            ) AS rn
+            FROM site_conflict
+        ) ranked WHERE rn > 1
+    )
+    """,
+)
 
 
 def upgrade() -> None:
     """Collapse any pre-existing duplicates, then make duplicates impossible."""
+    for statement in DEDUPE:
+        op.execute(statement)
     for table, name, key in KEYS:
-        _drop_duplicates(table, key)
         op.create_index(name, table, [sa.text(part) for part in key], unique=True)
 
 
