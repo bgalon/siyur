@@ -142,6 +142,13 @@ Five rules the join actually turns on, stated here because the code depends on e
    The invariant is therefore over *record ∪ ledger*, not over the record alone: **every** candidate for every field
    is written to `site_source`, deduped on `(site_id, field, source, value, observed_at)` so a refresh appends nothing
    new. Conflicts already recorded on an input travel with it through a re-merge and are never dropped.
+   **That dedupe is a database invariant, not a code path** (migration `0003_dedupe_natural_keys`): `site_source` carries
+   a unique index over that natural key and `site_conflict` over `(site_id, field, candidates, resolution)`, and the
+   repository writes both with `INSERT … ON CONFLICT DO NOTHING`. The `jsonb` halves are compared as `md5(col::text)` —
+   Postgres's own canonical rendering, so key order does not matter — rather than by indexing the `jsonb` columns
+   directly, which would make an oversized `candidates` array *fail* the btree 2704-byte index-tuple limit. `observed_at`
+   is part of the key precisely so `site_source` stays genuinely append-only: **the same value observed on a different
+   date is a new row and still inserts.**
 5. **The winner is a pure function of the candidate set.** After `confidence` → source-trust → `observed_at`, ties fall
    through to `source.kind`, `source.id`, then the value itself, so the same candidates in any input order always elect
    the same winner. A geometry is compared at **7 decimals (≈1 cm)**: float noise from a JSON/PostGIS round-trip is not

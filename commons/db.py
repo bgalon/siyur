@@ -27,6 +27,14 @@ Five tables, one privacy boundary:
 
 The DB URL comes from the ``SIYUR_DATABASE_URL`` process environment variable only — never
 a file, never ``.env*`` (AGENTS.md), matching ``alembic/env.py``.
+
+**Idempotence is a database invariant, not a code path.** ``site_source`` and
+``site_conflict`` each carry a unique index over their natural key
+(:data:`SITE_SOURCE_NATURAL_KEY` / :data:`SITE_CONFLICT_NATURAL_KEY`), so a re-run of a
+research pass cannot duplicate a row *even when two sessions upsert the same area
+concurrently* — which read-then-write dedupe in Python structurally cannot prevent, because
+both readers finish before either writer starts. See :func:`jsonb_digest` for why the
+``jsonb`` halves of those keys are compared through ``md5(col::text)`` rather than directly.
 """
 
 from __future__ import annotations
@@ -38,16 +46,33 @@ from uuid import UUID, uuid4
 
 from geoalchemy2 import Geometry, WKBElement
 from geoalchemy2.shape import from_shape, to_shape
+from pydantic import JsonValue
 from shapely import Point
-from sqlalchemy import Date, DateTime, Engine, ForeignKey, Index, MetaData, Text, create_engine
+from sqlalchemy import (
+    ColumnElement,
+    Date,
+    DateTime,
+    Engine,
+    ForeignKey,
+    Index,
+    MetaData,
+    SQLColumnExpression,
+    Text,
+    create_engine,
+    func,
+)
+from sqlalchemy import cast as sql_cast
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PgUuid
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
+from sqlalchemy.sql.roles import DDLConstraintColumnRole
 
 from commons.geo import validate_point
 
 __all__ = [
     "DATABASE_URL_ENV",
+    "SITE_CONFLICT_NATURAL_KEY",
+    "SITE_SOURCE_NATURAL_KEY",
     "SRID",
     "Area",
     "Base",
@@ -59,6 +84,7 @@ __all__ = [
     "create_session_factory",
     "database_url",
     "from_db_point",
+    "jsonb_digest",
     "metadata",
     "to_db_point",
 ]
@@ -148,7 +174,14 @@ class Site(Base):
 
 
 class SiteSource(Base):
-    """Append-only provenance: every observation of every field, never overwritten."""
+    """Append-only provenance: every observation of every field, never overwritten.
+
+    "Append-only" is bounded by :data:`SITE_SOURCE_NATURAL_KEY`: re-observing the *same*
+    value from the *same* source on the *same* date is not new information and is refused
+    by the database, while the same value observed on a **different** date is a genuinely
+    new observation and still inserts. ``observed_at`` is part of the key precisely so that
+    the constraint cannot turn a legitimate second observation into an error.
+    """
 
     __tablename__ = "site_source"
 
@@ -158,10 +191,18 @@ class SiteSource(Base):
     )
     #: The ``SiteRecordV1`` field this observation is about (``names.en``, ``location``, …).
     field: Mapped[str] = mapped_column(Text, nullable=False)
-    #: The serialised ``SourceRef``.
+    #: The serialised ``SourceRef`` — always a JSON *object*.
     source: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     #: The observed value, as stored inside its ``SourcedValue``.
-    value: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    #:
+    #: **Any** JSON value, not an object: ``SourcedValue[T]`` is generic, so a ``names.en``
+    #: observation stores the bare string ``"Palace of the Grand Master"`` while a
+    #: ``location`` observation stores a GeoJSON ``{"type": "Point", …}`` mapping, and a
+    #: future ``SourcedValue[float]`` would store a number. Typing this ``dict[str, Any]``
+    #: only ever type-checked because ``model_dump()`` returns ``dict[str, Any]`` and the
+    #: subscript that feeds it is therefore ``Any``; a caller holding a typed ``str`` would
+    #: have been rejected outright.
+    value: Mapped[JsonValue] = mapped_column(JSONB, nullable=False)
     observed_at: Mapped[date] = mapped_column(Date, nullable=False)
 
 
@@ -196,6 +237,87 @@ class UserNote(Base):
     value: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
 
     __table_args__ = (Index("ix_user_note_user_id_site_id", "user_id", "site_id"),)
+
+
+# ── the idempotence invariant (T054, enforced in the database) ─────────────────────
+
+
+def jsonb_digest(column: SQLColumnExpression[Any]) -> ColumnElement[str]:
+    """``md5`` of Postgres's own canonical text rendering of a ``jsonb`` value.
+
+    This is the **one** definition of "the same JSON payload" in Siyur, and it lives in
+    Postgres rather than in Python on purpose — the FAIL-005 lesson applied to jsonb: when
+    two engines each hold a notion of equality, do not try to make them agree, remove the
+    need for them to agree by folding in a single engine. `commons/repository.py` no longer
+    canonicalises anything; it hands the payload to the database and lets the constraint
+    below decide, so there is no second notion of equality left to drift. That is the first
+    arm of ADR-0017's rule ("fold both operands in one engine, or derive both arms from one
+    definition and assert them equal exhaustively") — the cheaper arm, available here
+    because nothing needs to compare these payloads *outside* the database.
+
+    Note this is **not** a text fold: no case, accent or Unicode normalisation happens, so it
+    does not add a third arm to ADR-0017's ``normalize_name`` problem. It compares JSON
+    structure, and ``jsonb`` has exactly one notion of that.
+
+    Three questions this expression answers, in the order they bite:
+
+    1. **Why hash instead of indexing the ``jsonb`` column directly?** A btree index tuple
+       is capped at 2704 bytes and a plain composite unique index over ``jsonb`` *rejects
+       the INSERT* once a payload exceeds it (``index row size N exceeds btree version 4
+       maximum 2704``) — Postgres's own HINT for that error recommends exactly this md5
+       function index. ``site_conflict.candidates`` is an array of fully stamped
+       ``SourcedValue``s and reaches kilobytes on a well-sourced field, so the direct index
+       would fail legitimate writes: the precise failure the constraint exists to prevent,
+       inverted.
+    2. **Is ``md5(col::text)`` order-independent?** Yes, and *natively* — ``jsonb`` parses
+       to a normalised binary form (keys sorted, duplicates dropped, whitespace gone), so
+       ``jsonb_out`` is already a canonical serialisation and ``{"a":1,"b":2}`` and
+       ``{"b":2,"a":1}`` hash identically. That is the same order-independence the old
+       Python ``json.dumps(sort_keys=True)`` provided; the two strings are *not* byte-equal
+       (Postgres sorts keys by length-then-bytes and emits ``{"a": 1}`` with a space) and no
+       longer need to be, because only Postgres computes this now.
+    3. **Where does it differ from ``jsonb``'s own ``=``?** Only in numeric scale: ``1.0``
+       and ``1.00`` are ``jsonb``-equal but render differently. Unreachable from this
+       codebase — a Python float has a single ``repr``, so ``model_dump(mode="json")``
+       cannot emit two spellings of one number — and the residual risk points the safe way
+       (a spurious extra row, never a rejected legitimate write).
+
+    ``md5`` and ``jsonb_out`` are ``IMMUTABLE``, which an index expression requires.
+    ``sha256`` is not an option: it takes ``bytea``, and ``convert_to`` is ``STABLE``.
+    Collisions are not an adversarial concern here — nothing user-controlled picks these
+    payloads — and the cost of one would be a single skipped duplicate observation.
+    """
+    return func.md5(sql_cast(column, Text))
+
+
+#: What makes one provenance observation unique (`commons/repository.py` §2).
+#:
+#: ``observed_at`` is a **plain column, deliberately**: it keeps ``site_source`` genuinely
+#: append-only (the same value seen on a later date is a new row, not a constraint
+#: violation), and ``date_out`` is ``STABLE`` so it could not be folded into the digest even
+#: if we wanted to. ``site_id``/``field`` stay plain for the same reason ``jsonb_digest``
+#: exists in reverse: they are small and bounded, so they cost nothing in the index tuple
+#: and stay readable to anyone reading ``\d site_source``.
+SITE_SOURCE_NATURAL_KEY: Final[tuple[DDLConstraintColumnRole, ...]] = (
+    SiteSource.site_id,
+    SiteSource.field,
+    SiteSource.observed_at,
+    jsonb_digest(SiteSource.source),
+    jsonb_digest(SiteSource.value),
+)
+
+#: What makes one recorded disagreement unique. ``candidates`` is the unbounded half.
+SITE_CONFLICT_NATURAL_KEY: Final[tuple[DDLConstraintColumnRole, ...]] = (
+    SiteConflict.site_id,
+    SiteConflict.field,
+    jsonb_digest(SiteConflict.candidates),
+    SiteConflict.resolution,
+)
+
+# Declared on the metadata (not only in the migration) so `alembic/env.py`'s autogenerate
+# diff sees them and never proposes dropping what 0003 created.
+Index("uq_site_source_observation", *SITE_SOURCE_NATURAL_KEY, unique=True)
+Index("uq_site_conflict_record", *SITE_CONFLICT_NATURAL_KEY, unique=True)
 
 
 def to_db_point(point: Point) -> WKBElement:
