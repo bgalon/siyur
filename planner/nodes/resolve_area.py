@@ -28,6 +28,15 @@ drew a ring means that ring; a name is the only input that needs guessing.
 consulted when divisions returns nothing, one bounded request, never in a loop (the OSMF
 usage policy in `DATA-LICENSES.md`).
 
+**The divisions read is two passes and it is on a clock** (DU-03). The hosted release keeps
+97.5 % of its bytes in the ``geometry`` column and publishes row-group statistics for
+``bbox`` and nothing else, so a name lookup that projects geometry reads the entire global
+theme to answer "which rows match?" — measured at 212 s. Matching now reads only the narrow
+columns and the polygons of the survivors are fetched afterwards, by id. That is still not
+interactive on its own; a caller-supplied :attr:`OvertureDivisions.window` is what makes it
+so, and :data:`DIVISIONS_TIMEOUT` is what stops the rest becoming an open-ended hang. See
+the block comment above :data:`_DIVISIONS_QUERY` for the measurements.
+
 :class:`DivisionsLookup` and :class:`Geocoder` are Protocols so both are injectable: the
 node is fully testable offline and the network is never reached implicitly by a test.
 
@@ -36,8 +45,11 @@ Shapely pin is ``~=2.1`` — ``.geom_type`` / ``from_wkb`` / ``box``, never 1.x 
 
 from __future__ import annotations
 
+import time
 import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
+from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass
 from typing import Any, ClassVar, Final, Protocol, runtime_checkable
 
@@ -58,7 +70,9 @@ from commons.sources.overture import DEFAULT_RELEASE
 
 __all__ = [
     "DIVISIONS_ATTRIBUTION",
+    "DIVISIONS_READ_THREADS",
     "DIVISIONS_SOURCE_TEMPLATE",
+    "DIVISIONS_TIMEOUT",
     "NOMINATIM_ENDPOINT",
     "PLAUSIBLE_CONFIDENCE",
     "STRONG_CONFIDENCE",
@@ -66,6 +80,7 @@ __all__ = [
     "AreaAmbiguous",
     "AreaCandidate",
     "AreaInvalid",
+    "AreaLookupTimeout",
     "AreaNotResolved",
     "AreaRequest",
     "AreaUnresolvable",
@@ -83,6 +98,20 @@ DIVISIONS_SOURCE_TEMPLATE: Final = (
 )
 #: `DATA-LICENSES.md` "Overture Maps — divisions" row: attribution is mandatory.
 DIVISIONS_ATTRIBUTION: Final = "© OpenStreetMap contributors, Overture Maps Foundation"
+#: DuckDB worker threads for a **hosted** (remote) divisions read. The scan is bound by
+#: per-range-request latency, not by CPU: DuckDB issues roughly one request per row group
+#: per parquet leaf column (544 row groups here), so the thread count is really the request
+#: concurrency, and the default — one per core — leaves the link idle. Measured over the
+#: hosted release, same query, same machine: **148 s at 8 threads → 78 s at 32**. Applied
+#: only to the remote path; a local extract is CPU-bound and DuckDB's own default is right.
+DIVISIONS_READ_THREADS: Final = 32
+#: Wall-clock ceiling on a divisions lookup, in seconds. The hosted release is remote
+#: parquet with no statistics on any name column (see the block comment below), so an
+#: unwindowed name search is *inherently* a full visit of the theme — measured at minutes,
+#: not seconds. This bound is what stops that becoming an open-ended hang: past it the
+#: lookup is abandoned and raises :class:`AreaLookupTimeout`, which is an error about the
+#: source and never a "no such area". Callers that can supply a ``window`` are far inside it.
+DIVISIONS_TIMEOUT: Final = 120.0
 NOMINATIM_ENDPOINT: Final = "https://nominatim.openstreetmap.org/search"
 _OSM_BASE: Final = "https://www.openstreetmap.org"
 
@@ -252,20 +281,100 @@ def _normalize(text: str) -> str:
 _PRIMARY_FOLD: Final = _fold_sql("names.primary")
 _ALTERNATE_FOLD: Final = _fold_sql("n")
 _NEEDLE_FOLD: Final = _fold_sql("$needle")
-_DIVISIONS_QUERY: Final = f"""
-SELECT id,
-       names.primary AS primary_name,
-       coalesce(map_values(names.common), []) AS alternate_names,
-       sources,
-       ST_AsWKB(geometry) AS wkb
-FROM read_parquet($src, hive_partitioning=1, filename=false)
-WHERE contains({_PRIMARY_FOLD}, {_NEEDLE_FOLD})
+_NAME_MATCH: Final = f"""contains({_PRIMARY_FOLD}, {_NEEDLE_FOLD})
    OR contains({_NEEDLE_FOLD}, {_PRIMARY_FOLD})
    OR coalesce(list_bool_or(list_transform(
         list_filter(coalesce(map_values(names.common), []), n -> length(trim(n)) > 0),
         n -> contains({_ALTERNATE_FOLD}, {_NEEDLE_FOLD})
-          OR contains({_NEEDLE_FOLD}, {_ALTERNATE_FOLD}))), false)
+          OR contains({_NEEDLE_FOLD}, {_ALTERNATE_FOLD}))), false)"""
+
+_READ_DIVISIONS: Final = "read_parquet($src, hive_partitioning=1, filename=false)"
+
+# ======================================================================================
+# Two passes, because 97 % of this theme is geometry (the DU-03 performance defect)
+# ======================================================================================
+# Measured on release ``2026-07-22.0`` from ``parquet_metadata``: ``division_area`` is 8
+# files / 544 row groups / 1,073,093 rows / **4.47 GB** compressed — of which the
+# ``geometry`` column alone is **4.36 GB (97.5 %)**. Everything this resolver matches on is
+# in the remaining 2.5 %: ``names.primary`` 1.1 MB, ``names.common`` 0.7 MB, ``sources``
+# 1.8 MB, ``id`` 2.9 MB, ``bbox`` 2.4 MB *per file*.
+#
+# And **only ``bbox.*`` carries row-group statistics** in this release — ``id``, ``names``,
+# ``country`` and ``subtype`` are all written with none — so a name predicate can prune
+# nothing at all: DuckDB must visit every row group. Projecting the geometry alongside that
+# predicate therefore streams the entire global theme to answer "which rows match?".
+#
+# So the lookup is split. :data:`_DIVISIONS_QUERY` answers *which* rows match, reading only
+# the narrow columns; :data:`_GEOMETRY_QUERY` then fetches the polygons of the handful that
+# survived, by id. Semantics are unchanged — same prefilter, same ``ORDER BY id``, same
+# row limit — only the bytes differ.
+#
+# The one column that *can* prune is ``bbox``, and the theme is spatially clustered (median
+# row-group span ≈ 4.8° lon × 3.0° lat), so a **caller-supplied** search window is the only
+# lever that makes this path genuinely interactive. It is caller-supplied precisely because
+# FR-001/SC-005 forbid this module knowing a single coordinate of its own.
+#
+# Measured end to end against the release, same machine and link, resolving one name:
+#
+#     212 s  before — one statement, name predicate + ``ST_AsWKB(geometry)``
+#      73 s  after, no window — two passes, narrow projection, 32 read threads
+#      18 s  after, with a caller-supplied window — and one precise candidate, not 20
+#
+# **73 s is not interactive, and no amount of query surgery makes it so**: with no statistics
+# on any name column, matching *is* a full visit of 544 row groups, and reading a single
+# narrow column of this theme cold measures 26–37 s on its own. The remaining fix is not a
+# query — it is a cached divisions extract (see the class docstring), and until it exists
+# :data:`DIVISIONS_TIMEOUT` is what keeps the failure bounded and legible.
+
+#: The columns pass 1 reads, and **nothing else** — in particular no geometry, and only the
+#: two ``sources`` fields :func:`_license_of` looks at rather than the whole 7-field struct,
+#: because every extra parquet leaf is another 544 range requests against the release.
+#: ``bbox.xmin``/``bbox.ymin`` come along as the anchor pass 2 is pruned by.
+_DIVISIONS_COLUMNS: Final = """
+SELECT id,
+       names.primary AS primary_name,
+       coalesce(map_values(names.common), []) AS alternate_names,
+       list_transform(
+         coalesce(sources, []),
+         s -> {'property': s.property, 'license': s.license}
+       ) AS licensing,
+       bbox.xmin AS min_lon,
+       bbox.ymin AS min_lat
+"""
+
+#: Pass 1 — *which* divisions match the name.
+_DIVISIONS_QUERY: Final = f"""
+{_DIVISIONS_COLUMNS}
+FROM {_READ_DIVISIONS}
+WHERE {_NAME_MATCH}
 ORDER BY id
+"""
+
+#: Pass 1 with a caller-supplied search window — the same statement plus the places
+#: adapter's overlap predicate (`commons/sources/overture.py`), which *does* prune row
+#: groups. This is the only form of this lookup that is interactive against the release.
+_DIVISIONS_QUERY_IN_WINDOW: Final = f"""
+{_DIVISIONS_COLUMNS}
+FROM {_READ_DIVISIONS}
+WHERE bbox.xmin <= $max_lon AND bbox.xmax >= $min_lon
+  AND bbox.ymin <= $max_lat AND bbox.ymax >= $min_lat
+  AND ({_NAME_MATCH})
+ORDER BY id
+"""
+
+#: Pass 2 — the polygons of the rows pass 1 kept, and nothing else. ``id`` is the
+#: correctness filter; the bbox range only bounds what is *scanned*, and it is deliberately
+#: **not** the overlap predicate the places adapter uses. Overlap (``xmin <= max AND
+#: xmax >= min``) is a half-space test on a polygon theme: it keeps every row group west of
+#: one bound, which prunes almost nothing. Ranging each corner against **the corner values
+#: pass 1 actually read** turns it into a point probe per candidate, which is what row-group
+#: statistics can answer. Both bounds come from the matched rows, never from this module.
+_GEOMETRY_QUERY: Final = f"""
+SELECT id, ST_AsWKB(geometry) AS wkb
+FROM {_READ_DIVISIONS}
+WHERE bbox.xmin BETWEEN $min_lon AND $max_lon
+  AND bbox.ymin BETWEEN $min_lat AND $max_lat
+  AND list_contains($ids, id)
 """
 
 
@@ -320,6 +429,21 @@ class AreaUnresolvable(AreaNotResolved):
 
 class AreaInvalid(ValueError):
     """No input at all, or a geometry that is not a usable area — the contract's ``422``."""
+
+
+class AreaLookupTimeout(TimeoutError):
+    """The **authoritative** divisions lookup ran past its deadline and was abandoned.
+
+    Deliberately *not* an :class:`AreaNotResolved`. "The source did not answer in time" and
+    "there is no such place" are different facts, and collapsing them would turn a slow
+    remote read into a confident ``404`` — the same silent-wrong-answer shape FAIL-005 was
+    written about. It is not an :class:`AreaInvalid` either: the user's request was fine.
+
+    It therefore propagates out of :func:`resolve_area` for the API to map, and the honest
+    mapping is **``504 Gateway Timeout``** (`api/areas.py` maps ``AreaInvalid`` → 422 and
+    ``AreaNotResolved`` → 404; until it learns this one, an unhandled ``500`` is still an
+    honest "we failed", never a false "no such area").
+    """
 
 
 @runtime_checkable
@@ -518,6 +642,75 @@ def _license_of(sources: Sequence[Mapping[str, Any]] | None) -> str | None:
 
 
 @dataclass(frozen=True, slots=True)
+class _Countdown:
+    """One wall-clock budget shared by both passes of a lookup — see :data:`DIVISIONS_TIMEOUT`."""
+
+    seconds: float
+    started: float
+
+    @classmethod
+    def of(cls, seconds: float) -> _Countdown:
+        return cls(seconds=seconds, started=time.monotonic())
+
+    def remaining(self) -> float:
+        return self.seconds - (time.monotonic() - self.started)
+
+
+@dataclass(frozen=True, slots=True)
+class _DivisionMatch:
+    """A row that passed the SQL prefilter *and* the Python re-score. Geometry still pending.
+
+    Carrying the row's own ``bbox`` is what lets the geometry pass be pruned: it is the only
+    column the theme publishes statistics for, and it comes from the data, never from here.
+    """
+
+    id: str
+    name: str
+    license_id: str
+    confidence: float
+    #: The row's own lower-left bbox corner — the value pass 2 probes the statistics with.
+    min_lon: float
+    min_lat: float
+
+
+def _bounded(
+    connection: duckdb.DuckDBPyConnection,
+    sql: str,
+    params: Mapping[str, Any],
+    clock: _Countdown,
+    what: str,
+) -> list[Any]:
+    """Run one statement under ``clock``, **abandoning** it rather than waiting forever.
+
+    DuckDB has no query timeout, so the statement runs on a worker thread and the deadline
+    is enforced by :meth:`~duckdb.DuckDBPyConnection.interrupt`, which unwinds the running
+    query rather than leaking a thread that keeps pulling remote parquet.
+
+    The deadline is a **ceiling on waiting, not a stopwatch**: unwinding lets in-flight HTTP
+    range requests drain, so the call returns a few seconds late — measured at 16.3 s for a
+    10 s budget against the hosted release. Bounded is the property being bought here; to
+    the nearest second is not.
+    """
+    remaining = clock.remaining()
+    if remaining <= 0.0:
+        raise AreaLookupTimeout(f"the Overture divisions lookup ran out of time before {what}")
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="divisions") as pool:
+        future: Future[list[Any]] = pool.submit(
+            lambda: list(connection.execute(sql, dict(params)).fetchall())
+        )
+        try:
+            return future.result(timeout=remaining)
+        except FutureTimeout:
+            connection.interrupt()
+            raise AreaLookupTimeout(
+                f"the Overture divisions lookup exceeded {clock.seconds:g}s while {what} — "
+                "the authoritative source did not answer in time. This says nothing about "
+                "whether the area exists. Narrow the search with a window, or point the "
+                "resolver at a local divisions extract"
+            ) from None
+
+
+@dataclass(frozen=True, slots=True)
 class OvertureDivisions:
     """Name → administrative area over the Overture **divisions/division_area** theme.
 
@@ -526,7 +719,25 @@ class OvertureDivisions:
     local file/glob so tests never touch the network; left ``None`` it reads the release.
 
     A DuckDB failure is **not** swallowed: an unreachable authoritative source must surface
-    as an error, not as a false "no such area".
+    as an error, not as a false "no such area". A *slow* one is the same fact with a clock on
+    it — see :class:`AreaLookupTimeout` and :data:`DIVISIONS_TIMEOUT`.
+
+    The lookup is **two passes** (see the block comment above :data:`_DIVISIONS_QUERY`):
+    which rows match, then the geometry of those rows. ``window`` is a caller-supplied
+    ``[minLon, minLat, maxLon, maxLat]`` search box — the map viewport, the user's current
+    area, anything the caller knows — and it is the difference between an interactive lookup
+    and a minutes-long one, because ``bbox`` is the only column the theme indexes. It is a
+    parameter and never a constant: FR-001/SC-005 mean this module knows no coordinates.
+
+    **What would actually fix the unwindowed case**, since this class cannot: ``parquet``
+    already accepts a local file or glob, so a build step that reads the release once and
+    writes a divisions extract — the columns above, no geometry duplication beyond what is
+    needed, sorted so ``bbox`` and ``names`` both carry row-group statistics — turns every
+    later lookup into a local scan. The theme is 4.47 GB hosted but only ~110 MB of it is
+    non-geometry; an extract that keeps ``id``/``names``/``sources``/``bbox`` plus the
+    geometry is a one-off download, and one that drops geometry entirely (fetching polygons
+    from the release by id, pruned by ``bbox``, exactly as pass 2 already does) is ~110 MB.
+    That is a deliverable, not a parameter, which is why it is written here and not done.
     """
 
     kind: ClassVar[SourceKind] = "overture"
@@ -535,48 +746,144 @@ class OvertureDivisions:
     release: str = DEFAULT_RELEASE
     limit: int = 20
     s3_region: str = "us-west-2"
+    #: Wall-clock ceiling for the whole lookup, both passes together.
+    timeout: float = DIVISIONS_TIMEOUT
+    #: Request concurrency for the hosted release; ignored for a local ``parquet``.
+    read_threads: int = DIVISIONS_READ_THREADS
+    #: Optional caller-supplied ``(minLon, minLat, maxLon, maxLat)`` search window.
+    window: tuple[float, float, float, float] | None = None
 
     def search(self, name: str) -> Sequence[AreaCandidate]:
         needle = _normalize(name)
         if not needle:
             return ()
-        candidates: list[AreaCandidate] = []
-        for division_id, primary, alternates, sources, wkb in self._read(_collapse(name)):
-            license_id = _license_of(sources)
+        clock = _Countdown.of(self.timeout)
+        connection = self._connect()
+        try:
+            matches = self._match(connection, _collapse(name), needle, clock)
+            if not matches:
+                return ()
+            polygons = self._polygons(connection, matches, clock)
+        finally:
+            connection.close()
+        return tuple(
+            AreaCandidate(
+                name=match.name,
+                polygon=polygon,
+                source=SourceRef(
+                    kind=self.kind,
+                    id=match.id,
+                    license=match.license_id,
+                    attribution=_attribution_for(match.license_id, DIVISIONS_ATTRIBUTION),
+                ),
+                confidence=match.confidence,
+            )
+            for match in matches
+            if (polygon := polygons.get(match.id)) is not None
+        )
+
+    # -- the two passes ---------------------------------------------------------------
+
+    def _match(
+        self,
+        connection: duckdb.DuckDBPyConnection,
+        raw: str,
+        needle: str,
+        clock: _Countdown,
+    ) -> list[_DivisionMatch]:
+        """Pass 1 — *which* divisions match, re-scored in Python. No geometry is read."""
+        params: dict[str, Any] = {"src": self._source, "needle": raw}
+        sql = _DIVISIONS_QUERY
+        if self.window is not None:
+            sql = _DIVISIONS_QUERY_IN_WINDOW
+            params |= self._window_params(self.window)
+        rows = _bounded(
+            connection, f"{sql} LIMIT {int(self.limit)}", params, clock, "matching the name"
+        )
+        matches: list[_DivisionMatch] = []
+        for division_id, primary, alternates, licensing, min_lon, min_lat in rows:
+            license_id = _license_of(licensing)
             confidence = _match_confidence(needle, (primary, *(alternates or ())))
-            if not division_id or wkb is None or license_id is None or confidence <= 0.0:
+            if not division_id or license_id is None or confidence <= 0.0:
                 continue
-            try:
-                polygon = _validate_area(from_wkb(bytes(wkb)))
-            except (AreaInvalid, ShapelyError):
-                continue
-            candidates.append(
-                AreaCandidate(
-                    name=str(primary or name),
-                    polygon=polygon,
-                    source=SourceRef(
-                        kind=self.kind,
-                        id=str(division_id),
-                        license=license_id,
-                        attribution=_attribution_for(license_id, DIVISIONS_ATTRIBUTION),
-                    ),
+            if min_lon is None or min_lat is None:
+                continue  # no bbox ⇒ no anchor to fetch its geometry by; the row is unusable
+            matches.append(
+                _DivisionMatch(
+                    id=str(division_id),
+                    name=str(primary or raw),
+                    license_id=license_id,
                     confidence=confidence,
+                    min_lon=float(min_lon),
+                    min_lat=float(min_lat),
                 )
             )
-        return tuple(candidates)
+        return matches
 
-    def _read(self, needle: str) -> list[Any]:
-        source = self.parquet or DIVISIONS_SOURCE_TEMPLATE.format(release=self.release)
+    def _polygons(
+        self,
+        connection: duckdb.DuckDBPyConnection,
+        matches: Sequence[_DivisionMatch],
+        clock: _Countdown,
+    ) -> dict[str, BaseGeometry]:
+        """Pass 2 — the polygons of exactly those rows, keyed by id.
+
+        The bounds are the **range of the matches' own lower-left corners**, so the geometry
+        scan is pruned to the row groups whose ``bbox.xmin``/``bbox.ymin`` statistics could
+        contain one. A row whose geometry is missing or is not a usable area is simply
+        absent from the result: the same drop the single-pass version did inline, in the
+        same place in the pipeline.
+        """
+        params: dict[str, Any] = {"src": self._source, "ids": [match.id for match in matches]}
+        params |= self._window_params(
+            (
+                min(match.min_lon for match in matches),
+                min(match.min_lat for match in matches),
+                max(match.min_lon for match in matches),
+                max(match.min_lat for match in matches),
+            )
+        )
+        rows = _bounded(connection, _GEOMETRY_QUERY, params, clock, "fetching the geometry")
+        polygons: dict[str, BaseGeometry] = {}
+        for division_id, wkb in rows:
+            if not division_id or wkb is None:
+                continue
+            try:
+                polygons[str(division_id)] = _validate_area(from_wkb(bytes(wkb)))
+            except (AreaInvalid, ShapelyError):
+                continue
+        return polygons
+
+    # -- plumbing ---------------------------------------------------------------------
+
+    @property
+    def _source(self) -> str:
+        return self.parquet or DIVISIONS_SOURCE_TEMPLATE.format(release=self.release)
+
+    @staticmethod
+    def _window_params(window: tuple[float, float, float, float]) -> dict[str, Any]:
+        """A search box → the four bound parameters both windowed statements read."""
+        min_lon, min_lat, max_lon, max_lat = window
+        return {
+            "min_lon": min_lon,
+            "min_lat": min_lat,
+            "max_lon": max_lon,
+            "max_lat": max_lat,
+        }
+
+    def _connect(self) -> duckdb.DuckDBPyConnection:
         connection = duckdb.connect()
         try:
             connection.execute("INSTALL spatial; LOAD spatial;")
             if self.parquet is None:
                 connection.execute("INSTALL httpfs; LOAD httpfs;")
                 connection.execute("SET s3_region = $region;", {"region": self.s3_region})
-            sql = f"{_DIVISIONS_QUERY} LIMIT {int(self.limit)}"
-            return connection.execute(sql, {"src": source, "needle": needle}).fetchall()
-        finally:
+                # Request concurrency, not parallelism — see DIVISIONS_READ_THREADS.
+                connection.execute("SET threads = $threads;", {"threads": self.read_threads})
+        except BaseException:
             connection.close()
+            raise
+        return connection
 
 
 @dataclass(frozen=True, slots=True)
