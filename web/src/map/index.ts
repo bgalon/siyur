@@ -56,9 +56,11 @@ export {
 } from './research'
 export {
   DEFAULT_SITES_ENDPOINT,
+  SITE_LABEL_DENSITY_LIMIT,
   SitesLayer,
   SitesRequestError,
   buildMarkerElement,
+  buildMarkerLabel,
   buildPopupContent,
   createSiteMarker,
   displayName,
@@ -70,6 +72,7 @@ export {
   mountSitesLayer,
   type BboxSource,
   type FetchSitesOptions,
+  type MarkerRenderOptions,
   type SitesLayerOptions,
 } from './sites'
 export {

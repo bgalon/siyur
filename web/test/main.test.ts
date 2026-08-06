@@ -48,6 +48,11 @@ vi.mock('maplibre-gl', () => {
     remove() {}
   }
   class FakePopup {
+    // `createSiteMarker` defers the popup body to the `open` event, so the stub
+    // has to be an event emitter as MapLibre's `Popup` is.
+    on() {
+      return this
+    }
     setDOMContent() {
       return this
     }
@@ -185,11 +190,15 @@ describe('the app shell (US1 acceptance path)', () => {
 
     // The marker DOM built for the persisted site carries its own source chip,
     // and every chip's text comes from that value's stamp (FR-003 / SC-002).
+    // Markers are dots by default at density, so peek the label first — the chip
+    // is revealed with the name it attributes, never apart from it.
     const { buildMarkerElement } = await import('../src/map/sites')
     const { sanitiseSite } = await import('../src/map/guards')
     const site = sanitiseSite(SITE)
     expect(site).not.toBeNull()
-    const chip = buildMarkerElement(site!).querySelector<HTMLElement>('.siyur-chip')
+    const marker = buildMarkerElement(site!)
+    marker.dispatchEvent(new Event('pointerenter'))
+    const chip = marker.querySelector<HTMLElement>('.siyur-chip')
     expect(chip?.dataset.sourceKind).toBe('osm')
     expect(chip?.textContent).toContain('ODbL-1.0')
   })

@@ -5,11 +5,17 @@ import type { Map as MapLibreMap } from 'maplibre-gl'
 // `GET /sites` does not exist yet either — the CONTRACT is the interface, so the
 // fetch is mocked with the contract's own worked example
 // (specs/001-research-cited-sites/contracts/sites.md).
+interface PopupLike {
+  content: HTMLElement | null
+  builds: number
+  fire(type: string): void
+}
+
 const stub = vi.hoisted(() => ({
   markers: [] as {
     opts: { element?: HTMLElement }
     lngLat: [number, number] | null
-    popup: { content: HTMLElement | null } | null
+    popup: { content: HTMLElement | null; builds: number; fire(type: string): void } | null
     added: boolean
     removed: boolean
   }[],
@@ -18,9 +24,22 @@ const stub = vi.hoisted(() => ({
 vi.mock('maplibre-gl', () => {
   class FakePopup {
     content: HTMLElement | null = null
+    /** How many times the content was actually constructed (laziness probe). */
+    builds = 0
+    private listeners: Record<string, (() => void)[]> = {}
     constructor(public opts: Record<string, unknown>) {}
+    on(type: string, listener: () => void) {
+      ;(this.listeners[type] ??= []).push(listener)
+      return this
+    }
+    /** Stand-in for MapLibre firing `open` when the popup is added to the map. */
+    fire(type: string) {
+      for (const listener of this.listeners[type] ?? []) listener()
+      return this
+    }
     setDOMContent(element: HTMLElement) {
       this.content = element
+      this.builds += 1
       return this
     }
   }
@@ -57,10 +76,12 @@ vi.mock('maplibre-gl', () => {
 })
 
 const {
+  SITE_LABEL_DENSITY_LIMIT,
   SitesLayer,
   SitesRequestError,
   buildMarkerElement,
   buildPopupContent,
+  createSiteMarker,
   displayName,
   displayNameOrder,
   fetchSites,
@@ -68,6 +89,7 @@ const {
   mountAreaReuse,
 } = await import('../src/map/sites')
 const { OdblAttributionControl } = await import('../src/map/attribution')
+const { sanitiseSite } = await import('../src/map/guards')
 
 /* ------------------------------------------------------------- fixtures --- */
 
@@ -158,6 +180,20 @@ const RESPONSE = {
   sites: [PALACE, CLOCK_TOWER],
   attribution: ['© OpenStreetMap contributors'],
 }
+
+/**
+ * `n` distinct Rhodes-scale sites — the shape of the real problem: `GET /sites`
+ * over the old town returns ~780 records into a ~700 px square.
+ */
+const manySites = (n: number): unknown[] =>
+  Array.from({ length: n }, (_, i) => ({
+    ...CLOCK_TOWER,
+    id: `dense-${i}`,
+    location: {
+      ...CLOCK_TOWER.location,
+      value: { type: 'Point', coordinates: [28.2235 + i * 0.0001, 36.4451 + i * 0.0001] },
+    },
+  }))
 
 const okFetch = (body: unknown): typeof fetch =>
   vi.fn(async () =>
@@ -326,9 +362,15 @@ describe('T062 · display name resolves en → <lang>-Latn → source-script', (
     en: { value: 'Clock Tower', source: OVERTURE, bundleable: true, confidence: 0.8 },
   }
 
-  const markerName = (names: unknown): string | null | undefined =>
-    buildMarkerElement({ ...CLOCK_TOWER, names } as never).querySelector('.siyur-value__text')
-      ?.textContent
+  /**
+   * The name a marker actually shows. Markers are dots by default now, so this
+   * peeks the label first — the same reveal a user gets on hover or focus.
+   */
+  const markerName = (names: unknown): string | null | undefined => {
+    const element = buildMarkerElement({ ...CLOCK_TOWER, names } as never)
+    element.dispatchEvent(new Event('pointerenter'))
+    return element.querySelector('.siyur-value__text')?.textContent
+  }
 
   it.each([
     ['source script (el only)', GREEK_SCRIPT_ONLY, 'Ρολόι'],
@@ -365,18 +407,19 @@ describe('T062 · display name resolves en → <lang>-Latn → source-script', (
 
 /* ------------------------------------------------------------- rendering --- */
 
+const CLOCK_TOWER_CHIP = 'OSM · ODbL-1.0 · © OpenStreetMap contributors'
+
 describe('marker rendering', () => {
-  it('renders the display name with its own attribution chip', () => {
-    const element = buildMarkerElement(CLOCK_TOWER as never)
+  it('renders the display name with its own attribution chip when labelled', () => {
+    const element = buildMarkerElement(CLOCK_TOWER as never, { labelled: true })
     expect(element.dataset.siteId).toBe('a20e-uuid')
+    expect(element.dataset.labelled).toBe('true')
     expect(element.querySelector('.siyur-value__text')?.textContent).toBe('Roloi')
-    expect(element.querySelector('.siyur-chip')?.textContent).toBe(
-      'OSM · ODbL-1.0 · © OpenStreetMap contributors',
-    )
+    expect(element.querySelector('.siyur-chip')?.textContent).toBe(CLOCK_TOWER_CHIP)
   })
 
   it('renders a pin but no name row when the record carries no stamped name', () => {
-    const element = buildMarkerElement({ ...CLOCK_TOWER, names: {} } as never)
+    const element = buildMarkerElement({ ...CLOCK_TOWER, names: {} } as never, { labelled: true })
     expect(element.querySelector('.siyur-marker__pin')).not.toBeNull()
     expect(element.querySelector('.siyur-value')).toBeNull()
     expect(element.querySelector('.siyur-chip')).toBeNull()
@@ -409,6 +452,111 @@ describe('marker rendering', () => {
     for (const row of popup.querySelectorAll('.siyur-popup__row')) {
       expect(row.querySelector('.siyur-chip')).not.toBeNull()
     }
+  })
+})
+
+/* ------------------------------------------------- dense-viewport markers --- */
+
+const peek = (element: HTMLElement, type: 'pointerenter' | 'focus'): void => {
+  element.dispatchEvent(new Event(type))
+}
+
+describe('dot markers keep dense viewports readable without weakening FR-004', () => {
+  it('renders a bare dot — no name, no chip — until the user asks', () => {
+    const element = buildMarkerElement(CLOCK_TOWER as never)
+    expect(element.dataset.labelled).toBe('false')
+    expect(element.querySelector('.siyur-marker__pin')).not.toBeNull()
+    expect(element.querySelector('.siyur-value')).toBeNull()
+    expect(element.querySelector('.siyur-chip')).toBeNull()
+    // A dot displays no nameable value, so no value goes unattributed.
+    expect(element.textContent).toBe('')
+  })
+
+  it('reveals the name AND its chip together on hover', () => {
+    const element = buildMarkerElement(CLOCK_TOWER as never)
+    peek(element, 'pointerenter')
+    expect(element.querySelector('.siyur-value__text')?.textContent).toBe('Roloi')
+    expect(element.querySelector('.siyur-chip')?.textContent).toBe(CLOCK_TOWER_CHIP)
+  })
+
+  it('reveals the same name+chip on keyboard focus, so the peek is not mouse-only', () => {
+    const element = buildMarkerElement(CLOCK_TOWER as never)
+    expect(element.tabIndex).toBe(0)
+    peek(element, 'focus')
+    expect(element.querySelector('.siyur-chip')?.textContent).toBe(CLOCK_TOWER_CHIP)
+  })
+
+  it('hides the label again on pointerleave', () => {
+    const element = buildMarkerElement(CLOCK_TOWER as never)
+    peek(element, 'pointerenter')
+    element.dispatchEvent(new Event('pointerleave'))
+    expect(element.querySelector('.siyur-value')).toBeNull()
+    expect(element.querySelector('.siyur-chip')).toBeNull()
+  })
+
+  it('never shows the name without its chip — the label IS the chip’s element', () => {
+    const element = buildMarkerElement(PALACE as never)
+    peek(element, 'pointerenter')
+    const values = [...element.querySelectorAll('.siyur-value')]
+    expect(values).toHaveLength(1)
+    for (const value of values) {
+      expect(value.querySelector('.siyur-chip')).not.toBeNull()
+      expect(value.textContent).toMatch(/Palace of the Grand Master/)
+    }
+  })
+
+  it('carries name + attribution in the dot’s accessible name, with no interaction', () => {
+    const element = buildMarkerElement(CLOCK_TOWER as never)
+    const label = element.getAttribute('aria-label') ?? ''
+    expect(label).toMatch(/Roloi/)
+    expect(label).toMatch(/ODbL-1\.0/)
+    expect(label).toMatch(/OpenStreetMap contributors/)
+  })
+
+  it('peeks nothing at all for a record with no stamped name (FR-003)', () => {
+    const element = buildMarkerElement({ ...CLOCK_TOWER, names: {} } as never)
+    peek(element, 'pointerenter')
+    expect(element.querySelector('.siyur-value')).toBeNull()
+    expect(element.getAttribute('aria-label')).toBeNull()
+  })
+
+  it('skips an unstamped preferred name when peeking, showing the stamped one', () => {
+    const tampered = {
+      ...CLOCK_TOWER,
+      names: {
+        en: { value: 'Clock Tower' }, // model-asserted: no stamp
+        'el-Latn': CLOCK_TOWER.names['el-Latn'],
+      },
+    }
+    // Guard first (this is what the layer does), then render.
+    const element = buildMarkerElement(sanitiseSite(tampered) as never)
+    peek(element, 'pointerenter')
+    expect(element.textContent).not.toMatch(/Clock Tower/)
+    expect(element.querySelector('.siyur-value__text')?.textContent).toBe('Roloi')
+    expect(element.querySelector('.siyur-chip')).not.toBeNull()
+  })
+})
+
+describe('popup content is built on first open, not for every marker up front', () => {
+  it('holds no popup DOM until the popup opens', () => {
+    createSiteMarker(PALACE as never, fakeMap())
+    const popup = stub.markers[0]?.popup as PopupLike
+    expect(popup.content).toBeNull()
+    expect(popup.builds).toBe(0)
+  })
+
+  it('builds the fully-chipped fact list on open, once', () => {
+    createSiteMarker(PALACE as never, fakeMap())
+    const popup = stub.markers[0]?.popup as PopupLike
+    popup.fire('open')
+    const content = popup.content!
+    const rows = [...content.querySelectorAll('.siyur-popup__row')]
+    expect(rows.length).toBeGreaterThan(0)
+    for (const row of rows) expect(row.querySelector('.siyur-chip')).not.toBeNull()
+    expect(content.textContent).toMatch(/Palace of the Grand Master/)
+
+    popup.fire('open')
+    expect(popup.builds).toBe(1)
   })
 })
 
@@ -472,6 +620,71 @@ describe('SitesLayer', () => {
     layer.destroy()
     expect(map.handlers.moveend).toHaveLength(0)
     expect(layer.markerCount).toBe(0)
+  })
+
+  it('labels every marker while the viewport stays sparse', async () => {
+    const layer = new SitesLayer(fakeMap(), null, { fetchImpl: okFetch(RESPONSE) })
+    await layer.refresh()
+    expect(layer.labelsVisible).toBe(true)
+    for (const marker of stub.markers) {
+      expect(marker.opts.element?.querySelector('.siyur-chip')).not.toBeNull()
+    }
+  })
+
+  it('falls back to dots once the response exceeds the density limit', async () => {
+    const crowded = { sites: manySites(SITE_LABEL_DENSITY_LIMIT + 1), attribution: [] }
+    const layer = new SitesLayer(fakeMap(), null, { fetchImpl: okFetch(crowded) })
+    await layer.refresh()
+
+    expect(layer.markerCount).toBe(SITE_LABEL_DENSITY_LIMIT + 1)
+    expect(layer.labelsVisible).toBe(false)
+    for (const marker of stub.markers) {
+      const element = marker.opts.element!
+      expect(element.querySelector('.siyur-marker__pin')).not.toBeNull()
+      expect(element.querySelector('.siyur-chip')).toBeNull()
+    }
+    // …and the attribution is one interaction away on every one of them.
+    const first = stub.markers[0]!.opts.element!
+    first.dispatchEvent(new Event('pointerenter'))
+    expect(first.querySelector('.siyur-chip')?.textContent).toBe(CLOCK_TOWER_CHIP)
+  })
+
+  it('honours an explicit labelDensityLimit', async () => {
+    const layer = new SitesLayer(fakeMap(), null, {
+      fetchImpl: okFetch(RESPONSE),
+      labelDensityLimit: 1,
+    })
+    await layer.refresh()
+    expect(layer.labelsVisible).toBe(false)
+  })
+
+  it('still credits ODbL in a dense viewport — density never dilutes attribution', async () => {
+    const control = new OdblAttributionControl()
+    const element = control.onAdd({} as unknown as MapLibreMap)
+    const crowded = {
+      sites: manySites(SITE_LABEL_DENSITY_LIMIT + 1),
+      attribution: ['© OpenStreetMap contributors'],
+    }
+    const layer = new SitesLayer(fakeMap(), control, { fetchImpl: okFetch(crowded) })
+    await layer.refresh()
+
+    expect(layer.labelsVisible).toBe(false)
+    expect(element.dataset.odblRequired).toBe('true')
+    expect(element.textContent).toMatch(/OpenStreetMap contributors/)
+  })
+
+  it('drops an unstamped value in a dense viewport exactly as in a sparse one', async () => {
+    const sites = manySites(SITE_LABEL_DENSITY_LIMIT + 1)
+    // One record's preferred name arrives unstamped; it must never surface.
+    sites[0] = { ...sites[0]!, names: { en: { value: 'Invented Tower' } } } as never
+    const layer = new SitesLayer(fakeMap(), null, { fetchImpl: okFetch({ sites, attribution: [] }) })
+    await layer.refresh()
+
+    const element = stub.markers[0]!.opts.element!
+    element.dispatchEvent(new Event('pointerenter'))
+    expect(element.textContent).not.toMatch(/Invented Tower/)
+    expect(element.getAttribute('aria-label')).toBeNull()
+    expect(element.querySelector('.siyur-value')).toBeNull()
   })
 
   it('reports a failed request instead of rendering anything', async () => {
