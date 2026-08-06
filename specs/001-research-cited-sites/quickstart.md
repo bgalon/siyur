@@ -177,3 +177,9 @@ So the honest statement is: **the check exists and is wired as the merge gate; t
 | `pnpm -C web build` | built in 584 ms |
 
 The single `xfail` is FAIL-006 — the cached prefix under the provider minimum, pinned deliberately by `evals/test_caching.py` so the silent no-op cannot come back unnoticed. A fix removing it is in flight in a parallel session.
+
+### Addendum — the security gate went red days later, on nothing we changed
+
+Re-running the same gates on the T068/T069 PR, **job 6 failed**: `pip-audit` found **PYSEC-2026-3552** in `cryptography 49.0.0` (fix: 50.0.0), a transitive dependency reached via `authlib`, `google-auth`, `joserfc` and `pyjwt`. The PR that triggered it changes two Markdown files and cannot introduce a dependency CVE — the advisory was simply published after the `eec0a8b` run above.
+
+This is the gate behaving exactly as designed (ADR-0007 keeps it at **zero advisory ignores**, so it reddens on genuinely new findings and only on those), and it is worth recording next to the seven-gate table for one reason: **a "gates were green" verification has a shelf life measured in days.** Fixing it is a `pyproject.toml` / `uv.lock` pin bump, outside this task's file set and deliberately not done here.
