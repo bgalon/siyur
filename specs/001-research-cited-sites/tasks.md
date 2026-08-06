@@ -164,8 +164,8 @@
 - [x] T065 [P] Add the caching-regression eval in `evals/test_caching.py` — re-aimed at the **`curate`** (Sonnet) tier, the only node that crosses the model seam and the only caller passing `cache_prefix=True`, because **`research` makes no model call** (ADR-0014); assert the breakpoint covers the stable ranking prefix (not the per-request record list), that a repeated pass re-presents it byte-identically, and that it is **realistically sized** against the tier's published minimum (1,024 tok Sonnet 5 / 512 tok Opus 5 / 4,096 tok Haiku 4.5 — the "2,048 tok Sonnet" originally written here is the Opus 4.7 / Haiku 3.5 figure) so a `cache_read=0` false-pass is impossible (planner-spike constraint 1)
 - [x] T066 [P] Add Overture + OSM rows to `DATA-LICENSES.md` recording per-record license variance (CDLA-Permissive-2.0 / Apache-2.0 / ODbL-1.0) and each one's `bundleable` disposition
 - [x] T067 [P] Update `docs/data/poi-site.md` and the schema cards touched by this slice **only if** implementation revealed a genuine schema gap — otherwise record explicitly that the card stood unchanged
-- [ ] T068 Update `specs/001-research-cited-sites/quickstart.md` so its runnable validation matches the shipped endpoints and commands
-- [ ] T069 Verify all seven CI gates green on the integration branch and confirm the DU-00 airplane-mode e2e is not regressed (Constitution Article I)
+- [x] T068 Update `specs/001-research-cited-sites/quickstart.md` so its runnable validation matches the shipped endpoints and commands
+- [x] T069 Verify all seven CI gates green on the integration branch and confirm the DU-00 airplane-mode e2e is not regressed (Constitution Article I)
 - [ ] T070 Close the slice with `/devlog`, an exhibit-tag candidate per DU (`exhibit/U4-area-resolution`, `exhibit/U4-duckdb-overture`, `exhibit/U3-grounding`, `exhibit/U3-merge-provenance`), and a `/failure` entry + regression eval for any real failure hit along the way
 
 ---
