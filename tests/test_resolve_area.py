@@ -267,22 +267,42 @@ def test_the_winner_still_reports_what_else_was_considered() -> None:
 DivisionRow = tuple[str, str, dict[str, str], str | None, str]
 
 
-def write_divisions(path: Path, rows: Sequence[DivisionRow]) -> str:
-    """Write a minimal ``divisions/division_area`` parquet — id, names, sources, geometry."""
+def write_divisions(path: Path, rows: Sequence[DivisionRow], *, bbox: bool = True) -> str:
+    """Write a minimal ``divisions/division_area`` parquet.
+
+    ``id``, ``names``, ``sources``, ``geometry`` and — like the real theme, and unlike the
+    first version of this helper — the ``bbox`` struct the resolver's two-pass read is
+    pruned by, derived from the geometry rather than typed (there is no place in a fixture
+    for a hand-written coordinate). ``bbox=False`` writes the older, narrower shape so a
+    source that lacks the column can be exercised deliberately.
+    """
     connection = duckdb.connect()
     try:
         connection.execute("INSTALL spatial; LOAD spatial;")
         connection.execute(
             "CREATE TABLE division_area (id VARCHAR, "
             'names STRUCT("primary" VARCHAR, common MAP(VARCHAR, VARCHAR)), '
-            "sources STRUCT(property VARCHAR, license VARCHAR)[], geometry GEOMETRY)"
+            "sources STRUCT(property VARCHAR, license VARCHAR)[], geometry GEOMETRY"
+            + (
+                ", bbox STRUCT(xmin DOUBLE, xmax DOUBLE, ymin DOUBLE, ymax DOUBLE))"
+                if bbox
+                else ")"
+            )
         )
         for division_id, primary, common, license_id, wkt in rows:
             connection.execute(
                 "INSERT INTO division_area VALUES ($id, "
                 "{'primary': $primary, 'common': MAP($keys::VARCHAR[], $values::VARCHAR[])}, "
                 "CASE WHEN $license IS NULL THEN [] "
-                "ELSE [{'property': '', 'license': $license}] END, ST_GeomFromText($wkt))",
+                "ELSE [{'property': '', 'license': $license}] END, ST_GeomFromText($wkt)"
+                + (
+                    ", {'xmin': ST_XMin(ST_GeomFromText($wkt)), "
+                    "'xmax': ST_XMax(ST_GeomFromText($wkt)), "
+                    "'ymin': ST_YMin(ST_GeomFromText($wkt)), "
+                    "'ymax': ST_YMax(ST_GeomFromText($wkt))})"
+                    if bbox
+                    else ")"
+                ),
                 {
                     "id": division_id,
                     "primary": primary,
@@ -362,6 +382,131 @@ def test_resolve_area_end_to_end_over_the_local_parquet(divisions_parquet: str) 
     )
     assert resolved.polygon.equals(square(-70.0, -30.0))
     assert resolved.source.attribution == node.DIVISIONS_ATTRIBUTION
+
+
+# --- DU-03: the two passes, the window, and the deadline -------------------
+#
+# The defect these pin: one statement matched on `names` *and* projected `ST_AsWKB(geometry)`
+# over the hosted release, where `geometry` is 97.5 % of the theme's 4.47 GB and no name
+# column carries row-group statistics — so answering "which rows match?" dragged the whole
+# global theme across the wire. `POST /areas` with a name took **212 s** measured; the
+# browser tab froze. Matching now reads the narrow columns and the geometry of the survivors
+# is fetched afterwards, by id, pruned by the only statistics the theme publishes.
+
+
+def test_the_matching_pass_never_reads_the_geometry_column() -> None:
+    """The regression guard on the defect itself, and it is about *bytes*, not results.
+
+    A name predicate can prune nothing on this theme (only ``bbox`` is indexed), so every
+    column the matching statement projects is read for the entire release. Putting geometry
+    back into it is a 97.5 %-of-4.47 GB mistake that no behavioural test would notice — the
+    answers would be identical, just minutes later.
+    """
+    assert "geometry" not in node._DIVISIONS_QUERY, (
+        "the matching pass is projecting geometry again — that is the whole DU-03 defect"
+    )
+    assert "geometry" not in node._DIVISIONS_QUERY_IN_WINDOW
+    assert "geometry" in node._GEOMETRY_QUERY, "pass 2 must be the one that reads geometry"
+    # …and pass 2 must stay pruned by the indexed column, or it reads the whole theme too.
+    assert "bbox.xmin" in node._GEOMETRY_QUERY and "bbox.ymin" in node._GEOMETRY_QUERY
+
+
+def test_both_passes_together_still_produce_the_stamped_candidate(divisions_parquet: str) -> None:
+    """Splitting the read must not split the record: name, polygon and stamp travel together."""
+    hits = OvertureDivisions(parquet=divisions_parquet).search(AREA_B[0])
+    assert [hit.source.id for hit in hits] == ["division/b"]
+    assert hits[0].polygon.equals(square(-70.0, -30.0))
+    assert hits[0].source.license == "ODbL-1.0"
+    assert hits[0].confidence == node.EXACT_CONFIDENCE
+
+
+@pytest.mark.parametrize("area", [AREA_A, AREA_B])
+def test_a_caller_supplied_window_bounds_the_search_without_naming_a_place(
+    area: tuple[str, float, float, str], divisions_parquet: str
+) -> None:
+    """The lever that makes this interactive — and it is an argument, never a constant.
+
+    Both areas are found by *their own* window and by neither the other's, through one code
+    path with nothing to branch on (FR-001/SC-005). The windows are built from the fixture's
+    coordinates here for exactly the reason the module may not hold any: they are data.
+    """
+    name, min_lon, min_lat, _language = area
+    other = AREA_B if area == AREA_A else AREA_A
+    around = (min_lon - 0.5, min_lat - 0.5, min_lon + 1.5, min_lat + 1.5)
+    elsewhere = (other[1] - 0.5, other[2] - 0.5, other[1] + 1.5, other[2] + 1.5)
+
+    inside = OvertureDivisions(parquet=divisions_parquet, window=around).search(name)
+    assert [hit.polygon.bounds for hit in inside] == [square(min_lon, min_lat).bounds]
+    assert OvertureDivisions(parquet=divisions_parquet, window=elsewhere).search(name) == ()
+    # …and the unwindowed lookup still finds it: the window bounds the read, not the meaning.
+    assert [hit.source.id for hit in inside] == [
+        hit.source.id
+        for hit in OvertureDivisions(parquet=divisions_parquet).search(name)
+        if hit.polygon.bounds == square(min_lon, min_lat).bounds
+    ]
+
+
+def test_a_lookup_past_its_deadline_raises_instead_of_reporting_no_such_area(
+    divisions_parquet: str,
+) -> None:
+    """A timeout is a fact about the *source*, never about the place (FAIL-005's lesson).
+
+    ``timeout=0`` is the deterministic, offline way to reach the deadline branch: no clock
+    to race, no fixture big enough to be slow, no network. The classification is what
+    matters — this must not be catchable as either of the outcomes the API turns into a
+    ``404`` or a ``422``, or an unreachable source becomes a confident "no such place".
+    """
+    lookup = OvertureDivisions(parquet=divisions_parquet, timeout=0.0)
+    with pytest.raises(node.AreaLookupTimeout) as raised:
+        lookup.search(AREA_A[0])
+    assert isinstance(raised.value, TimeoutError)
+    assert not isinstance(raised.value, (AreaNotResolved, AreaInvalid))
+    assert "divisions" in str(raised.value)
+
+
+def test_a_divisions_timeout_propagates_and_the_fallback_is_not_asked(
+    divisions_parquet: str,
+) -> None:
+    """`resolve_area` already refuses to let a divisions failure become a `404`; a slow
+    authoritative source is the same failure with a clock on it, so Nominatim — which
+    answers a *different* question — must not be consulted to paper over it."""
+    with pytest.raises(node.AreaLookupTimeout):
+        resolve_area(
+            AreaRequest(name=AREA_A[0]),
+            divisions=OvertureDivisions(parquet=divisions_parquet, timeout=0.0),
+            geocoder=ExplodingLookup(),
+        )
+
+
+def test_read_concurrency_is_raised_for_the_release_and_left_alone_for_an_extract(
+    divisions_parquet: str,
+) -> None:
+    """``read_threads`` is request concurrency for a latency-bound remote scan, so it is
+    wrong for a local file — where the same number would just oversubscribe the CPU."""
+    plain = duckdb.connect()
+    try:
+        default = plain.execute("SELECT current_setting('threads')").fetchone()
+    finally:
+        plain.close()
+    assert default is not None
+
+    local = OvertureDivisions(parquet=divisions_parquet, read_threads=default[0] + 7)._connect()
+    try:
+        assert local.execute("SELECT current_setting('threads')").fetchone() == default
+    finally:
+        local.close()
+
+
+def test_a_divisions_source_without_the_bbox_column_fails_loudly(tmp_path: Path) -> None:
+    """Both passes read ``bbox``. A source that lacks it is unusable, and an unusable
+    authoritative source must raise — never quietly answer "no such area"."""
+    parquet = write_divisions(
+        tmp_path / "no_bbox.parquet",
+        [("division/a", AREA_A[0], {}, "ODbL-1.0", wkt_square(10.0, 20.0))],
+        bbox=False,
+    )
+    with pytest.raises(duckdb.Error):
+        OvertureDivisions(parquet=parquet).search(AREA_A[0])
 
 
 # --- NominatimGeocoder, offline against a mocked transport -----------------
