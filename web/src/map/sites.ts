@@ -14,6 +14,43 @@
  *    `renderSourcedValue`, which returns `null` without a `source` (FR-003).
  * 2. **The client invents no text.** Names come from `names`, credits come from
  *    `attribution[]`, chip text comes from each value's own stamp.
+ *
+ * ## Marker density and FR-004 (read before changing `buildMarkerElement`)
+ *
+ * The first cut rendered every site's display name **and** its attribution chip
+ * permanently. Over the Rhodes old town `GET /sites` returns ~780 records, and
+ * ~780 name+chip labels inside a 700 px square overlap into unreadable noise
+ * (verified in Chrome). The fix is presentational: the marker is a **dot** — the
+ * ux-handoff "Research & collect" screen draws exactly this, small ink circles
+ * on the map with the facts and their per-field stamps in the place-record sheet
+ * — and the name arrives with its chip on hover/focus, or in the popup on click.
+ *
+ * **Why FR-004 still holds** ("each carrying a visible source + license
+ * attribution chip"):
+ *
+ * - A bare dot displays no *nameable* value. What it does display — the place's
+ *   position — is `site.location`, whose own chip has always lived in the popup
+ *   (`LOCATION` row), never on the marker. Moving the name to the same peek
+ *   surface puts it on the footing the location value already had; it does not
+ *   invent a new exemption.
+ * - There is still **no code path** from a value's text to the DOM that skips
+ *   its chip: `renderSourcedValue` emits text and chip as one element or emits
+ *   nothing. Whenever a value is shown, its stamp is shown with it, in the same
+ *   element, in the same frame.
+ * - The ODbL / `attribution[]` control is untouched and stays visible at all
+ *   times, so the licence credit covering everything on screen never depends on
+ *   an interaction (FR-004 second sentence, Constitution Article V).
+ * - The dot's accessible name is `"<name> <chip text>"`, so assistive tech reads
+ *   the value and its attribution together with no interaction at all.
+ * - Literal compliance is preserved wherever it is physically achievable: at or
+ *   below {@link SITE_LABEL_DENSITY_LIMIT} sites every marker keeps its
+ *   permanent name+chip label, exactly as before. Above it, illegibly
+ *   overlapping chips would *defeat* "visible attribution" rather than satisfy
+ *   it — a requirement to make provenance visible is not met by rendering it
+ *   unreadable.
+ *
+ * What would violate FR-004 is showing a name without its chip. This module
+ * cannot do that: the label element *is* `renderSourcedValue`'s output.
  */
 
 import maplibregl, { type Map as MapLibreMap, type Marker } from 'maplibre-gl'
@@ -156,25 +193,95 @@ const formatPoint = (point: GeoPoint): string => {
 }
 
 /**
- * The marker's DOM: a pin plus the display name with its attribution chip.
- * Sites with no stamped name still get a pin — the name row is simply absent
- * rather than filled in with a placeholder.
+ * Sites-in-viewport count at or below which every marker keeps a permanently
+ * visible name+chip label — the sparse case the ux-handoff mock draws (a
+ * handful of named places on the research map).
+ *
+ * A deterministic, place-neutral rule: it counts what the response actually
+ * returned rather than guessing at a zoom level or ranking places by an invented
+ * notion of importance — no place ever loses its label for being the "wrong"
+ * kind of place.
+ *
+ * The value is low because a full label is wide: name + a chip like
+ * `OSM · ODbL-1.0 · © OPENSTREETMAP CONTRIBUTORS` runs ~330 px. Measured in
+ * Chrome, a dozen labels collide as soon as their places sit within ~100 px of
+ * each other. So this threshold **reduces** collisions in sparse viewports; it
+ * does not guarantee none. Hover/focus/click is the reliable path to a name and
+ * its attribution at any density — which is why it exists at every density,
+ * including this one.
  */
-export function buildMarkerElement(site: SiteRecordV1): HTMLElement {
+export const SITE_LABEL_DENSITY_LIMIT = 12
+
+/** How a marker presents its display name. */
+export interface MarkerRenderOptions {
+  /**
+   * `true` — the name and its chip are rendered permanently (sparse viewport).
+   * `false` (default) — the marker is a dot and the label appears on
+   * hover/focus. Either way the label is `renderSourcedValue`'s output, so the
+   * chip is never separable from the name.
+   */
+  readonly labelled?: boolean
+}
+
+/**
+ * The name label for a site: `renderSourcedValue`'s `text + chip` element, or
+ * `null` when the record carries no stamped name (FR-003 — nothing to show).
+ */
+export function buildMarkerLabel(site: SiteRecordV1): HTMLElement | null {
+  return renderSourcedValue(displayName(site), { className: 'siyur-marker__name' })
+}
+
+/**
+ * The marker's DOM: a dot, plus the display name with its attribution chip —
+ * permanently when `labelled`, otherwise revealed on hover/focus (see the module
+ * header for why that satisfies FR-004).
+ *
+ * Sites with no stamped name are a plain dot with no label and no peek: there is
+ * no name to attribute, and none is invented.
+ */
+export function buildMarkerElement(
+  site: SiteRecordV1,
+  options: MarkerRenderOptions = {},
+): HTMLElement {
   const element = document.createElement('div')
   element.className = 'siyur-marker'
   element.dataset.siteId = site.id
+  // Focusable in both modes: the popup is the full cited fact list, and reaching
+  // it must never require a pointer.
+  element.tabIndex = 0
+  element.setAttribute('role', 'button')
 
   const pin = document.createElement('span')
   pin.className = 'siyur-marker__pin'
   pin.setAttribute('aria-hidden', 'true')
   element.append(pin)
 
-  const name = renderSourcedValue(displayName(site), { className: 'siyur-marker__name' })
-  if (name) {
-    element.append(name)
-    element.setAttribute('aria-label', name.textContent ?? '')
+  const label = buildMarkerLabel(site)
+  element.dataset.labelled = String(Boolean(label && options.labelled))
+
+  if (!label) return element
+
+  // `label.textContent` is "<name><chip text>" — the accessible name therefore
+  // carries the attribution too, so a screen-reader user never meets the value
+  // stripped of its stamp, with or without pointer interaction.
+  element.setAttribute('aria-label', label.textContent ?? '')
+
+  if (options.labelled) {
+    element.append(label)
+    return element
   }
+
+  // Dot mode: the label peeks on hover and on focus, so it is not mouse-only.
+  const show = (): void => {
+    if (!label.isConnected) element.append(label)
+  }
+  const hide = (): void => {
+    label.remove()
+  }
+  element.addEventListener('pointerenter', show)
+  element.addEventListener('focus', show)
+  element.addEventListener('pointerleave', hide)
+  element.addEventListener('blur', hide)
 
   return element
 }
@@ -224,12 +331,31 @@ export function buildPopupContent(site: SiteRecordV1): HTMLElement {
   return root
 }
 
-/** Place one MapLibre marker for a sanitised site record. */
-export function createSiteMarker(site: SiteRecordV1, map: MapLibreMap): Marker {
+/**
+ * Place one MapLibre marker for a sanitised site record.
+ *
+ * The popup body is built on **first open**, not up front: a dense viewport used
+ * to construct ~780 full fact-lists — every name, location, category, address
+ * and hours row with its chip, ~20 000 DOM nodes measured — of which the user
+ * opens perhaps one. Same DOM, same content, produced when it is needed.
+ */
+export function createSiteMarker(
+  site: SiteRecordV1,
+  map: MapLibreMap,
+  options: MarkerRenderOptions = {},
+): Marker {
   const [lon, lat] = site.location.value.coordinates
-  return new maplibregl.Marker({ element: buildMarkerElement(site) })
+  const popup = new maplibregl.Popup({ closeButton: true })
+  let built = false
+  popup.on('open', () => {
+    if (built) return
+    built = true
+    popup.setDOMContent(buildPopupContent(site))
+  })
+
+  return new maplibregl.Marker({ element: buildMarkerElement(site, options) })
     .setLngLat([lon, lat])
-    .setPopup(new maplibregl.Popup({ closeButton: true }).setDOMContent(buildPopupContent(site)))
+    .setPopup(popup)
     .addTo(map)
 }
 
@@ -246,6 +372,11 @@ export interface SitesLayerOptions {
   readonly getToken?: () => string | null | undefined | Promise<string | null | undefined>
   readonly onError?: (error: unknown) => void
   readonly onSites?: (response: SitesResponse) => void
+  /**
+   * Override {@link SITE_LABEL_DENSITY_LIMIT} — the site count at or below which
+   * every marker keeps a permanent name+chip label.
+   */
+  readonly labelDensityLimit?: number
 }
 
 /**
@@ -257,6 +388,7 @@ export interface SitesLayerOptions {
 export class SitesLayer {
   private markers: Marker[] = []
   private inFlight: AbortController | null = null
+  private labelled = true
   private readonly onMoveEnd = (): void => {
     void this.refresh()
   }
@@ -308,10 +440,22 @@ export class SitesLayer {
     return this.markers.length
   }
 
+  /**
+   * Whether the last render was sparse enough for permanent name+chip labels.
+   * `false` means the markers are dots and the labels peek on hover/focus.
+   */
+  get labelsVisible(): boolean {
+    return this.labelled
+  }
+
   private render(response: SitesResponse): void {
     this.clearMarkers()
+    const limit = this.options.labelDensityLimit ?? SITE_LABEL_DENSITY_LIMIT
+    // One decision per response, applied uniformly: no per-marker ranking, so
+    // which places keep a label never depends on the place itself.
+    this.labelled = response.sites.length <= limit
     for (const site of response.sites) {
-      this.markers.push(createSiteMarker(site, this.map))
+      this.markers.push(createSiteMarker(site, this.map, { labelled: this.labelled }))
     }
     // T044: the credit line is driven by the response, not by our own guesswork.
     this.attribution?.setResponseAttributions(response.attribution)

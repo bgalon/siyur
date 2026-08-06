@@ -65,31 +65,66 @@ body {
   text-transform: uppercase;
 }
 
-/* --- Site markers --- */
+/* --- Site markers ---
+   The marker is a dot (ux-handoff "Research & collect": small ink circles on the
+   map, facts + per-field stamps in the record sheet). The name label carries its
+   attribution chip and is either permanent (sparse viewport) or revealed on
+   hover/focus — see the FR-004 argument in src/map/sites.ts. */
 .siyur-marker {
-  display: flex;
-  align-items: center;
-  gap: 0.35em;
+  /* Must match `.maplibregl-marker`, not fight it: this stylesheet loads after
+     maplibre-gl.css, so declaring `relative` here wins the cascade and drops
+     every marker back into normal flow (verified in Chrome — the dots cascade
+     diagonally instead of pinning to their coordinates). `absolute` is also the
+     containing block the peek label positions against. */
+  position: absolute;
+  display: block;
+  width: 11px;
+  height: 11px;
   cursor: pointer;
 }
 
 .siyur-marker__pin {
+  display: block;
   width: 11px;
   height: 11px;
   border: 2px solid #efe9dc;
   border-radius: 99px;
   background: #2b2117;
   box-shadow: 0 2px 8px rgb(43 33 23 / 30%);
-  flex: none;
+  box-sizing: border-box;
 }
 
+.siyur-marker:focus-visible {
+  border-radius: 99px;
+  outline: 2px solid #c96f3f; /* route */
+  outline-offset: 3px;
+}
+
+/* A peeked label must sit above its neighbours' dots, not under them. */
+.siyur-marker[data-labelled='false']:hover,
+.siyur-marker[data-labelled='false']:focus-within {
+  z-index: 5;
+}
+
+/* Floats beside the dot instead of sharing a flex row with it, so the dot
+   itself — not the dot+label box — stays centred on the real coordinate. */
 .siyur-marker__name {
+  position: absolute;
+  inset-inline-start: 15px;
+  top: 50%;
+  transform: translateY(-50%);
+  /* `.siyur-value` caps itself at `max-width: 100%`, and the containing block is
+     now an 11px dot — without this the name wraps to two characters per line
+     (only visible in a real browser; jsdom has no layout). */
+  max-width: none;
+  width: max-content;
   padding: 0.15em 0.45em;
   border-radius: 99px;
   background: rgb(239 233 220 / 92%);
   color: #2b2117;
   font-size: 12px;
   white-space: nowrap;
+  pointer-events: none; /* the label must never steal the dot's hover/click */
 }
 
 /* --- Site popup --- */
