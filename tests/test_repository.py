@@ -21,6 +21,8 @@ The two adapter passes deliberately carry **different** ``observed_at`` dates so
 from __future__ import annotations
 
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
@@ -29,7 +31,7 @@ from uuid import UUID, uuid4
 import httpx
 import pytest
 from shapely.geometry import Point, box
-from sqlalchemy import Engine, func, select
+from sqlalchemy import Engine, delete, func, select
 from sqlalchemy.orm import Session
 
 from commons.db import Site, SiteConflict, SiteSource, to_db_point
@@ -37,6 +39,7 @@ from commons.merge import merge_records, source_refs
 from commons.models import SiteRecordV1, SourcedValue, SourceRef
 from commons.repository import (
     CommonsWriteRefused,
+    _append_sources,
     attribution_for,
     coverage,
     load_site,
@@ -162,6 +165,61 @@ def test_upserting_the_same_result_twice_creates_no_duplicates(
     assert _count(db_session, SiteConflict) == first.conflicts
     assert _ledger(db_session) == ledger
     assert result.source_refs <= _reachable_refs(db_session, first.written[0])
+
+
+def test_two_concurrent_sessions_cannot_duplicate_one_observation(
+    db_engine: Engine, db_session: Session, overture: dict[str, SiteRecordV1]
+) -> None:
+    """T054 under **real concurrency** — the property only the database can hold.
+
+    The Python dedupe this replaced read the ledger, then wrote what it had not seen. That
+    is correct for a lone writer and unsound for two: both sessions finish reading before
+    either writes, both find the natural key absent, and both append it. No ordering of
+    Python statements closes that window — ``uq_site_source_observation`` does, and
+    ``ON CONFLICT DO NOTHING`` turns the resulting collision into a skip instead of a crash.
+
+    This drives :func:`~commons.repository._append_sources` rather than the whole
+    :func:`~commons.repository.upsert_sites` **on purpose**: ``upsert_sites`` also ``UPDATE``s
+    the ``site`` row, and that row lock would serialise the two sessions end to end and hide
+    the very race being tested. Here the two ``INSERT``s genuinely collide — the second
+    blocks on the first's speculative-insertion lock, then sees the committed row and skips.
+    """
+    (seed,) = merge_records([overture[GATE_GERS]])
+    (site_id,) = upsert_sites(db_session, [seed]).written
+    db_session.commit()
+    # Release this session's read transaction: the workers must not queue behind it.
+    db_session.commit()
+
+    expected = _ledger(db_session)
+    assert expected, "the seed pass must have written a ledger to contend over"
+    # Both sessions replay the seed's own observations, so every insert is a true collision.
+    db_session.execute(delete(SiteSource))
+    db_session.commit()
+
+    barrier = threading.Barrier(2, timeout=30)
+
+    def append() -> int:
+        with Session(db_engine) as session:
+            # Open the transaction and read *before* the barrier, so neither session has
+            # seen the other's rows by the time both start writing.
+            session.execute(select(func.count()).select_from(SiteSource)).scalar_one()
+            barrier.wait()
+            appended = _append_sources(session, site_id, seed.record, seed.provenance)
+            session.commit()
+            return appended
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(append), pool.submit(append)]
+        appended = [future.result(timeout=60) for future in futures]
+
+    db_session.commit()
+    # One session wrote every row, the other wrote none — and neither raised. The counts are
+    # `RETURNING`'s, so `UpsertReport.source_rows` stays truthful under contention too.
+    assert sorted(appended) == [0, len(expected)]
+    assert _count(db_session, SiteSource) == len(expected)
+    # Not one observation was lost to the collision: the ledger is exactly the seed's.
+    assert _ledger(db_session) == expected
+    assert seed.source_refs <= _reachable_refs(db_session, site_id)
 
 
 def test_a_refresh_enriches_the_existing_row_and_keeps_both_sources(

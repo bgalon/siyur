@@ -22,6 +22,17 @@ natural key ``(site_id, field, source, value, observed_at)``. Re-running the sam
 therefore appends nothing — "append-only" must not mean "grows without bound on refresh".
 ``site_conflict`` is written the same way.
 
+That dedupe is the **database's** job, not this module's. Both writes are a single
+``INSERT … ON CONFLICT DO NOTHING`` against the unique indexes declared in `commons/db.py`
+(:data:`~commons.db.SITE_SOURCE_NATURAL_KEY` /
+:data:`~commons.db.SITE_CONFLICT_NATURAL_KEY`), and ``RETURNING`` reports how many rows were
+*actually* written. The read-then-write this replaced was correct only for a lone writer:
+two sessions refreshing the same area both finished reading before either wrote, so both
+found the key absent and both appended it. No amount of Python could close that window —
+only a constraint can. It also removes the second notion of JSON equality this module used
+to carry (a ``json.dumps(sort_keys=True)`` canonical form) — see
+:func:`~commons.db.jsonb_digest` for why one engine now owns that comparison outright.
+
 **3. No user-sourced value enters the commons (FR-010 / validation rule 7).** The commons is
 a shared global resource; personal data is per-user and private (``user_note``). Every value
 *and* every provenance entry of *every* result is scanned **before the first write**, so a
@@ -39,22 +50,31 @@ pre-filter and the Python join rule agree on 25 m.
 
 from __future__ import annotations
 
-import json
 import logging
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from geoalchemy2 import Geography
 from pydantic import ValidationError
 from shapely.geometry.base import BaseGeometry
 from sqlalchemy import ColumnElement, Select, func, select
 from sqlalchemy import cast as sql_cast
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.roles import DDLConstraintColumnRole
 
-from commons.db import SRID, Site, SiteConflict, SiteSource, to_db_point
+from commons.db import (
+    SITE_CONFLICT_NATURAL_KEY,
+    SITE_SOURCE_NATURAL_KEY,
+    SRID,
+    Site,
+    SiteConflict,
+    SiteSource,
+    to_db_point,
+)
 from commons.geo import validate_lat, validate_lon
 from commons.merge import (
     EPSILON_METERS,
@@ -127,9 +147,32 @@ def _geom(geometry: BaseGeometry) -> ColumnElement[Any]:
     return func.ST_GeomFromEWKT(f"SRID={SRID};{geometry.wkt}")
 
 
-def _canonical(payload: Any) -> str:
-    """Order-independent identity for a JSONB payload — the dedupe key's comparable half."""
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+def _insert_new(
+    session: Session,
+    entity: type[SiteSource] | type[SiteConflict],
+    rows: Sequence[dict[str, Any]],
+    natural_key: Sequence[DDLConstraintColumnRole],
+) -> int:
+    """``INSERT … ON CONFLICT DO NOTHING``; returns how many rows were **actually** written.
+
+    ``DO NOTHING`` (not ``DO UPDATE``) because both tables are ledgers: a row that already
+    exists is already right, and re-stating it is not new information. It also makes the
+    statement safe against duplicates *within* one batch — ``DO UPDATE`` would raise
+    ``cannot affect row a second time``, ``DO NOTHING`` simply skips.
+
+    ``RETURNING`` is what keeps :class:`UpsertReport` honest: it yields only the rows that
+    won their insert, so ``source_rows``/``conflicts`` are 0 on an idempotent re-run without
+    this module counting anything itself.
+    """
+    if not rows:
+        return 0
+    statement = (
+        pg_insert(entity)
+        .values(list(rows))
+        .on_conflict_do_nothing(index_elements=list(natural_key))
+        .returning(entity.id)
+    )
+    return len(session.execute(statement).scalars().all())
 
 
 def _record_of(row: Site) -> SiteRecordV1 | None:
@@ -224,63 +267,41 @@ def _append_sources(
     record: SiteRecordV1,
     observations: Iterable[FieldObservation],
 ) -> int:
-    """Append the provenance ledger, deduped on ``(field, source, value, observed_at)``."""
-    seen = {
-        (field, _canonical(source), _canonical(value), observed_at)
-        for field, source, value, observed_at in session.execute(
-            select(
-                SiteSource.field, SiteSource.source, SiteSource.value, SiteSource.observed_at
-            ).where(SiteSource.site_id == site_id)
-        ).all()
-    }
+    """Append the provenance ledger, deduped on ``(field, source, value, observed_at)``.
+
+    The dedupe is ``uq_site_source_observation``'s, not this function's — nothing here
+    compares two payloads.
+    """
     candidates = [(o.field, o.value) for o in observations] + list(iter_sourced_values(record))
-    appended = 0
+    rows = []
     for field, value in candidates:
         dumped = value.model_dump(mode="json")
-        key = (field, _canonical(dumped["source"]), _canonical(dumped["value"]), value.observed_at)
-        if key in seen:
-            continue
-        seen.add(key)
-        session.add(
-            SiteSource(
-                site_id=site_id,
-                field=field,
-                source=dumped["source"],
-                value=dumped["value"],
-                observed_at=value.observed_at,
-            )
+        rows.append(
+            {
+                "id": uuid4(),
+                "site_id": site_id,
+                "field": field,
+                "source": dumped["source"],
+                "value": dumped["value"],
+                "observed_at": value.observed_at,
+            }
         )
-        appended += 1
-    return appended
+    return _insert_new(session, SiteSource, rows, SITE_SOURCE_NATURAL_KEY)
 
 
 def _write_conflicts(session: Session, site_id: UUID, record: SiteRecordV1) -> int:
     """Write the merged record's ``FieldConflict``s, deduped like the provenance ledger."""
-    seen = {
-        (field, _canonical(candidates), resolution)
-        for field, candidates, resolution in session.execute(
-            select(SiteConflict.field, SiteConflict.candidates, SiteConflict.resolution).where(
-                SiteConflict.site_id == site_id
-            )
-        ).all()
-    }
-    written = 0
-    for conflict in record.conflicts:
-        candidates = [candidate.model_dump(mode="json") for candidate in conflict.candidates]
-        key = (conflict.field, _canonical(candidates), conflict.resolution)
-        if key in seen:
-            continue
-        seen.add(key)
-        session.add(
-            SiteConflict(
-                site_id=site_id,
-                field=conflict.field,
-                candidates=candidates,
-                resolution=conflict.resolution,
-            )
-        )
-        written += 1
-    return written
+    rows = [
+        {
+            "id": uuid4(),
+            "site_id": site_id,
+            "field": conflict.field,
+            "candidates": [candidate.model_dump(mode="json") for candidate in conflict.candidates],
+            "resolution": conflict.resolution,
+        }
+        for conflict in record.conflicts
+    ]
+    return _insert_new(session, SiteConflict, rows, SITE_CONFLICT_NATURAL_KEY)
 
 
 def upsert_sites(session: Session, results: Iterable[MergeResult]) -> UpsertReport:
