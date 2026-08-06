@@ -41,7 +41,11 @@
  *   times, so the licence credit covering everything on screen never depends on
  *   an interaction (FR-004 second sentence, Constitution Article V).
  * - The dot's accessible name is `"<name> <chip text>"`, so assistive tech reads
- *   the value and its attribution together with no interaction at all.
+ *   the value and its attribution together with no interaction at all. A site
+ *   with no stamped name has no name we may display, so its accessible name
+ *   describes the control and its stamped location instead — see
+ *   {@link markerAccessibleName}. Either way the marker is focusable and named,
+ *   and either way the stamp travels with whatever value the name renders.
  * - Literal compliance is preserved wherever it is physically achievable: at or
  *   below {@link SITE_LABEL_DENSITY_LIMIT} sites every marker keeps its
  *   permanent name+chip label, exactly as before. Above it, illegibly
@@ -56,7 +60,7 @@
 import maplibregl, { type Map as MapLibreMap, type Marker } from 'maplibre-gl'
 
 import { AreaReuseSurface, type AreaReuseOptions } from './areas'
-import { renderSourcedValue } from './attribution-chip'
+import { chipTextFromSource, renderSourcedValue } from './attribution-chip'
 import type { OdblAttributionControl } from './attribution'
 import { sanitiseSitesResponse } from './guards'
 import type { GeoPoint, SiteRecordV1, SitesResponse, SourcedValue } from './types'
@@ -232,12 +236,51 @@ export function buildMarkerLabel(site: SiteRecordV1): HTMLElement | null {
 }
 
 /**
+ * How a marker with no stamped name introduces itself to assistive technology.
+ *
+ * This is a statement about the **record** ("we hold no name for this place"),
+ * not a claim about the world, so it asserts nothing that would need a source.
+ */
+const UNNAMED_PLACE = 'Unnamed place at'
+
+/**
+ * The marker's accessible name — never empty, never invented.
+ *
+ * A marker is a focusable `role="button"` that opens the popup, so WCAG 2.2
+ * SC 4.1.2 (Name, Role, Value) requires it to have an accessible name. Two cases:
+ *
+ * - **Named site** — the label element's own text, i.e. `"<name><chip text>"`.
+ *   Value and stamp arrive together with no interaction (ADR-0019, rule 5).
+ * - **No stamped name** — there is no name we are permitted to display and the
+ *   client invents none. The name is instead built from what the record actually
+ *   carries: a description of the *control* plus `site.location`, which is
+ *   guaranteed present and stamped (`sanitiseSite` drops any record without a
+ *   stamped location; `SiteRecordV1.location` is non-optional server-side).
+ *   Those coordinates **are** a displayed value, so the location's own chip text
+ *   is emitted with them, in the same accessible name, in the same frame — the
+ *   co-presence invariant, discharged for the one value being shown.
+ *
+ * The chip text comes from `chipTextFromSource`, the same derivation the visible
+ * chip uses, so this path cannot drift into a hardcoded or guessed credit.
+ */
+export function markerAccessibleName(
+  site: SiteRecordV1,
+  label: HTMLElement | null,
+): string {
+  if (label) return label.textContent ?? ''
+  const where = formatPoint(site.location.value)
+  return `${UNNAMED_PLACE} ${where} ${chipTextFromSource(site.location.source)}`
+}
+
+/**
  * The marker's DOM: a dot, plus the display name with its attribution chip —
  * permanently when `labelled`, otherwise revealed on hover/focus (see the module
  * header for why that satisfies FR-004).
  *
  * Sites with no stamped name are a plain dot with no label and no peek: there is
- * no name to attribute, and none is invented.
+ * no name to attribute, and none is invented. They remain focusable, and carry
+ * an accessible name built from their stamped location — see
+ * {@link markerAccessibleName}.
  */
 export function buildMarkerElement(
   site: SiteRecordV1,
@@ -259,12 +302,14 @@ export function buildMarkerElement(
   const label = buildMarkerLabel(site)
   element.dataset.labelled = String(Boolean(label && options.labelled))
 
-  if (!label) return element
+  // Set BEFORE any early return. The element is already focusable with
+  // `role="button"`, and a focusable button that reaches the DOM without an
+  // accessible name is a WCAG 2.2 SC 4.1.2 defect — a screen-reader user hears
+  // only "button". Named or not, the marker leaves here with a name, and that
+  // name always carries the stamp of whatever value it renders.
+  element.setAttribute('aria-label', markerAccessibleName(site, label))
 
-  // `label.textContent` is "<name><chip text>" — the accessible name therefore
-  // carries the attribution too, so a screen-reader user never meets the value
-  // stripped of its stamp, with or without pointer interaction.
-  element.setAttribute('aria-label', label.textContent ?? '')
+  if (!label) return element
 
   if (options.labelled) {
     element.append(label)
