@@ -37,3 +37,8 @@ spike/
 # Kept OUT of web/public/ deliberately — vite.config.ts "Footgun 1": public/
 # copies verbatim into dist/, and a multi-MB archive must never enter the graph.
 web/dev-assets/
+
+# Playwright (T004) — run artifacts, never committed.
+/web/test-results/
+/web/playwright-report/
+/web/blob-report/

@@ -24,11 +24,11 @@
 
 **Purpose**: dependencies, the two new local services, fixtures. No product behaviour.
 
-- [ ] T001 Add slice-002 runtime dependencies to `pyproject.toml`, resolved-then-pinned per ADR-0007 — **`opening-hours-py`** (ADR-0022), `mwparserfromhell` (ADR-0024), and a deterministic IANA-timezone-from-point resolver for T008 — then `uv lock` and commit `uv.lock`. Run the slopsquatting check (publisher + registration date + hashes) per Constitution Article V.
+- [x] T001 Add slice-002 runtime dependencies to `pyproject.toml`, resolved-then-pinned per ADR-0007 — **`opening-hours-py`** (ADR-0022), `mwparserfromhell` (ADR-0024), and a deterministic IANA-timezone-from-point resolver for T008 — then `uv lock` and commit `uv.lock`. Run the slopsquatting check (publisher + registration date + hashes) per Constitution Article V.
   - ⚠️ **Named supply-chain hazard, one hyphen wide.** `pip install opening-hours` resolves to an **abandoned v0.1.1 with an UNKNOWN license** (`anthill/Python_OpeningHours`) — *not* the Rust bindings. The correct distribution is **`opening-hours-py`** (metadata name `opening_hours_py`), which imports as `opening_hours`; verified 2.1.4, 2026-07-07, MIT OR Apache-2.0. Confirm the publisher before locking. This is precisely the case job 6's slopsquatting gate exists for.
-- [ ] T002 [P] Add a `valhalla` service to `docker-compose.yml` (official GHCR image, pedestrian costing, `:8002`), mirroring the CI shape, with a comment recording the 1–5 min first-build cost (ADR-0020).
-- [ ] T003 [P] Add a `gcs` service (`fake-gcs-server`) to `docker-compose.yml` for bundle artifacts, mirroring GCS.
-- [ ] T004 [P] Add `@playwright/test` to `web/devDependencies` (resolved-then-pinned) and a `test:e2e` script; `pnpm exec playwright install chromium`. **Chromium only** — ADR-0002 makes WebKit a flagged future ADR.
+- [x] T002 [P] Add a `valhalla` service to `docker-compose.yml` (official GHCR image, pedestrian costing, `:8002`), mirroring the CI shape, with a comment recording the 1–5 min first-build cost (ADR-0020).
+- [x] T003 [P] Add a `gcs` service (`fake-gcs-server`) to `docker-compose.yml` for bundle artifacts, mirroring GCS.
+- [x] T004 [P] Add `@playwright/test` to `web/devDependencies` (resolved-then-pinned) and a `test:e2e` script; `pnpm exec playwright install chromium`. **Chromium only** — ADR-0002 makes WebKit a flagged future ADR.
 - [ ] T005 [P] Commit a recorded Valhalla response fixture (`tests/fixtures/valhalla_rhodes_route.json` + `..._matrix.json`) so Tier 1 never needs the container, plus `tests/fixtures/README.md` rows recording how each was captured.
 - [ ] T006 [P] Commit a Wikivoyage/Wikipedia MediaWiki API fixture (`tests/fixtures/wikivoyage_rhodes.json`) including ≥1 article with listing templates, ≥1 place with **no** article, and the `revid` field ADR-0024 attribution depends on.
 
@@ -64,7 +64,10 @@
 ### The deterministic engines (the model does none of this)
 
 - [ ] T014 Implement `commons/opening_hours.py` wrapping `opening-hours-py` (ADR-0022) — evaluate an OSM `opening_hours` string at an area-local instant given the area's timezone + country. **Fails closed**: unparseable or `SH`-bearing expressions yield `hours_unknown` with the raw string retained; never defaults to "open".
+  - ⚠️ **`SH` does NOT raise — verified by execution 2026-08-07.** `OpeningHours("SH off")` constructs cleanly and `.state()` returns `CLOSED`; only genuinely malformed input raises `ParserError`. So ADR-0022's "SH rejected loudly" **cannot** be implemented by catching a parse error — the wrapper must **detect the `SH` token itself** before evaluating. A `try/except ParserError` implementation would silently evaluate SH rules as ordinary ones: wrong answers, no exception.
+  - `.state()` takes a **`datetime`, not a string**; a string raises a `TypeError` that reads like a parse failure and would be swallowed by a broad `except`.
 - [ ] T015 [P] Unit-test `tests/test_opening_hours.py` — a table of real OSM strings from the Rhodes fixture at **fixed instants under a frozen clock**, no network; plus an explicit **rejection table** asserting `SH`/unparseable strings surface as `hours_unknown` rather than open. This is the test that stops a silent wrong answer.
+  - ⚠️ **This table must be able to fail.** Because `SH` parses cleanly (T014), a `try/except`-based wrapper passes every row here while never firing — the FAIL-007 shape a third time. Prove the guard against a deliberately naive implementation before trusting it, exactly as the e2e negative control does.
 - [ ] T016 Implement `commons/routing.py` — the `RoutingProvider` protocol plus a Valhalla client (`/route`, `/sources_to_targets`, pedestrian costing) and a fixture provider selected by `SIYUR_ROUTING_PROVIDER` (ADR-0020). Legs are stamped with the produced-work-from-OSM `SourceRef` (`kind:"osm"`, `id:"valhalla:pedestrian"`, ODbL, "© OpenStreetMap contributors"), `bundleable` **derived**, never author-set.
 - [ ] T017 [P] Unit-test `tests/test_routing.py` against the T005 fixtures — leg geometry is a valid EPSG:4326 `LineString` with **≥3 vertices** (a 2-point line is a straight line pretending to be a route), distance/duration units, ODbL stamping, and provider selection.
 
@@ -88,8 +91,8 @@
 
 ### Stand the airplane-mode harness up NOW, not at DU-06
 
-- [ ] T029 [US3-early] Create `web/test/e2e/airplane.spec.ts` against the **existing DU-00 empty map**: load online → wait for the service worker to reach `activated` → install a **context-level** `route('**/*')` recorder with `serviceWorkers: 'allow'` → `setOffline(true)` → reload → assert the recorded request list is **empty** and the map canvas is present. Filter by scheme (`data:`/`blob:` are not network); **allowlist nothing**.
-- [ ] T030 [P] [US3-early] Add the **negative-control** spec asserting the harness *catches* a deliberately-requested remote asset. A gate that cannot fail is exactly the stub being replaced (research R6).
+- [x] T029 [US3-early] Create `web/test/e2e/airplane.spec.ts` against the **existing DU-00 empty map**: load online → wait for the service worker to reach `activated` → install a **context-level** `route('**/*')` recorder with `serviceWorkers: 'allow'` → `setOffline(true)` → reload → assert the recorded request list is **empty** and the map canvas is present. Filter by scheme (`data:`/`blob:` are not network); **allowlist nothing**.
+- [x] T030 [P] [US3-early] Add the **negative-control** spec asserting the harness *catches* a deliberately-requested remote asset. A gate that cannot fail is exactly the stub being replaced (research R6).
 
 **Checkpoint (DU-04 demo)**: "half-day, art + coffee" → itinerary with provenance chips → approve. An infeasible ask cannot be approved. The e2e harness runs real assertions.
 
