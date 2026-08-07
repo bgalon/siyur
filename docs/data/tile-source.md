@@ -11,8 +11,13 @@
 > sha256/integrity + quarantine, the ATTRIBUTION pipeline, the OPFS transport swap, the ADR. **Known dev gaps:** glyphs
 > pruned to U+0000–U+04FF (a Hebrew/Arabic/CJK label renders as nothing); the extract is a fixed bbox, not itinerary-derived.
 
-- **Schema version:** `TileSourceV1`. In M1 this is the `tiles.pmtiles` object inside `BundleManifestV1` plus the base
-  MapLibre style; this card describes both. Custom styling / schematic map = M2+ (no customization at M1).
+- **Schema version:** `TileSourceV1`. In M1 this **is** the object embedded at `BundleManifestV1.tiles.pmtiles` — the
+  manifest holds a whole `TileSourceV1`, not a summary of one — plus the base MapLibre style it names; this card
+  describes both. **The manifest's required subset** of these fields is `path`, `sha256`, `bbox`, `maxzoom` (what the
+  travel client must read to open the archive and frame the map); every other M1 field below is still written, because
+  provenance (`build_source`, `build_date`, `tile_license`, `attribution`) is what discharges the ODbL obligation and
+  drives freshness. Where this card and [`bundle-manifest.md`](./bundle-manifest.md) describe the same object, they are
+  the same object. Custom styling / schematic map = M2+ (no customization at M1).
 - **Producer / path:** `pmtiles extract https://build.protomaps.com/<YYYYMMDD>.pmtiles out.pmtiles --bbox=…` against the
   hosted daily build — one CLI call, no API key, no fee. **Resolve the build URL at run time; do not hotlink it from
   clients** (Protomaps warns build URLs may change — copy what you need). Keep the **z0→maxzoom** sub-pyramid (partial-zoom
@@ -34,12 +39,12 @@
 
 | Field | Type | M1? | Units / notes |
 |---|---|---|---|
-| `path` | `str` | M1 | archive path inside the bundle (e.g. `tiles/rhodes.pmtiles`) |
+| `path` | `str` | M1 | **manifest-required subset** — archive path inside the bundle (e.g. `tiles/rhodes.pmtiles`) |
 | `format` | `"pmtiles"` | M1 | PMTiles spec **v3** (single-file, cluster-ordered, HTTP-range-readable) |
-| `sha256` | `str` | M1 | integrity hash (also referenced from `BundleManifestV1.tiles`) |
-| `bbox` | `[minLon,minLat,maxLon,maxLat]` | M1 | **EPSG:4326**; tight itinerary bbox + buffer |
+| `sha256` | `str` | M1 | **manifest-required subset** — integrity hash of the archive bytes; this *is* `BundleManifestV1.tiles.pmtiles.sha256`, not a copy of it |
+| `bbox` | `[minLon,minLat,maxLon,maxLat]` | M1 | **manifest-required subset** — **EPSG:4326**; tight itinerary bbox + buffer |
 | `minzoom` | `int` | M1 | 0 (keep the full sub-pyramid) |
-| `maxzoom` | `int` | M1 | typically 15 (Protomaps basemap max) |
+| `maxzoom` | `int` | M1 | **manifest-required subset** — typically 15 (Protomaps basemap max) |
 | `build_source` | `str` | M1 | `protomaps-daily` (or `planetiler` for the self-build fallback) |
 | `build_date` | `date` | M1 | Protomaps planet build date (UTC); freshness key |
 | `tile_license` | `SPDX str` | M1 | `ODbL-1.0` (data); attribution required |
@@ -47,6 +52,9 @@
 | `style` | `{ path, sha256 }` | M1 | base MapLibre style JSON (no customization at M1) |
 | `glyphs` | `{ path, license }` | M1 | Noto glyphs, **OFL**; `sprites` likewise |
 | `schema_ver` | `"TileSourceV1"` | M1 | literal |
+
+**Each example below is exactly what appears at `BundleManifestV1.tiles.pmtiles`** — paste it there verbatim, do not
+reduce it to the four required-subset keys.
 
 ## Example rows
 

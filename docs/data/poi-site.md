@@ -13,9 +13,11 @@ schema; read this card.** Constitution Article V (provenance is mechanical) is e
   ledger alike.
 - **CRS:** **EPSG:4326 (lon, lat)** for all geometry. Geometry type: **Point** (`geometry(Point,4326)`, GiST-indexed).
   Never let the LLM emit or arithmetic on coordinates — PostGIS/shapely compute them (AGENTS.md geo rules).
-- **Timezone:** `updated_at` is `timestamptz` (UTC). `opening_hours` is an **opening_hours.js** string evaluated in the
-  **area's local wall-clock time** (locale/country passed for PH/SH resolution — FAIL-catalog: pass it or holidays misfire).
-  `observed_at` (inside each `SourcedValue`) is a UTC date driving staleness / refresh-on-reuse.
+- **Timezone:** `updated_at` is `timestamptz` (UTC). `opening_hours` is an **OSM `opening_hours` syntax** string,
+  evaluated by **`opening-hours-py`** (ADR-0022 — MIT OR Apache-2.0; it replaced `opening_hours.js`) in the **area's
+  local wall-clock time**, with the area's `timezone` and `country_code` passed for PH resolution (FAIL-catalog: pass
+  them or holidays misfire). `SH`-bearing and unparseable expressions **fail closed** — `hours_unknown`, never "open".
+  `observed_at` (inside each `SourcedValue`, and on each `Story`) is a UTC date driving staleness / refresh-on-reuse.
 - **License & provenance:** every value is a `SourcedValue` stamped `source + license + bundleable` at ingestion.
   License pointer → [`/DATA-LICENSES.md`](../../DATA-LICENSES.md), which is the **registry of record** — this list is
   transcribed from it, never invented here. **Quarantine invariant** (merge-blocking test
@@ -45,7 +47,7 @@ Every fact Siyur shows is *stamped*, not bare.
 
 | Field | Type | Notes |
 |---|---|---|
-| `kind` | enum | `overture` \| `osm` \| `wikivoyage` \| `wikipedia` \| `wikidata` \| `commons` \| `opening_hours_js` \| `review_provider` \| `open_web` \| `user` |
+| `kind` | enum | `overture` \| `osm` \| `wikivoyage` \| `wikipedia` \| `wikidata` \| `commons` \| `opening_hours_js` \| `review_provider` \| `open_web` \| `user`. **`opening_hours_js` keeps its spelling** — it is a live enum value in `commons/licenses.py` and a trust weight in `merge.py`, and now means "deterministic opening-hours evaluation" whatever engine backs it (`opening-hours-py` since ADR-0022). Renaming it is a `SiteRecordV2` concern |
 | `id` | `str` | GERS id / OSM `type+id` / QID / article title / URL |
 | `url` | `str \| null` | |
 | `license` | `SPDX str \| "proprietary" \| "user-owned"` | drives `bundleable`; registry = `DATA-LICENSES.md` |
@@ -61,8 +63,8 @@ Every fact Siyur shows is *stamped*, not bare.
 | `location` | `SourcedValue<Point>` | M1 | EPSG:4326 (lon,lat); PostGIS `geometry(Point,4326)` |
 | `categories` | `[SourcedValue<str>]` | M1 | Overture `basic_category` (post-Sept-2026 field) + OSM tags |
 | `address` | `SourcedValue<str> \| null` | M1 | **source scripts untrustworthy** — a Hebrew address was found stored in Cyrillic; normalize/validate, never trust the script (FAIL-001) |
-| `opening_hours` | `SourcedValue<str> \| null` | M1 | opening_hours.js syntax + parsed windows; local wall-clock (see Timezone) |
-| `stories` | `[Story]` | M1 | ≥1 adapted **CC-BY-SA** story with per-article attribution (PRD §7 rich narration posture) |
+| `opening_hours` | `SourcedValue<str> \| null` | M1 | OSM `opening_hours` syntax + parsed windows (evaluator: `opening-hours-py`); local wall-clock (see Timezone) |
+| `stories` | `[Story]` | M1 | adapted **CC-BY-SA** stories with per-article attribution (PRD §7 rich narration posture). **Fill-set aspiration, not a validation rule** — see below |
 | `notes` | `[SourcedValue<str>]` | M1 | free text. A `source.kind="user"` note is **private**: it lives in `user_note`, never in `site`/`site_source` (see Storage) — it is never auto-published and never merged into the commons record |
 | `phone` | `SourcedValue<str> \| null` | M2+ | |
 | `price` | `SourcedValue<str> \| null` | M2+ | tickets/fees |
@@ -79,7 +81,9 @@ Every fact Siyur shows is *stamped*, not bare.
 ```
 Story:
   text_by_lang:  { bcp47: str }          # en canonical (+ translations at M3)
-  source:        SourceRef                # CC-BY-SA article; attribution required
+  source:        SourceRef                # CC-BY-SA article; attribution required — a BARE ref, not a SourcedValue
+  observed_at:   date                     # [M1] UTC date the article revision was fetched — the staleness key
+                                          #      for bundled narration (there is no SourcedValue stamp to carry one)
   claims:        [ {span, SourceRef} ]    # [M2+] per-claim provenance
 
 ReviewSummary:                            # [M2+] bundleable=false, live-online-only
@@ -95,9 +99,35 @@ FieldConflict:
   resolution: "unresolved" | "picked:<source.id>" | "user-override"
 ```
 
-**M1 must populate:** `id`, `location`, `names.en`, `categories`, and — where the source has it — `address`,
-`opening_hours`, and ≥1 `story`; every populated value carries a real `SourceRef` and `bundleable` stamp. Empty M2+
-fields are valid in M1.
+**`Story` is one of several fact-bearing structures that are *not* `SourcedValue`s — the quarantine filter must derive,
+not read.** A `Story` carries a **bare `SourceRef`** (plus `observed_at`); it has **no `bundleable` and no `confidence`
+field**, because the whole story is one attributed adaptation of one article, not a stamped value in a field map. So
+the compile quarantine filter cannot ask a story whether it may be bundled — it must **compute** the answer:
+`commons/licenses.py::bundleable(story.source.kind, story.source.license)`, exactly the function that derives the
+`SourcedValue` stamp everywhere else. **A filter that reads `bundleable` off a story reads `None` and silently drops
+(or silently ships) every narration** — this asymmetry is the trap, and it is why the rule is written here rather than
+inferred. A story whose `source` is missing or unstamped is refused like any other unstamped input.
+
+**And `Story` is not alone — this is the important half.** The same bare-`SourceRef` shape is carried by **`RouteLegV1`**
+([`route-leg.md`](./route-leg.md)), **`ResolvedArea`** and **`AreaCandidate`** ([`area.md`](./area.md)). Every one of
+them must have its bundleability **derived** the same way. The rule is therefore *structural*, not a `Story` special
+case: **derive for anything that is not a `SourcedValue`; only a `SourcedValue` carries a `bundleable` field to read.**
+
+A filter written as `derive if isinstance(v, Story) else v.bundleable` — the shape the single-case wording invites —
+reaches `routing.legs`, finds no `bundleable` attribute on `RouteLegV1`, and either raises mid-compile or, with the
+likelier `getattr(v, "bundleable", False)` repair, **drops every walking leg from every bundle**. The bundle still
+compiles, still hashes, still passes every path check, and the traveller's day has no routes. That failure is silent
+at every gate, which is why the enumeration above is normative rather than illustrative.
+
+**M1 must populate:** `id`, `location`, `names.en`, `categories`, and — where the source has it — `address` and
+`opening_hours`; every populated value carries a real `SourceRef` and `bundleable` stamp. Empty M2+ fields are valid
+in M1.
+
+**Stories are a fill-set aspiration, not a validation rule.** The M1 *goal* is that a place a traveller stands in front
+of has something to read: ≥1 adapted CC-BY-SA story wherever an openly-licensed article exists. But **where no such
+article exists the place carries no story, and nothing is invented** (FR-023) — an empty `stories` list is a valid,
+correct `SiteRecordV1`, never a validation failure, and a generated story with no article behind it is the actual
+defect. "≥1 story" measures coverage across a researched area; it never gates a single record.
 
 ## Name keys — `und` and the derived `*-Latn` twins
 
@@ -205,9 +235,14 @@ logged**, never returned as a half-record (FR-003).
     "source": { "kind": "wikidata", "id": "Q1049981", "license": "CC0-1.0" },
     "bundleable": true, "confidence": 0.95, "observed_at": "2026-07-21" },
   "categories": [],
+  // A Story has a bare `source` + `observed_at` — no `bundleable`/`confidence` stamp.
+  // Bundleability is DERIVED: bundleable("wikivoyage", "CC-BY-SA-4.0") is True.
   "stories": [ { "text_by_lang": { "en": "The cobbled street once housed the …" },
-    "source": { "kind": "wikivoyage", "id": "Rhodes", "url": "https://en.wikivoyage.org/wiki/Rhodes",
-    "license": "CC-BY-SA-4.0", "attribution": "Wikivoyage: Rhodes (CC BY-SA 4.0)" } } ],
+    "source": { "kind": "wikivoyage", "id": "en:Rhodes",
+    "url": "https://en.wikivoyage.org/wiki/Rhodes?oldid=4812301",
+    "license": "CC-BY-SA-4.0",
+    "attribution": "\"Rhodes\", Wikivoyage, https://en.wikivoyage.org/wiki/Rhodes — authors via page history" },
+    "observed_at": "2026-07-25" } ],
   "reviews": { "ratings": [ { "provider": "example", "stars": 4.6, "count": 1200,
     "url": "https://…" } ], "fetched_at": "2026-07-25T10:00:00Z" },
   "conflicts": [], "updated_at": "2026-07-25T10:00:00Z"
@@ -270,3 +305,12 @@ equivalence in both directions.
 Deliberately **not** changed: `stories` stays `M1 / ≥1 story`. Slice 001 defers stories to slice 002 (FR-011), but empty
 `stories` was always valid, so this is a narrower *fill-set for one slice*, not a schema change
 (`specs/001-research-cited-sites/data-model.md` §2 carries the same divergence flag).
+
+**Slice 002 amendment — 2026-08-07.** Three changes, all from `specs/002-plan-compile-offline` Phase-1 gaps G4/G12:
+(a) **`Story` gains `observed_at`** (a UTC date) — bundled narration had no staleness key at all, because a `Story` is
+not a `SourcedValue` and therefore inherits none; (b) the **derive-don't-read rule for story bundleability** is now
+stated in prose above rather than left as an inference from the missing stamp; (c) the "≥1 story" line, which the
+paragraph above already softened to a fill-set, is **restated as an aspiration** — it read as a validation rule and in
+that reading it contradicted FR-023's correct no-article outcome, which is *no story*. Also: the opening-hours
+evaluator is named **`opening-hours-py`** (ADR-0022) wherever prose named `opening_hours.js`; the OSM `opening_hours`
+*syntax* is unchanged and the `opening_hours_js` **`SourceKind` enum value is deliberately kept**.

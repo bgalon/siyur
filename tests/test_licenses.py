@@ -36,10 +36,15 @@ DATA_LICENSES = REPO_ROOT / "DATA-LICENSES.md"
 # Apache-2.0 was on this list until 2026-08-01 and is now allowlisted (ADR-0012): it is
 # permissive, and omitting it quarantined 16.5% of Overture places while ODbL — which
 # carries share-alike — was allowed. Pinned by the named test below.
+#
+# MIT left this list on 2026-08-07 (ADR-0026) on a consistency argument rather than a
+# measured loss: MIT is strictly more permissive than the Apache-2.0 already allowed
+# above, so quarantining it while bundling Apache-2.0 could not be defended. BSD-3-Clause
+# stays here deliberately — it is equally permissive and equally defensible to add, but
+# nothing has needed it, and the allowlist grows by decision, not by sympathy.
 NOT_ALLOWLISTED = [
     "proprietary",
     "user-owned",
-    "MIT",
     "BSD-3-Clause",
     "AGPL-3.0",
     "CC-BY-NC-4.0",
@@ -110,7 +115,9 @@ def test_registry_shorthand_normalises_to_the_spdx_spelling(spelling: str, canon
 
 
 def test_unknown_license_normalises_to_none_rather_than_raising() -> None:
-    assert normalize_license("MIT") is None
+    # Was "MIT" until 2026-08-07; MIT is allowlisted as of ADR-0026, so this needs a
+    # license that is genuinely absent from the alias table to still test what it says.
+    assert normalize_license("AGPL-3.0") is None
 
 
 def test_allowlist_matches_the_registry_document() -> None:
