@@ -100,9 +100,10 @@ References `SiteRecordV1` by id; single source of truth for planner output *and*
 ```
 ItineraryV1:
   id, user_id, area_id
+  date:      date                   # [M1] the calendar day planned for — ADR-0025 ruling 2
   lang:      str                    # [M1] presentation language (en at M1)
   stops:     [Stop]                 # [M1] ordered; each -> site_id + planned window + dwell
-  legs:      [RouteLeg]             # [M1] walking legs between stops (precomputed, Valhalla)
+  legs:      [RouteLegV1]           # [M1] walking legs between stops (precomputed, Valhalla)
   timeline:  Timeline               # [M1] simple ordered times/durations (rich dynamic timeline = M2)
   budgets:   { walking_m, hours }   # [M1] feasibility limits (must hold)
   meals:     [Anchor]               # [M2+]
@@ -111,10 +112,16 @@ ItineraryV1:
 
 PlanVariant:  # [M2+] a divergence from the base plan
   trigger:   "site_closed" | "rain" | "behind_pace"
-  changes:   [StopEdit];  legs: [RouteLeg]
+  changes:   [StopEdit];  legs: [RouteLegV1]
 ```
 
 Feasibility (EARS §5, tested): base (and each variant, at M2) satisfies `budgets` + opening windows, else flagged before approval.
+
+**Amended by ADR-0025 (2026-08-07) — see [`docs/data/itinerary.md`](../data/itinerary.md), which is the field-level authority:**
+- **`date` is M1 and required.** Every planned time is *area-local wall clock*; without a calendar day, `10:00` is not an instant and opening-hours feasibility is uncomputable. The local frame itself (`timezone`, `country_code`) lives on the **`area`** row, derived deterministically from the polygon at resolve time — largest intersecting zone, ties on the lexicographically smallest IANA id.
+- **The feasibility verdict is *not* a field here.** It lives on `user_plan` (`feasible`, `violations`); `ItineraryV1` describes the day, it does not judge it.
+- **`Timeline` entries address stops by `stop_order: int` and legs by `leg_id: str`.** A `Stop` has no id, so an earlier draft that addressed stops by site UUID could not describe a day visiting one site twice.
+- `RouteLegV1` is the type's only name (`route-leg.md` wins on the naming).
 
 ### 1.4 `BundleManifestV1` — the frozen offline artifact
 
@@ -123,15 +130,27 @@ Compile freezes the above into a hashed bundle in GCS, downloaded to OPFS.
 ```
 BundleManifestV1:
   bundle_id, itinerary_id, created_at, size_bytes, schema_ver
-  tiles:       { pmtiles: {path, sha256, bbox, maxzoom} }   # [M1]
-  routing:     { walk_graph, legs, sha256 }                 # [M1] incl. B/C branches at M2
-  content:     { sites, narrations, sha256 }                # [M1] only bundleable=true values
-  attribution: { path }                                     # [M1] ATTRIBUTION.md regenerated per bundle
+  tiles:       { pmtiles: TileSourceV1 }                    # [M1] the FULL object, embedded
+  routing:     { walk_graph, walk_graph_sha256,
+                 legs, legs_sha256 }                        # [M1] incl. B/C branches at M2
+  content:     { sites, sites_sha256,
+                 narrations, narrations_sha256,
+                 itinerary, itinerary_sha256 }              # [M1] only bundleable=true values
+  attribution: { path, sha256 }                             # [M1] ATTRIBUTION.md regenerated per bundle
+  textLicense: str | null                                   # [M1] CC-BY-SA-4.0 when stories are bundled
+  withheld:    [{ site_id, field, reason }]                 # [M1] what quarantine removed, and why
   integrity:   { manifest_sha256 }                          # [M1] launch-time check (iOS eviction guard)
   schematic:   { style_json, sha256 } | null                # [M2+] illustrated-map render
 ```
 
 **Airplane-mode invariant (release gate):** everything the travel UI reads resolves to a path in the manifest; no `bundleable=false` value is present; review links (M2) render as "needs connectivity," never errors.
+
+**Amended by ADR-0025 (2026-08-07) — see [`docs/data/bundle-manifest.md`](../data/bundle-manifest.md), the field-level authority:**
+- **`content.itinerary` — the frozen `ItineraryV1` itself.** The manifest previously carried `itinerary_id` and the legs but **no path to the day**, so the traveller's itinerary existed only as a database row they could not reach offline: the airplane-mode invariant above was unsatisfiable against this very schema. The frozen copy also carries the area's `timezone`/`country_code`, because wall-clock times need their frame to travel with them.
+- **One hash per artifact, never a shared one** — a group hash cannot name *which* file corrupted. `attribution.sha256` is new: it was the one **legally obligated** artifact with no integrity hash at all.
+- **`integrity.manifest_sha256` is canonicalized**: SHA-256 over the manifest as canonical JSON (UTF-8, keys sorted at every level, no insignificant whitespace) with the `integrity` key **omitted** — not nulled, not emptied. Unstated, the Python writer and the TypeScript launch-time verifier disagree and every bundle fails its own check.
+- **`withheld[].reason` is a closed enum** (`license_forbids_redistribution`, `source_unavailable`) — never free text, because this ships inside a file the user downloads. There is deliberately **no `unstamped` member**: FR-012 *refuses* unstamped input, so a value is withheld **or** refused, never both.
+- **`tiles.pmtiles` embeds the whole `TileSourceV1`** ([`tile-source.md`](../data/tile-source.md)); the four fields listed before were its required subset, not its definition — and `attribution`/`build_date` are read off it.
 
 ### 1.5 How they relate
 

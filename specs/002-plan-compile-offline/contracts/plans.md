@@ -54,7 +54,7 @@ event: done         data: {"plan_id":"7be2…-uuid","state":"proposed"}
   "attribution": ["© OpenStreetMap contributors"]   // union across the plan's values and legs
 }
 ```
-- `approval.state` ∈ `proposed` | `approved` | `superseded`; it lives on the `user_plan` row, **not** inside `ItineraryV1` — the card has no approval field and none is added here. **Editing an approved plan returns it to `proposed`** and re-runs feasibility before it may be compiled again (edge case; FR-006).
+- `approval.state` ∈ `proposing` | `proposed` | `approved` | `superseded` | `compiling` | `compiled` | `failed` — **ADR-0023's seven states, exposed verbatim** with no DB→API mapping layer (T007b reconciliation). An earlier draft of this contract listed only three, which would have rendered a `compiling` plan as an unknown state; and hiding `compiling` leaves the UI unable to distinguish "approved, idle" from "approved, compile running". State lives on the `user_plan` row, **not** inside `ItineraryV1` — the card has no approval field and none is added here. **Editing an approved plan supersedes it** and the successor re-runs feasibility before it may be compiled (edge case; FR-006).
 - **Errors**: `401` unauthenticated · `404` unknown `plan_id` **or another user's plan** — indistinguishable by design.
 
 ## POST /plans/{plan_id}/approve — the HITL gate
