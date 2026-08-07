@@ -6,6 +6,8 @@ components in `methods-stack-reference.md` §5. The routing engine choice (Valha
 guesswork, for the field shape.*
 
 - **Schema version:** `RouteLegV1` (`schema_ver` literal where serialized standalone; embedded legs may omit it).
+  **`RouteLegV1` is the type's only name** — `ItineraryV1.legs` is a list of `RouteLegV1`, and any card, spec or
+  docstring writing bare `RouteLeg` means this. This card wins on the naming as it does on the fields.
 - **Producer:** **Valhalla**, built per-area during compile (MIT; pedestrian costing) → decoded leg geometry + time.
   The bundle also ships a **pruned walking network** + **geojson-path-finder** (ISC) for offline off-route recovery;
   the straight-line fallback is last resort. No maintained OSRM/Valhalla-wasm exists → precomputed legs carry the
@@ -18,6 +20,13 @@ guesswork, for the field shape.*
 - **License & provenance:** leg geometry and times are a **Produced Work derived from OSM → ODbL** (routing runs over OSM
   data): `bundleable=true`, and **ODbL attribution ("© OpenStreetMap contributors") renders on every map**. License pointer
   → [`/DATA-LICENSES.md`](../../DATA-LICENSES.md) (ODbL row). The engine (Valhalla) is MIT — a code dependency, not bundled data.
+- **The routing `SourceRef` convention — stated here, not left to an example.** Every M1 leg carries exactly:
+  `kind: "osm"` · `id: "valhalla:pedestrian"` · `url: null` · `license: "ODbL-1.0"` ·
+  `attribution: "© OpenStreetMap contributors"`. `kind` is `osm` because the *data* the leg derives from is OSM;
+  **there is no `SourceKind` for a routing engine and none is being added** — the engine is named inside `id`
+  (`<engine>:<costing>`), which is where a produced work records the machinery without claiming to be a source. This
+  stamp is precisely what makes a leg bundleable: `commons/licenses.py::bundleable("osm", "ODbL-1.0")` is `True`,
+  **derived, never author-set**. A leg with any other `kind`/`license` pair is a defect, not a variation.
 
 ## `RouteLegV1` fields
 
@@ -30,7 +39,7 @@ guesswork, for the field shape.*
 | `geometry` | `LineString` (EPSG:4326) | M1 | decoded leg polyline; `[[lon,lat], …]` |
 | `distance_m` | `float` | M1 | metres |
 | `duration_s` | `int` | M1 | seconds (walking) |
-| `source` | `SourceRef` | M1 | derived-from-OSM (ODbL); `bundleable=true`, attribution "© OpenStreetMap contributors" |
+| `source` | `SourceRef` | M1 | the fixed routing convention above: `kind="osm"`, `id="valhalla:pedestrian"`, `license="ODbL-1.0"`, attribution "© OpenStreetMap contributors" → `bundleable=true` (derived) |
 | `schema_ver` | `"RouteLegV1"` | M1 | literal (when serialized standalone) |
 | `variant` | `"B" \| "C" \| null` | M2+ | which Plan variant this leg belongs to (base plan = null) |
 

@@ -24,8 +24,15 @@ a resolved area.*
   as a false "no such area"; the *fallback* being unavailable returns nothing rather than raising.
 - **License & provenance:** a resolved polygon always carries a `SourceRef`, and the stamp is **read, not assumed** —
   see the provenance table below. License pointer → [`/DATA-LICENSES.md`](../../DATA-LICENSES.md).
-- **Timezone:** none on the shape itself. A resolved area carries no `observed_at`: it is resolved per request, not
-  cached. (Staleness lives on the *site* records inside it — `docs/data/poi-site.md`.)
+- **Timezone: the area is where the local frame comes from.** The area carries **`timezone`** (IANA, e.g.
+  `Europe/Athens`) and **`country_code`** (ISO 3166-1 alpha-2), both **derived deterministically from the polygon at
+  resolve time** — see "The local frame" below. They are not on the shape as decoration: every planned time downstream
+  is *area-local wall clock* (`ItineraryV1.date` + `Stop.planned_start` + `Timeline.entries[].start`), and the
+  opening-hours evaluator needs the country to resolve public holidays. **Without these two values the frame every
+  planned time is expressed in is unrecorded and opening-hours feasibility is structurally uncomputable** — this was
+  the highest-risk gap slice 002's design surfaced (`specs/002-plan-compile-offline/data-model.md` G3, ADR-0025).
+  A resolved area still carries no `observed_at`: it is resolved per request, not cached. (Staleness lives on the
+  *site* records inside it — `docs/data/poi-site.md`.)
 
 ## `ResolvedArea` fields
 
@@ -33,6 +40,8 @@ a resolved area.*
 |---|---|---|---|
 | `polygon` | shapely `Polygon \| MultiPolygon` | M1 | EPSG:4326 (lon, lat); validated — see "The polygon contract" |
 | `source` | `SourceRef` | M1 | where the polygon came from; the same `SourceRef` the commons uses (`docs/data/poi-site.md`) |
+| `timezone` | `str` (IANA tz id) | M1 | e.g. `Europe/Athens`. **Derived from `polygon`, never asked and never guessed by the model.** The frame every area-local wall-clock time downstream is read in (`itinerary.md`) |
+| `country_code` | `str` (ISO 3166-1 alpha-2) | M1 | e.g. `GR`. **Derived from `polygon`**, same rule. Passed to `opening-hours-py` for **public-holiday** resolution — omit it and holidays misfire silently (FAIL-catalog) |
 | `candidates` | `[AreaCandidate]` | M1 | everything considered when a **name** was resolved, winner included, so a caller can still offer "did you mean…". **Empty for a user-supplied geometry** — nothing was guessed |
 
 **`AreaRequest`** — the user's delimitation; `POST /areas` maps onto it one-to-one. Exactly one is used, by the
@@ -71,6 +80,39 @@ A resolved polygon is guaranteed to satisfy **all** of these — anything failin
 
 Nominatim answers points and lines for many queries; those results are **dropped**, not coerced — an area query wants
 areas.
+
+## The local frame — deriving `timezone` and `country_code` (ADR-0025)
+
+**Both are computed from the polygon at resolve time, by a deterministic spatial lookup, and then stored.** Three
+things this is *not*: it is **not a question put to the user** (they delimited a place, not a clock); it is **not a
+value the LLM emits** (it is spatial arithmetic, and the LLM never does spatial arithmetic — AGENTS.md); and it is
+**not re-derived on every read** (it is recorded once with the area, so every consumer of a plan reads the same frame
+the planner used, forever).
+
+Why it is load-bearing rather than nice-to-have: `Stop.planned_start` is `10:00` with no offset, and `10:00` is not an
+instant until something says *which* local clock and *which* calendar day. `ItineraryV1.date` supplies the day; this
+area supplies the clock. `opening-hours-py` then needs `country_code` on top, because `PH` in an OSM `opening_hours`
+expression resolves against a **country's** holiday calendar; without it public holidays evaluate wrongly and silently
+— which is precisely the failure SC-002 exists to prevent.
+
+**Straddling is normal, and the rule must not vary between runs.** SC-009 says this works for *any* area, so both
+degenerate cases are specified rather than left to whichever library is called first:
+
+1. **A polygon straddling a timezone boundary** (a bay, a valley, a drawn ring across a line). Resolve to the timezone
+   whose zone polygon has the **largest area of intersection** with the resolved polygon; ties break on the
+   **lexicographically smallest IANA id**. One area, one clock.
+2. **A polygon straddling a country boundary** (a border town, a metro spanning two states). Same rule against country
+   polygons: **largest intersecting area**, ties on the lexicographically smallest ISO 3166-1 alpha-2 code.
+
+Both are pure functions of the polygon and the pinned boundary dataset, so the same delimitation always resolves the
+same way. **What was picked is recorded** — the stored `timezone` / `country_code` *are* the record — so a plan can
+always be read back in the frame it was planned in, even if the derivation rule or the boundary data later changes.
+A polygon that intersects **no** zone or **no** country (open ocean) is an unresolvable area, refused like any other
+failing polygon — never defaulted to `UTC`, never defaulted to a country.
+
+The boundary dataset and the library that queries it are pinned at implementation under ADR-0007's
+resolve-then-pin discipline; whatever is chosen is **offline, deterministic and licence-registered in**
+[`/DATA-LICENSES.md`](../../DATA-LICENSES.md) before it ships.
 
 ## Overture divisions — the columns actually read
 
@@ -133,14 +175,22 @@ When it does, **its schema belongs in this card**, and the questions it must ans
   that line. **Unresolved — this card does not assert an answer**;
 - whether resolutions are cached/reused, which would give the shape an `observed_at` it does not have today.
 
+**One part of that persisted shape is no longer open: `timezone` and `country_code` are columns, not derivations at
+read time.** The `area` table gains `timezone text NOT NULL` and `country_code text NOT NULL` (ADR-0025), because a
+plan must be readable in the frame it was planned in even if the boundary data or the derivation rule changes later.
+That is an **Alembic migration** — hand-written like `0002_area`, and **`ask`-gated: Ben approves it before it runs**
+(`CLAUDE.md`, "Always ask Ben first"). Nothing else in this section is settled by it.
+
 ## Example values
 
 ```jsonc
-// 1 — name resolved against Overture divisions (authoritative)
+// 1 — name resolved against Overture divisions (authoritative).
+//     `timezone`/`country_code` are derived from the polygon, not from the name.
 {
   "polygon": { "type": "Polygon", "coordinates": [ [ [28.216, 36.440], /* … */ ] ] },
   "source": { "kind": "overture", "id": "08f2a4…division", "url": null,
     "license": "ODbL-1.0", "attribution": "© OpenStreetMap contributors, Overture Maps Foundation" },
+  "timezone": "Europe/Athens", "country_code": "GR",
   "candidates": [ { "name": "…", "confidence": 1.0, "source": { /* as above */ } } ]
 }
 
@@ -150,14 +200,28 @@ When it does, **its schema belongs in this card**, and the questions it must ans
   "source": { "kind": "osm", "id": "relation/12345",
     "url": "https://www.openstreetmap.org/relation/12345",
     "license": "ODbL-1.0", "attribution": "© OpenStreetMap contributors" },
+  "timezone": "Europe/Athens", "country_code": "GR",
   "candidates": [ { "name": "…", "confidence": 0.6, "source": { /* as above */ } } ]
 }
 
-// 3 — the user drew the ring: their own data, no attribution, NOT bundleable, candidates empty
+// 3 — the user drew the ring: their own data, no attribution, NOT bundleable, candidates empty.
+//     The frame is still DERIVED — a drawn ring is delimitation, never a claim about the clock.
 {
   "polygon": { "type": "Polygon", "coordinates": [ /* exactly what they drew */ ] },
   "source": { "kind": "user", "id": "user:polygon", "url": null,
     "license": "user-owned", "attribution": null },
+  "timezone": "Europe/Athens", "country_code": "GR",
+  "candidates": []
+}
+
+// 4 — a drawn ring straddling a border: largest intersecting area wins, deterministically.
+//     (Basel: ~70% CH / ~30% DE by intersected area ⇒ CH; both sides share Europe/Zurich…
+//     had they differed, the same largest-intersection rule would have picked the zone.)
+{
+  "polygon": { "type": "Polygon", "coordinates": [ /* a ring across the Swiss–German line */ ] },
+  "source": { "kind": "user", "id": "user:polygon", "url": null,
+    "license": "user-owned", "attribution": null },
+  "timezone": "Europe/Zurich", "country_code": "CH",
   "candidates": []
 }
 ```
@@ -169,3 +233,8 @@ handling and the confidence bands are transcribed from the code, not from the li
 flagged the absence of this card: the divisions columns were being read straight off the theme shape, which is exactly
 the "never guess a schema" hazard `AGENTS.md` warns about. Sections marked **provisional** are the ones the code does
 not yet answer.*
+
+*Amended 2026-08-07 (slice 002, ADR-0025): `timezone` + `country_code` added as M1 fields, derived deterministically
+from the polygon at resolve time, with the straddle rules and the persistence consequence stated above. `ResolvedArea`
+does not implement them yet — this card leads the code here, deliberately, because slice 002's planner cannot express
+an area-local time without them.*
