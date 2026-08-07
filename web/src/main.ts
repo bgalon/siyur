@@ -33,9 +33,35 @@ const onError = (error: unknown): void => {
   console.warn('[siyur]', error)
 }
 
+/**
+ * Dev-only basemap. Served by `vite.config.ts`'s `siyur-dev-basemap-assets` out of
+ * `web/dev-assets/`, which `scripts/fetch-basemap.sh` populates.
+ *
+ * The path is a demo fixture, not a hardcoded place: any `.pmtiles` over any city
+ * renders through the same call (FR-001).
+ */
+const DEV_BASEMAP_ARCHIVE = '/tiles/rhodes.pmtiles'
+
 const container = document.getElementById('map')
 if (container) {
+  // Production keeps EMPTY_STYLE; the real tile source arrives inside the compiled
+  // bundle at DU-05. The dev basemap is applied afterwards via `setStyle` rather
+  // than passed in here, and that shape is deliberate on two counts:
+  //
+  //   1. `import.meta.env.DEV` is statically replaced at build time, so this whole
+  //      branch — and with it the only `import()` of `./map/basemap` — is dropped
+  //      from a production build. A *static* import would not have been: measured,
+  //      the `@protomaps/basemaps` theme tree-shakes but the `pmtiles` reader does
+  //      not, and it shipped ~30 KB into the prod bundle until this became dynamic.
+  //   2. Markers are DOM overlays, not style layers, so `setStyle` swaps the
+  //      basemap underneath them without disturbing anything mounted below.
   const { map, attribution } = createMapWithAttribution(container)
+
+  if (import.meta.env.DEV) {
+    void import('./map/basemap')
+      .then(({ basemapStyle }) => map.setStyle(basemapStyle({ archiveUrl: DEV_BASEMAP_ARCHIVE })))
+      .catch(onError)
+  }
 
   // Dev-only handle. MapLibre's handlers ignore synthetic wheel/click events, so
   // an automated browser check (and the DU-07 airplane-mode e2e) has no way to

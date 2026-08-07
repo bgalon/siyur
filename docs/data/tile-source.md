@@ -4,6 +4,13 @@
 **Protomaps** daily planet build; MapLibre renders it. Authoritative context: `docs/design/tech-design.md` §1.4, §5.3 and
 `methods-stack-reference.md` §1–3. The tile-source ADR (Protomaps) lands at DU-05. Never guess this schema; read this card.*
 
+> **A dev-only half of this exists ahead of DU-05.** `web/src/map/basemap.ts` builds the MapLibre style (`pmtiles://`
+> protocol + Protomaps layers + vendored Noto glyphs); `scripts/fetch-basemap.sh` writes the extract into
+> `web/dev-assets/` — gitignored, served by a dev-only Vite middleware, absent from production builds. It makes the map
+> legible while developing and settles nothing this card leaves open. **Still DU-05:** `TileSourceV1` in the manifest,
+> sha256/integrity + quarantine, the ATTRIBUTION pipeline, the OPFS transport swap, the ADR. **Known dev gaps:** glyphs
+> pruned to U+0000–U+04FF (a Hebrew/Arabic/CJK label renders as nothing); the extract is a fixed bbox, not itinerary-derived.
+
 - **Schema version:** `TileSourceV1`. In M1 this is the `tiles.pmtiles` object inside `BundleManifestV1` plus the base
   MapLibre style; this card describes both. Custom styling / schematic map = M2+ (no customization at M1).
 - **Producer / path:** `pmtiles extract https://build.protomaps.com/<YYYYMMDD>.pmtiles out.pmtiles --bbox=…` against the

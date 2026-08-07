@@ -5,6 +5,10 @@
  */
 
 export { EMPTY_STYLE, ODBL_ATTRIBUTION, createMap, createMapWithAttribution } from './map'
+// `./basemap` is deliberately NOT re-exported here. This barrel is what `main.ts`
+// imports, and a re-export would pull the `pmtiles` reader into the production graph
+// through it — the exact leak the dynamic `import('./map/basemap')` in `main.ts`
+// exists to prevent. Import it from `./map/basemap` directly (dev code and tests do).
 export { boundsOfPolygon, type LngLatBoundsLike } from './bounds'
 export { OSM_ATTRIBUTION, OdblAttributionControl, isOdblAttribution } from './attribution'
 export {

@@ -30,3 +30,10 @@ spike/
 
 # Local dev-stack run dir (pids + logs from scripts/dev.sh)
 .dev/
+
+# Dev basemap — machine-produced by `scripts/fetch-basemap.sh` from a dated
+# Protomaps daily build. Build inputs, not sources: regenerate, never commit.
+# DU-05 moves these into the compiled bundle behind TileSourceV1.
+# Kept OUT of web/public/ deliberately — vite.config.ts "Footgun 1": public/
+# copies verbatim into dist/, and a multi-MB archive must never enter the graph.
+web/dev-assets/
