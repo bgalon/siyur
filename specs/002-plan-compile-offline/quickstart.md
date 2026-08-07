@@ -6,21 +6,25 @@
 
 This walkthrough is the human-runnable form of the four user stories. The automated gates that *prove* them are mapped at the bottom.
 
-## Prerequisites, in one line each
+## Prerequisites
 
-- **Postgres + PostGIS** — `docker compose up -d postgis`, then `export SIYUR_DATABASE_URL="postgresql+psycopg://siyur:siyur@localhost:5432/siyur"`.
-- **Valhalla** — `docker compose up -d valhalla` (added by this slice). First start builds the per-area graph from a PBF extract; expect 1–5 minutes before `/status` answers. Without it, `SIYUR_ROUTING_PROVIDER=fixture` runs the recorded fixture instead (Tier 1 default).
-- **Object storage** — `docker compose up -d gcs` (`fake-gcs-server`, added by this slice) mirrors GCS for bundle artifacts.
-- **Migrations** — `uv run alembic upgrade head` (creates `user_plan`). *Migrations are `ask`-gated; Ben approves.*
-- **A researched area** — this slice starts where 001 finished. Run the 001 quickstart first, or `POST /areas` + `POST /areas/{id}/research`, and keep the `area_id`.
-- **Auth** — a bearer token from the Firebase Auth emulator, as in the 001 quickstart. Every endpoint below is `401` without it.
-- **Web** — `pnpm -C web install && pnpm -C web dev`. In a git worktree `node_modules` is not shared (the ADR-0005 `worktree.symlinkDirectories` config is still unset), so install per worktree.
+> **Setup lives in one place: [`docs/TRY-IT.md`](../../docs/TRY-IT.md)** — install, PostGIS, migrations, API, minting a local session cookie, web app. Slice 001's quickstart established that rule and the reason for it ("two runbooks drift, and the one that drifts is the one nobody runs"), so this page does not restate any of it. Follow TRY-IT §0–§5 and arrive here with `$COOKIE` and an API on `localhost:8000`.
+
+**Auth is a signed `same_site=lax` session cookie — there is no bearer token and no auth emulator in this stack.** (`api/security.py` reads `request.session`; the `WWW-Authenticate: Bearer` header on its 401 is vestigial. Note that slice 001's *contracts* say "bearer token required" — that is documentation drift against the shipped code, flagged in "Known gaps" below.)
+
+What this slice adds on top of TRY-IT:
+
+- **Valhalla** — `docker compose up -d valhalla`. First start builds the per-area graph from a PBF extract; expect 1–5 minutes before `/status` answers. Without it, `SIYUR_ROUTING_PROVIDER=fixture` uses the recorded fixture (the Tier 1 default).
+- **Object storage** — `docker compose up -d gcs` (`fake-gcs-server`) mirrors GCS for bundle artifacts.
+- **A new migration** — `uv run alembic upgrade head` now also creates `user_plan`. *Migrations are `ask`-gated; Ben approves.*
+- **A researched area** — this slice starts where 001 finished. Run the 001 walkthrough, or `POST /areas` + `POST /areas/{id}/research`, and keep the `area_id` as `$AREA`.
+- **Playwright** — `pnpm -C web exec playwright install chromium`, new to the repo. In a git worktree `node_modules` is not shared (the ADR-0005 `worktree.symlinkDirectories` config is still unset), so install per worktree.
 
 ## US1 — Propose a day, then approve it
 
 ```bash
 # 1 · propose (SSE: phase status frames, the itinerary, a feasibility verdict, done)
-curl -N -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+curl -N -H "Cookie: session=$COOKIE" -H 'Content-Type: application/json' \
   -d '{"area_id":"'$AREA'","budgets":{"hours":4.0,"walking_m":4000},
        "start_time":"10:00","interests":"art and coffee"}' \
   http://localhost:8000/plans
@@ -30,11 +34,11 @@ curl -N -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
 # → event: done {"plan_id":"…"}
 
 # 2 · read it back with its approval state
-curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/plans/$PLAN
+curl -H "Cookie: session=$COOKIE" http://localhost:8000/plans/$PLAN
 # → {"state":"proposed","feasibility":{"ok":true},"itinerary":{…}}
 
 # 3 · approve — the HITL gate
-curl -X POST -H "Authorization: Bearer $TOKEN" http://localhost:8000/plans/$PLAN/approve
+curl -X POST -H "Cookie: session=$COOKIE" http://localhost:8000/plans/$PLAN/approve
 # → {"state":"approved","approved_at":"2026-08-07T…Z"}
 ```
 
@@ -50,13 +54,13 @@ curl -X POST -H "Authorization: Bearer $TOKEN" http://localhost:8000/plans/$PLAN
 ## US2 — Compile the approved day
 
 ```bash
-curl -N -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+curl -N -X POST -H "Cookie: session=$COOKIE" -H 'Content-Type: application/json' \
   -d '{"plan_id":"'$PLAN'"}' http://localhost:8000/bundles
 # → event: status {"stage":"tiles"} … {"stage":"routes"} … {"stage":"quarantine"}
 #   … {"stage":"content"} … {"stage":"attribution"} … {"stage":"hash"}
 # → event: done {"bundle_id":"…"}
 
-curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/bundles/$BUNDLE/manifest
+curl -H "Cookie: session=$COOKIE" http://localhost:8000/bundles/$BUNDLE/manifest
 # → BundleManifestV1 incl. size_bytes, per-artifact sha256, integrity.manifest_sha256
 ```
 
@@ -102,6 +106,7 @@ With the network still off, open a place that had an available openly-licensed a
 
 ## Known gaps this walkthrough does not paper over
 
+- **Slice 001's contracts describe an auth mechanism the code does not use.** `contracts/areas.md`, `research.md` and `sites.md` all say "bearer token required"; `api/security.py` uses a signed session cookie and has since DU-00. Slice 001's *quickstart* is correct — only its contracts drifted. This slice's contracts are written against the shipped behaviour, which means the two slices' contracts now disagree with each other until 001's are corrected. Left as a flagged finding rather than fixed here, because 001's contracts are outside this slice's file set.
 - **Until CI job 5 actually runs Playwright, "gates green" still does not mean airplane mode was verified.** Slice 001's quickstart (§"Job 5 is a green stub") recorded this honestly at T069; it remains true until DU-06 lands, and this walkthrough inherits that caveat rather than quietly dropping it.
 - **Valhalla's first run is slow and disk-hungry.** The fixture provider exists so Tier 1 and most local work never pay for it; that also means the fixture path is the one most exercised, and the real container is the one most likely to rot. The Tier 2 integration run is what keeps it honest.
 - **Off-route recovery is approximate by design** — a pruned network, no turn restrictions, naive costing (stack reference §5). It is "get me back to the plan", not turn-by-turn navigation.
