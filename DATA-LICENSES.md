@@ -74,7 +74,7 @@ ship the license text. **MIT is permissive, not public domain; "no obligation" w
 | Service | Terms |
 |---|---|
 | **Nominatim** (disambiguation fallback) | max 1 req/s, real User-Agent, no bulk (OSMF policy) |
-| **Overpass** (long-tail tags) | fair use (~10k queries/day, 2 concurrent on the public instance; kumi mirror more permissive) — the commons cache is a reliability mechanism, not just cost |
+| **Overpass** (long-tail tags) | fair use (~10k queries/day, 2 concurrent on the public instance; kumi mirror more permissive) — the commons cache is a reliability mechanism, not just cost. **We default to the `overpass.kumi.systems` mirror, honour `Retry-After`, and back off exponentially (ADR-0027)** after a real pass lost every OSM `relation` to a `429` on the main instance. Being a well-behaved guest is the fair-use relationship working, not a courtesy. **ADR-0028 proposes removing this dependency entirely** by reading OSM from the per-area PBF already fetched for Valhalla — deferred until after M1 |
 | **OSRM demo / ORS** | OSRM demo not for production; ORS free key ~2,500 req/day (early-dev fallback only) |
 
 ## Reference-only (do NOT vendor)

@@ -82,18 +82,37 @@ describe('the style is place-neutral (FR-001)', () => {
   })
 
   it('serves sprites from the vendored path too', () => {
-    expect(basemapStyle({ archiveUrl: RHODES }).sprite).toMatch(/^\/basemap\/sprites\//)
+    expect(basemapStyle({ archiveUrl: RHODES }).sprite).toMatch(/\/basemap\/sprites\//)
+  })
+
+  // FAIL-007. These assertions previously pinned `sprite` to the ROOT-RELATIVE path, so
+  // they passed green while MapLibre threw `Invalid sprite URL … must be absolute` at
+  // every real page load and no sprite ever rendered. The test encoded the bug. It now
+  // asserts the property MapLibre actually requires — absolute — rather than the literal
+  // string the implementation happened to produce.
+  it('makes the sprite URL ABSOLUTE, which MapLibre requires (FAIL-007)', () => {
+    const { sprite } = basemapStyle({ archiveUrl: RHODES })
+    expect(sprite).toBeDefined()
+    expect(() => new URL(sprite as string)).not.toThrow()
+    expect(sprite as string).toMatch(/^https?:\/\//)
+  })
+
+  it('still points at the vendored origin, not a remote host', () => {
+    const sprite = basemapStyle({ archiveUrl: RHODES }).sprite as string
+    expect(new URL(sprite).origin).toBe(location.origin)
   })
 })
 
 describe('flavors', () => {
   it('defaults to the dark sprite sheet, matching the app surface', () => {
-    expect(basemapStyle({ archiveUrl: RHODES }).sprite).toBe('/basemap/sprites/dark')
+    expect(basemapStyle({ archiveUrl: RHODES }).sprite).toBe(
+      `${location.origin}/basemap/sprites/dark`,
+    )
   })
 
   it('uses the light sheet for a light flavor', () => {
     expect(basemapStyle({ archiveUrl: RHODES, flavor: 'light' }).sprite).toBe(
-      '/basemap/sprites/light',
+      `${location.origin}/basemap/sprites/light`,
     )
   })
 
