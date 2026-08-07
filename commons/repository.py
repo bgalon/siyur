@@ -54,7 +54,7 @@ import logging
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import date
-from typing import Any
+from typing import Any, Final
 from uuid import UUID, uuid4
 
 from geoalchemy2 import Geography
@@ -70,6 +70,7 @@ from commons.db import (
     SITE_CONFLICT_NATURAL_KEY,
     SITE_SOURCE_NATURAL_KEY,
     SRID,
+    Area,
     Site,
     SiteConflict,
     SiteSource,
@@ -88,6 +89,7 @@ from commons.merge import (
 from commons.models import SiteRecordV1, SourceRef
 
 __all__ = [
+    "COVERED_FRACTION",
     "Coverage",
     "CommonsWriteRefused",
     "UpsertReport",
@@ -111,13 +113,38 @@ class CommonsWriteRefused(ValueError):
     """
 
 
+#: What fraction of a requested polygon must have been researched for ``covered`` to be true.
+#:
+#: A **dimensionless fraction of the asked-for area**, deliberately — not a site density and
+#: not a distance. A density constant would be a place-specific assumption (a desert, an
+#: industrial estate and a medieval core have legitimately different densities, and SC-005
+#: forbids exactly that kind of built-in expectation); "how much of what you asked about did
+#: we look at" means the same thing everywhere on Earth.
+#:
+#: The value is high on purpose. The two errors are not symmetric: reporting an unresearched
+#: region as covered is **silent** — the user sees a populated map and never learns the rest
+#: was never looked at — while re-researching ground already covered is visible, idempotent
+#: (:func:`upsert_sites` enriches, never forks) and costs only adapter fan-out. The residual
+#: 1 % is slack for float and geodesic rounding on a re-delimitation of the *same* extent,
+#: not an allowance for unresearched ground.
+COVERED_FRACTION: Final[float] = 0.99
+
+
 @dataclass(frozen=True, slots=True)
 class Coverage:
-    """What the commons already knows about an area — the `contracts/areas.md` block."""
+    """What the commons already knows about an area — the `contracts/areas.md` block.
 
-    #: ``ST_Within(site.geom, polygon)`` count.
+    Note the two halves answer to different scopes, and that is not an accident: the site
+    count is **commons** data (shared, ADR-0008), the researched extent is read from ``area``
+    and is therefore **per-user** (ADR-0015). See :func:`coverage`.
+    """
+
+    #: ``ST_Within(site.geom, polygon)`` count. Commons-wide, not per-user.
     known_site_count: int
-    #: ``known_site_count > 0``.
+    #: Fraction of ``polygon`` (by true surface area) inside the caller's researched extent.
+    researched_fraction: float
+    #: ``researched_fraction >= COVERED_FRACTION`` — "was this area researched", *not*
+    #: "does it contain a site".
     covered: bool
     #: Minimum ``observed_at`` across the covered sites' provenance; ``None`` when none.
     stalest_observed_at: date | None
@@ -368,8 +395,71 @@ def upsert_sites(session: Session, results: Iterable[MergeResult]) -> UpsertRepo
 # ── reads (T049 + contracts/sites.md) ──────────────────────────────────────────────
 
 
-def coverage(session: Session, polygon: BaseGeometry) -> Coverage:
-    """Existing commons coverage of ``polygon`` — the reuse/refresh decision (FR-006)."""
+def _researched_fraction(session: Session, polygon: BaseGeometry, subject: str) -> float:
+    """How much of ``polygon`` lies inside ``subject``'s researched extent, in ``[0, 1]``.
+
+    ``ST_Union`` first, then one intersection: overlapping delimitations (the normal case —
+    the same old town researched at three zoom levels) must not have their areas added
+    together, or a heavily re-researched area would report more than 100 % of itself.
+
+    Measured as ``geography`` (true m² on the WGS84 spheroid), not as planar degrees. A
+    degree of longitude is a different distance at every latitude, so a planar ratio would
+    make the *same* pair of shapes report differently near the equator and near the poles —
+    a place-dependent answer out of place-neutral code, which is what SC-005 exists to
+    prevent.
+
+    Areas that do not intersect the request are filtered out in SQL rather than unioned and
+    discarded: that is the predicate ``ix_area_polygon`` serves.
+    """
+    here = _geom(polygon)
+    researched = (
+        select(func.ST_Union(Area.polygon))
+        .where(
+            Area.created_by == subject,
+            Area.researched_at.is_not(None),
+            func.ST_Intersects(Area.polygon, here),
+        )
+        .scalar_subquery()
+    )
+    overlap_m2, requested_m2 = session.execute(
+        select(
+            func.ST_Area(sql_cast(func.ST_Intersection(here, researched), Geography)),
+            func.ST_Area(sql_cast(here, Geography)),
+        )
+    ).one()
+    # No researched area intersects: the aggregate is NULL and so is the intersection.
+    if overlap_m2 is None or not requested_m2:
+        return 0.0
+    # Clamped: an intersection can round a hair above the whole on a self-identical polygon.
+    return min(1.0, float(overlap_m2) / float(requested_m2))
+
+
+def coverage(session: Session, polygon: BaseGeometry, *, researched_by: str) -> Coverage:
+    """Existing coverage of ``polygon`` — the reuse/refresh decision (FR-006 / SC-003).
+
+    ``covered`` answers **"has this area been researched?"**, measured as the fraction of
+    ``polygon`` inside the union of ``researched_by``'s completed research extents. It used
+    to answer "does the commons hold a site anywhere inside this polygon" (``count > 0``),
+    which is a different question with a silent failure: the web client delimits by map
+    viewport (`web/src/map/delimit.ts`), so panning out one zoom step produced a polygon that
+    still contained the sites researched inside it and therefore reported ``covered: true``
+    for a region nobody had ever looked at — FR-006 then served reuse instead of research and
+    the user saw a populated map with no hint of the gap (ADR-0018).
+
+    Site count is **not** part of the answer. An area that was genuinely researched and found
+    to hold nothing is covered — re-researching it would find nothing again — and SC-006 says
+    "nothing found here" is a correct result, not an unresearched one.
+
+    **Scope (ADR-0015).** ``researched_by`` is the auth subject, and only that subject's
+    ``area`` rows are read. The commons itself is shared (ADR-0008): ``known_site_count`` and
+    ``stalest_observed_at`` below count *everyone's* sites, and a second user re-delimiting a
+    researched old town still sees every record. What they do not inherit is the *reuse
+    decision* — they will run a pass over ground someone else already covered, which is
+    wasteful but idempotent. Widening this read to all subjects would make one user's
+    delimitations observable to another (the polygon is the datum ADR-0015 protects, and a
+    probing caller can trace a boundary from a scalar), and that is a privacy posture Ben owns
+    via PRD §13 #4 — flagged, not quietly taken. Today it is also unobservable: one subject.
+    """
     within = func.ST_Within(Site.geom, _geom(polygon))
     count: int = session.execute(select(func.count()).select_from(Site).where(within)).scalar_one()
     stalest: date | None = session.execute(
@@ -377,9 +467,11 @@ def coverage(session: Session, polygon: BaseGeometry) -> Coverage:
             SiteSource.site_id.in_(select(Site.id).where(within))
         )
     ).scalar_one()
-    covered = count > 0
+    fraction = _researched_fraction(session, polygon, researched_by)
+    covered = fraction >= COVERED_FRACTION
     return Coverage(
         known_site_count=count,
+        researched_fraction=fraction,
         covered=covered,
         stalest_observed_at=stalest,
         # FR-006: covered areas always offer a refresh, however fresh they are.
