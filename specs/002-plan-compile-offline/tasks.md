@@ -24,11 +24,11 @@
 
 **Purpose**: dependencies, the two new local services, fixtures. No product behaviour.
 
-- [ ] T001 Add slice-002 runtime dependencies to `pyproject.toml`, resolved-then-pinned per ADR-0007 — **`opening-hours-py`** (ADR-0022), `mwparserfromhell` (ADR-0024), and a deterministic IANA-timezone-from-point resolver for T008 — then `uv lock` and commit `uv.lock`. Run the slopsquatting check (publisher + registration date + hashes) per Constitution Article V.
+- [x] T001 Add slice-002 runtime dependencies to `pyproject.toml`, resolved-then-pinned per ADR-0007 — **`opening-hours-py`** (ADR-0022), `mwparserfromhell` (ADR-0024), and a deterministic IANA-timezone-from-point resolver for T008 — then `uv lock` and commit `uv.lock`. Run the slopsquatting check (publisher + registration date + hashes) per Constitution Article V.
   - ⚠️ **Named supply-chain hazard, one hyphen wide.** `pip install opening-hours` resolves to an **abandoned v0.1.1 with an UNKNOWN license** (`anthill/Python_OpeningHours`) — *not* the Rust bindings. The correct distribution is **`opening-hours-py`** (metadata name `opening_hours_py`), which imports as `opening_hours`; verified 2.1.4, 2026-07-07, MIT OR Apache-2.0. Confirm the publisher before locking. This is precisely the case job 6's slopsquatting gate exists for.
-- [ ] T002 [P] Add a `valhalla` service to `docker-compose.yml` (official GHCR image, pedestrian costing, `:8002`), mirroring the CI shape, with a comment recording the 1–5 min first-build cost (ADR-0020).
-- [ ] T003 [P] Add a `gcs` service (`fake-gcs-server`) to `docker-compose.yml` for bundle artifacts, mirroring GCS.
-- [ ] T004 [P] Add `@playwright/test` to `web/devDependencies` (resolved-then-pinned) and a `test:e2e` script; `pnpm exec playwright install chromium`. **Chromium only** — ADR-0002 makes WebKit a flagged future ADR.
+- [x] T002 [P] Add a `valhalla` service to `docker-compose.yml` (official GHCR image, pedestrian costing, `:8002`), mirroring the CI shape, with a comment recording the 1–5 min first-build cost (ADR-0020).
+- [x] T003 [P] Add a `gcs` service (`fake-gcs-server`) to `docker-compose.yml` for bundle artifacts, mirroring GCS.
+- [x] T004 [P] Add `@playwright/test` to `web/devDependencies` (resolved-then-pinned) and a `test:e2e` script; `pnpm exec playwright install chromium`. **Chromium only** — ADR-0002 makes WebKit a flagged future ADR.
 - [ ] T005 [P] Commit a recorded Valhalla response fixture (`tests/fixtures/valhalla_rhodes_route.json` + `..._matrix.json`) so Tier 1 never needs the container, plus `tests/fixtures/README.md` rows recording how each was captured.
 - [ ] T006 [P] Commit a Wikivoyage/Wikipedia MediaWiki API fixture (`tests/fixtures/wikivoyage_rhodes.json`) including ≥1 article with listing templates, ≥1 place with **no** article, and the `revid` field ADR-0024 attribution depends on.
 
@@ -88,8 +88,8 @@
 
 ### Stand the airplane-mode harness up NOW, not at DU-06
 
-- [ ] T029 [US3-early] Create `web/test/e2e/airplane.spec.ts` against the **existing DU-00 empty map**: load online → wait for the service worker to reach `activated` → install a **context-level** `route('**/*')` recorder with `serviceWorkers: 'allow'` → `setOffline(true)` → reload → assert the recorded request list is **empty** and the map canvas is present. Filter by scheme (`data:`/`blob:` are not network); **allowlist nothing**.
-- [ ] T030 [P] [US3-early] Add the **negative-control** spec asserting the harness *catches* a deliberately-requested remote asset. A gate that cannot fail is exactly the stub being replaced (research R6).
+- [x] T029 [US3-early] Create `web/test/e2e/airplane.spec.ts` against the **existing DU-00 empty map**: load online → wait for the service worker to reach `activated` → install a **context-level** `route('**/*')` recorder with `serviceWorkers: 'allow'` → `setOffline(true)` → reload → assert the recorded request list is **empty** and the map canvas is present. Filter by scheme (`data:`/`blob:` are not network); **allowlist nothing**.
+- [x] T030 [P] [US3-early] Add the **negative-control** spec asserting the harness *catches* a deliberately-requested remote asset. A gate that cannot fail is exactly the stub being replaced (research R6).
 
 **Checkpoint (DU-04 demo)**: "half-day, art + coffee" → itinerary with provenance chips → approve. An infeasible ask cannot be approved. The e2e harness runs real assertions.
 

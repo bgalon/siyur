@@ -27,6 +27,24 @@ dependencies = [
     "geopandas~=1.1",
     "pyproj~=3.7",
     "duckdb~=1.3",
+    # --- slice-002 deterministic engines (the model does none of this arithmetic) ---
+    # opening_hours evaluation for feasibility (ADR-0022). Rust-backed bindings over
+    # remi-dupre/opening-hours-rs; MIT OR Apache-2.0, so no LGPL obligation and no second
+    # language runtime in compile or CI — the canonical evaluator is opening_hours.js.
+    #
+    # ⚠️ The distribution is `opening-hours-py`, imported as `opening_hours`.
+    # `pip install opening-hours` gets a DIFFERENT, abandoned package: v0.1.1, last
+    # uploaded 2016-11-28, licence UNKNOWN (anthill/Python_OpeningHours). Verified against
+    # PyPI on 2026-08-07 before locking, per Constitution Article V. One hyphen apart.
+    "opening-hours-py~=2.1",
+    # IANA timezone + country for an area polygon (ADR-0025 ruling 2), offline so area
+    # resolution stays reproducible in CI. NOTE: this answers for a POINT; the normative
+    # rule in docs/data/area.md is largest-intersecting-area, so this covers the permitted
+    # single-zone optimization only — see T008.
+    "timezonefinder~=8.2",
+    # Wikivoyage/Wikipedia wikitext → narration (ADR-0024). The listing templates are the
+    # structured prize; parsing them beats scraping rendered HTML.
+    "mwparserfromhell~=0.7",
     # --- data model + web/service spine ---
     "pydantic~=2.11",
     "fastapi~=0.118",

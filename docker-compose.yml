@@ -32,5 +32,55 @@ services:
       timeout: 5s
       retries: 10
 
+  # ── DU-05 compile services — declared, NOT started by default ─────────────────
+  #
+  # Both carry `profiles:`, which is load-bearing rather than tidy: `scripts/dev.sh`
+  # runs a bare `docker compose up -d`, which starts *every* profile-less service. Add
+  # these without a profile and every dev startup pulls a large image and waits out
+  # Valhalla's 1–5 minute graph build — for services the plan/HITL slice never touches.
+  #
+  # Start them only when compiling:   docker compose --profile compile up -d
+  # Tier-2 integration tests do the same; Tier 1 uses recorded fixtures and needs neither.
+
+  valhalla:
+    profiles: ["compile"]
+    # ADR-0020. Pedestrian costing; `/route` for leg geometry, `/sources_to_targets` for
+    # the feasibility matrix. Tiles build on first start from the mounted PBF — expect
+    # **1–5 minutes** before `/status` answers, then cached on the named volume, so
+    # recompiling the same area is a no-op.
+    #
+    # TODO(ADR-0007 resolve-then-pin): `:latest` is a FLOATING TAG and must become a
+    # digest before this service is used in CI. Left floating deliberately rather than
+    # asserting a digest nobody has verified — an invented digest fails opaquely.
+    image: ghcr.io/valhalla/valhalla-scripted:latest
+    environment:
+      # Per-area extract, supplied at compile time; see compiler/routes.py.
+      tile_urls: ${SIYUR_VALHALLA_PBF_URL:-}
+      server_threads: "2"
+    ports:
+      - "${SIYUR_VALHALLA_PORT:-8002}:8002"
+    volumes:
+      - siyur_valhalla_tiles:/custom_files
+    healthcheck:
+      # Readiness is `/status` answering, never a sleep — the build time varies with the
+      # extract and a fixed wait is either wrong or wasteful.
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8002/status || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+
+  gcs:
+    profiles: ["compile"]
+    # fake-gcs-server mirrors GCS for bundle artifacts (tech-design §4). Range-request
+    # capable, which the resumable bundle download in contracts/bundles.md depends on.
+    image: fsouza/fake-gcs-server:latest
+    command: ["-scheme", "http", "-port", "4443", "-public-host", "localhost:4443"]
+    ports:
+      - "${SIYUR_GCS_PORT:-4443}:4443"
+    volumes:
+      - siyur_gcs_data:/data
+
 volumes:
   siyur_postgis_data:
+  siyur_valhalla_tiles:
+  siyur_gcs_data:
