@@ -123,15 +123,38 @@ Feasibility compares `planned_start + dwell_min` against `opening_hours` **in th
 | `user_id` | `text NOT NULL` | **the auth subject.** Every read of this table filters on it — no query without `WHERE user_id = :sub` |
 | `area_id` | `uuid NOT NULL` FK → `area.id` | plain `NO ACTION`, like `site_source` |
 | `itinerary` | `jsonb NOT NULL` | the serialised `ItineraryV1` (stops, legs, timeline, budgets) |
-| `status` | `text NOT NULL` | approval state: `'proposed'` \| `'approved'`. **The gate compile may not cross** |
-| `approved_at` | `timestamptz NULL` | UTC; set at approval, cleared on edit |
-| `feasibility` | `jsonb NOT NULL` | `{ok: bool, violations: [str]}` — the named violations of FR-005 (gap G2) |
+| `status` | `text NOT NULL` | the lifecycle, **seven states** (below). The gate compile may not cross |
+| `revision` | `int NOT NULL DEFAULT 1` | incremented per edit; a new row, never an update in place |
+| `superseded_by` | `uuid NULL` FK → `user_plan.id` | the successor row when an edit replaced this one |
+| `approved_at` | `timestamptz NULL` | UTC; set at approval |
+| `approved_by` | `text NULL` | the auth subject that approved |
+| `itinerary_hash` | `text NOT NULL` | SHA-256 over the canonical `ItineraryV1` JSON — what an approval is *of* |
+| `feasible` | `boolean NOT NULL` | the verdict |
+| `violations` | `jsonb NOT NULL DEFAULT '[]'` | the **named** violations of FR-005 |
 | `created_at` / `updated_at` | `timestamptz NOT NULL` | UTC |
 
-- **`CHECK (status = 'approved') = (approved_at IS NOT NULL)`** — the two can never disagree.
-- **`CHECK (status <> 'approved' OR feasibility->>'ok' = 'true')`** — an infeasible plan is *unapprovable in the database*, not merely in code (FR-005, SC-002).
+### The reconciled shape (T007b) — five documents previously disagreed
+
+`data-model.md` said two states, **ADR-0023** defines seven, `contracts/plans.md` exposed three, **ADR-0025 ruling 3** split the verdict into two columns while this table had one `jsonb`, and the contract required a `superseded_by` that ADR-0023 never defined. Resolved as follows; **this is the shape migration `0005_user_plan` is written from.**
+
+**Status is ADR-0023's seven states** — `proposing` · `proposed` · `approved` · `superseded` · `compiling` · `compiled` · `failed` — because they model the real lifecycle including compile. **The API exposes this same vocabulary verbatim** (`contracts/plans.md`), with no mapping layer: hiding `compiling` would leave the UI unable to tell "approved, idle" from "approved, compile running", and a translation table between DB and API states is a thing that drifts.
+
+**The verdict is two columns, not one `jsonb`** (ADR-0025 ruling 3): `feasible boolean` takes a real `CHECK` and an index, where `feasibility->>'ok' = 'true'` is a string comparison against JSON — fragile in exactly the place we least want fragility.
+
+**The constraints, written over the post-approval set:**
+
+```sql
+CHECK ((status IN ('approved','compiling','compiled')) = (approved_at IS NOT NULL))
+CHECK (status NOT IN ('approved','compiling','compiled') OR feasible)
+CHECK ((status = 'superseded') = (superseded_by IS NOT NULL))
+```
+
+⚠️ **The obvious first constraint is wrong and was written down before this reconciliation:** `CHECK ((status='approved') = (approved_at IS NOT NULL))` **rejects `compiling` and `compiled` rows outright** — an approved plan violates its own constraint the moment ADR-0023's state machine advances it. Same trap for the infeasibility check. Both must name the whole post-approval set, not the single `approved` state.
+
 - Indexes: `ix_user_plan_user_id_area_id` (the scoped list read, mirroring `ix_user_note_user_id_site_id`) and `ix_user_plan_user_id_status`.
-- Approval is `UPDATE … WHERE id = :id AND user_id = :sub AND status = 'proposed'`; a second approval matches zero rows and returns the already-approved plan — **one consistent outcome, never two bundles** (spec edge case). Editing an approved plan writes `status='proposed', approved_at=NULL` and re-runs feasibility before compile is offered again. Because state lives in Postgres, an approval **survives process restart** (FR-006, SC-003).
+- **Approval is a compare-and-set** on `(id, user_id, status='proposed', itinerary_hash)`. One row updates; a concurrent second updates **zero**, and the handler then *reads the row* and branches on its actual state — `approved` with the same hash ⇒ idempotent `200`; `superseded` ⇒ `409` with `superseded_by`; `proposed` with a different hash ⇒ `409` stale. **Do not infer staleness from which predicate failed**: because an edit writes a *new* row rather than mutating this one, the stale row's hash still matches and it is the *status* predicate that fails (ADR-0023, corrected).
+- **Compile claims in the same transaction**: `UPDATE … SET status='compiling' WHERE id=:id AND status='approved'`, proceeding only if one row changed. A `proposed` plan is not refused by an `if`; it is unclaimable.
+- Editing writes a **new row** at `revision+1` in `proposing` and sets the prior row `superseded`. Because state lives in Postgres, an approval **survives process restart** (FR-006, SC-003).
 - **What must NEVER be in `user_plan`**: no commons rows (stops reference `site.id`, never copy site content); no credentials, tokens or email; no free-text personal notes (those are `user_note`); no `bundleable=false` value; and **no path from this table into the commons** — no trigger, no view, no join in a commons read, no auto-publish. Symmetrically, **no `user_plan` row is ever written to `site`/`site_source`** — the `CommonsWriteRefused` boundary (Spec 001 FR-010) already refuses `source.kind="user"` and covers this.
 - **Bundles are objects, not rows.** The `BundleManifestV1` and its artifacts live in GCS (`fake-gcs-server` locally) and OPFS on device. No `bundle` table in this slice.
 - Alembic migration `0005_user_plan` adds the table (hand-written, like `0002_area`; **`ask`-gated — Ben approves**).
