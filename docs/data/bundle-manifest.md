@@ -54,6 +54,12 @@ Naming *why* a value is missing is enough to render "needs connectivity"; a free
 through which a future withholding rule — including one touching the private side of the PRD §13 #4 boundary — could
 carry content out inside a downloadable file. The set is closed here and extended only by ADR amendment.
 
+**`withheld[].field` indices are `pre-removal`, and that must be stated because it is not guessable.** A dotted path
+into a list (`notes[2]`) addresses the slot the value occupied **in the record as it stood before quarantine ran**.
+Quarantine *removes* entries, so surviving `notes` re-index and `notes[2]` no longer names the same slot — or any
+slot — in the bundled record. The travel UI therefore uses `field` to say *that* something was withheld and of what
+kind, and must not use it to position a placeholder inside the surviving list.
+
 **There is deliberately no `"unstamped"` member.** An earlier draft of this enum had one, which contradicted FR-012:
 unstamped input is **refused** — the compile *fails* — it is not withheld and shipped as a placeholder. A value is
 withheld **or** refused, never both, and giving "unstamped" a withheld reason would have turned a merge-blocking

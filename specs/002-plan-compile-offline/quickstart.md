@@ -26,7 +26,7 @@ What this slice adds on top of TRY-IT:
 # 1 · propose (SSE: phase status frames, the itinerary, a feasibility verdict, done)
 curl -N -H "Cookie: session=$COOKIE" -H 'Content-Type: application/json' \
   -d '{"area_id":"'$AREA'","budgets":{"hours":4.0,"walking_m":4000},
-       "start_time":"10:00","interests":"art and coffee"}' \
+       "date":"2026-08-14","day_start":"10:00","interests":"art and coffee"}' \
   http://localhost:8000/plans
 # → event: status  {"phase":"propose_itinerary",…}
 # → event: itinerary {"id":"…","stops":[…],"legs":[…],"timeline":{…}}
@@ -35,7 +35,9 @@ curl -N -H "Cookie: session=$COOKIE" -H 'Content-Type: application/json' \
 
 # 2 · read it back with its approval state
 curl -H "Cookie: session=$COOKIE" http://localhost:8000/plans/$PLAN
-# → {"state":"proposed","feasibility":{"ok":true},"itinerary":{…}}
+# → {"plan":{…}, "feasibility":{"ok":true},
+#    "approval":{"state":"proposed","approved_at":null,"superseded_by":null},
+#    "attribution":[…]}
 
 # 3 · approve — the HITL gate
 curl -X POST -H "Cookie: session=$COOKIE" http://localhost:8000/plans/$PLAN/approve

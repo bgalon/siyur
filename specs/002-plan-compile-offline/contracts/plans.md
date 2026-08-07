@@ -12,10 +12,15 @@ Ranks and orders commons sites into an `ItineraryV1` on the **Opus tier** of the
   "area_id": "3a11…-uuid",                       // must be the caller's own area (ADR-0015 scope)
   "budgets": { "walking_m": 4000, "hours": 4.0 }, // ItineraryV1.budgets — the feasibility limits
   "interests": "art and coffee, nothing crowded", // free-form; the model's only free input
-  "day_start": "10:00",                           // area-local wall clock — see "Undetermined" below
+  "date": "2026-08-14",                           // ItineraryV1.date — REQUIRED; the calendar day planned for
+  "day_start": "10:00",                           // area-local wall clock the day begins at
   "lang": "en"                                    // ItineraryV1.lang; `en` at M1
 }
 ```
+
+**`date` is required and is never defaulted server-side.** It populates `ItineraryV1.date` (M1, ADR-0025 ruling 2) and, with the area's `timezone`/`country_code`, is the frame `opening-hours-py` evaluates against — including which public holidays apply. Defaulting it to the server's `date.today()` in UTC is a real bug, not a convenience: a user in `Pacific/Auckland` (UTC+13) planning at 10:00 local on a Monday would get **Sunday**, and every stop would be checked against Sunday hours. `422` if absent or unparseable.
+
+**`day_start` is the day's anchor.** `budgets.hours` is a duration, not a schedule; without an explicit start the day's beginning is only implicit in `stops[0].planned_start`, which is the very thing the planner is producing. Both are request-only inputs — neither is a field on `ItineraryV1` beyond `date`.
 
 **Response**: `200` `text/event-stream`. Event sequence (trajectory `superset` extends slice 001's to `resolve_area → research → curate → propose_itinerary`):
 ```
@@ -70,4 +75,4 @@ Empty body. Transitions `proposed → approved`, the only transition that unlock
 - Every `Stop.site_id` resolves to a commons record and every displayed value carries a `source`; a synthetic unstamped value is refused, not streamed (provenance-completeness eval → SC-004).
 - Trajectory eval: emitted `phase` sequence is a `superset` of `… → curate → propose_itinerary` (mocked model, no API key).
 
-**Undetermined — flagged, not decided**: `day_start` (and the calendar **date** + locale that `opening_hours` evaluation needs for PH/SH) appears in neither `docs/data/itinerary.md` nor the spec; it is shown above because feasibility cannot be computed without it. `data-model.md` must either add it to the request-only shape or state where the day's start comes from.
+**Resolved since drafting**: the calendar date and locale that `opening_hours` evaluation needs are settled by **ADR-0025 ruling 2** — `ItineraryV1` gains `date` (supplied on this request, above), and the `area` row carries `timezone` + `country_code`, derived deterministically from the polygon at resolve time. `day_start` stays a **request-only** input: it anchors the day for the planner but is not a field on `ItineraryV1`, whose schedule is expressed in `stops[].planned_start` and `timeline`.

@@ -2,7 +2,7 @@
 
 *A precomputed walking leg between two stops. Embedded in `ItineraryV1.legs` and frozen into `BundleManifestV1.routing.legs`;
 not a standalone commons table in M1. Authoritative context: `docs/design/tech-design.md` §1.3–1.4, §5.3, and the routing
-components in `methods-stack-reference.md` §5. The routing engine choice (Valhalla) is an ADR at DU-05 — read this card, not
+components in `methods-stack-reference.md` §5. The routing engine choice (Valhalla) is **ADR-0020** — read this card, not
 guesswork, for the field shape.*
 
 - **Schema version:** `RouteLegV1` (`schema_ver` literal where serialized standalone; embedded legs may omit it).
@@ -74,8 +74,8 @@ restrictions, naive costing) by design — see [`bundle-manifest.md`](./bundle-m
   "distance_m": 1240, "duration_s": 960,
   "geometry": { "type": "LineString", "coordinates": [
     [28.2238, 36.4447], [28.2251, 36.4459], [28.2277, 36.4471] ] },
-  "source": { "kind": "osm", "id": "valhalla:pedestrian", "license": "ODbL-1.0",
-    "attribution": "© OpenStreetMap contributors" }
+  "source": { "kind": "osm", "id": "valhalla:pedestrian", "url": null,
+    "license": "ODbL-1.0", "attribution": "© OpenStreetMap contributors" }
 }
 
 // 3 — M2+ leg belonging to Plan variant B
@@ -85,7 +85,7 @@ restrictions, naive costing) by design — see [`bundle-manifest.md`](./bundle-m
   "distance_m": 520, "duration_s": 410,
   "geometry": { "type": "LineString", "coordinates": [
     [28.2247, 36.4443], [28.2255, 36.4440], [28.2260, 36.4436] ] },
-  "source": { "kind": "osm", "id": "valhalla:pedestrian", "license": "ODbL-1.0",
-    "attribution": "© OpenStreetMap contributors" }
+  "source": { "kind": "osm", "id": "valhalla:pedestrian", "url": null,
+    "license": "ODbL-1.0", "attribution": "© OpenStreetMap contributors" }
 }
 ```

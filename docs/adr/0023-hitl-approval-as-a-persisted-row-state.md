@@ -37,6 +37,7 @@ Chosen: **A — the pause is a persisted row state, and approval is a compare-an
 | `approved_at` | `timestamptz` (UTC), set at approval, cleared on edit |
 | `approved_by` | the auth subject that approved (`SessionUser.sub`) |
 | `itinerary_hash` | SHA-256 over the canonical `ItineraryV1` JSON — what an approval is *of* |
+| `superseded_by` | `uuid \| null` — the successor row when this one was superseded by an edit. **Required**: `contracts/plans.md` returns it on `GET /plans/{id}` and in the `409 plan_superseded` body, and without it a superseded row has no link to its successor and the field cannot be filled. Set in the same transaction that writes `revision+1`. |
 
 Every read and write is row-scoped to the auth subject (FR-007); another subject's `plan_id` is a `404`, never a `403`.
 
@@ -55,7 +56,20 @@ approved  ──compile claims it────────────▶ compili
 
 **Double approve resolves by compare-and-set.** `UPDATE user_plan SET status='approved', approved_at=now(), approved_by=:sub WHERE plan_id=:id AND status='proposed' AND itinerary_hash=:hash`. The first approve updates one row; the second updates **zero** and the handler returns the **existing** approval — an idempotent `200` carrying the same `approval_id` and the same `approved_at`. Never two approvals, never two bundles, and never an error the user has to interpret as a failure when nothing failed.
 
-**Stale approve is a `409` naming the current revision.** If the user approves revision 3 while revision 4 exists, the hash predicate fails, zero rows update, and the response is `409` with the current `revision` and plan id — deliberately **the same idiom as ADR-0016's process-local `409` research guard**, so the API has one concurrency shape rather than two. The distinction from the idempotent case is exact and is made in the database, not by inspection: the status predicate failing on an already-`approved` row with the *same* hash is idempotency; the *hash* predicate failing is staleness.
+**Stale approve is a `409` naming the successor.** If the user approves revision 3 while revision 4 exists, zero rows update and the response is `409` carrying `superseded_by` and the current `revision` — deliberately **the same idiom as ADR-0016's process-local `409` research guard**, so the API has one concurrency shape rather than two.
+
+**How the two zero-row cases are told apart — corrected.** An earlier draft of this ADR said "the status predicate failing is idempotency; the *hash* predicate failing is staleness." **That is wrong given this ADR's own edit semantics.** Because an edit writes a *new row* at `revision+1` and marks the prior row `superseded`, the stale row is never mutated in place: its `itinerary_hash` still matches, and it is the **status** predicate (`superseded` ≠ `proposed`) that fails. The stated rule would therefore classify every real stale approve as idempotency and return `200` for a plan the user can no longer approve — and `itinerary_hash` would never be load-bearing at all.
+
+The discrimination is made by **reading the row after a zero-row update** and branching on its actual state — one extra `SELECT` on a path that is already exceptional:
+
+| Row state after 0 rows updated | Response |
+|---|---|
+| `approved`, same `itinerary_hash` | **idempotent `200`** — the existing `approval_id` and `approved_at` |
+| `superseded` | **`409`** `{"error":"plan_superseded","superseded_by":"<uuid>"}` |
+| `proposed`, different `itinerary_hash` | **`409`** stale — the row was mutated in place rather than superseded |
+| `compiling` / `compiled` | **idempotent `200`** — approval already happened and has been acted on |
+
+`itinerary_hash` stays in the predicate as the guard for the third row: it catches an in-place mutation that the revision counter would miss. It is a safety net, not the primary discriminator, and this ADR previously claimed the reverse.
 
 **Editing after approval returns the plan to unapproved.** The edit writes a new row at `revision+1` in `proposing`, marks the prior row `superseded`, clears `approved_at`, and re-runs feasibility before approval is offered again — which is the spec's "a plan edited after approval returns to unapproved and re-runs feasibility", expressed as rows rather than as a rule someone has to honour.
 

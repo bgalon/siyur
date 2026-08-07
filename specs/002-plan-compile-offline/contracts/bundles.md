@@ -17,7 +17,7 @@ event: status    data: {"phase":"quarantine","values_dropped":12,
                                      "reason":"license_forbids_redistribution"}]}
 event: status    data: {"phase":"content","sites":5,"narrations":3}
 event: status    data: {"phase":"attribution","licenses":["ODbL-1.0","CDLA-Permissive-2.0","CC-BY-SA-4.0"]}
-event: status    data: {"phase":"hash","artifacts":4}
+event: status    data: {"phase":"hash","artifacts":7}
 event: manifest  data: { /* the complete BundleManifestV1 */ }
 event: done      data: {"bundle_id":"bnd_01J…","size_bytes":5242880,
                         "budget_bytes":209715200,"over_budget":false}
@@ -27,7 +27,7 @@ event: done      data: {"bundle_id":"bnd_01J…","size_bytes":5242880,
 - **Quarantine removes, it does not flag.** Every `bundleable=false` value is dropped before anything is frozen; **no such value appears anywhere in the bundle** (FR-011 / SC-004, merge-blocking). Unstamped input is **refused**, never bundled (FR-012). The `withheld[]` list records **what was withheld and why** so the travel UI can present it as *needing connectivity* rather than as an error or a blank (FR-021).
 - **A place stripped bare still ships.** If quarantine removes everything a site had beyond its stamped core, the site still appears with whatever survives (edge case).
 - **`attribution` is regenerated per bundle**, never carried over: `ATTRIBUTION.md` names every credit the bundled licenses require — "© OpenStreetMap contributors" for any OSM-derived data **including the Valhalla legs and the walk graph** (Produced Work), and **per-article CC BY-SA credit** for every bundled story (FR-015 / SC-010; see [`narration.md`](./narration.md)).
-- **Integrity is per artifact and over the whole.** SHA-256 on `tiles.pmtiles.sha256`, `routing.sha256`, `content.sha256`, then `integrity.manifest_sha256` over the manifest — verifiable **offline** at launch (FR-013 / FR-020).
+- **Integrity is per artifact and over the whole — one hash per path, no shared hashes.** SHA-256 on all **seven**: `tiles.pmtiles.sha256`, `routing.walk_graph_sha256`, `routing.legs_sha256`, `content.sites_sha256`, `content.narrations_sha256`, `content.itinerary_sha256`, `attribution.sha256`. Then `integrity.manifest_sha256` over the canonical manifest — verifiable **offline** at launch (FR-013 / FR-020). A hash spanning two files cannot name which one corrupted, which is why the group hashes an earlier draft used are gone.
 - **Tiles are scoped to the day**: `tiles.pmtiles.bbox` is the tight itinerary bbox **plus a stray margin**, and no more (FR-016).
 - **Walk-graph connectivity is asserted**, not assumed: `connected:false` fails the compile rather than shipping silently disconnected islands (plan.md risk 3).
 
@@ -35,7 +35,7 @@ event: done      data: {"bundle_id":"bnd_01J…","size_bytes":5242880,
 
 ## GET /bundles/{bundle_id}/manifest — the airplane-mode contract
 
-**Response `200`**: a `BundleManifestV1` **verbatim per the card** — `bundle_id`, `itinerary_id`, `created_at`, `size_bytes`, `schema_ver`, `tiles`, `routing`, `content`, `attribution`, `integrity`. No field is added here.
+**Response `200`**: a `BundleManifestV1` **verbatim per the card** — `bundle_id`, `itinerary_id`, `created_at`, `size_bytes`, `schema_ver`, `tiles` (a full embedded `TileSourceV1`), `routing`, `content` (incl. the frozen `itinerary`), `attribution`, `textLicense`, `withheld`, `integrity`. No field is added here.
 
 - **`size_bytes` is reported before download begins** (FR-014 / SC-007): the client reads the manifest, shows the size, and only then fetches artifacts. A day over the ≤200 MB budget is therefore known **before** the first artifact byte moves.
 - **Airplane-mode invariant**: *everything the travel UI reads resolves to a path in this manifest.* Tiles, legs, walk graph, sites, narrations, credits — each is a manifest path. A read that is not a manifest path is a bug the offline e2e is designed to catch (FR-017/FR-021, SC-005/SC-006).
@@ -55,9 +55,13 @@ event: done      data: {"bundle_id":"bnd_01J…","size_bytes":5242880,
 - Compile a `proposed` plan ⇒ `409`; approve it, compile ⇒ `200` and a manifest (`tests/test_hitl_gate.py`).
 - A fixture site carrying a `bundleable=false` value ⇒ **zero** occurrences of it anywhere under the bundle root, and a `withheld[]` entry naming it (`test_structural.py::test_no_unbundleable_in_bundle`, merge-blocking).
 - An unstamped input value ⇒ compile refuses rather than freezing it (FR-012).
-- Flip one byte in `content/sites.json` ⇒ the recomputed hash mismatches `content.sha256`, and a mutated manifest mismatches `integrity.manifest_sha256` — **integrity mismatch is detected, never silently accepted** (FR-013/FR-020).
+- Flip one byte in `content/sites.json` ⇒ the recomputed hash mismatches `content.sites_sha256` **and names that artifact specifically**, and a mutated manifest mismatches `integrity.manifest_sha256` — **integrity mismatch is detected, never silently accepted** (FR-013/FR-020). Re-serializing the manifest with keys in a different order ⇒ the **same** `manifest_sha256`, since it is canonicalized.
 - An OSM-derived bundle ⇒ `ATTRIBUTION.md` contains "© OpenStreetMap contributors"; a bundle with stories ⇒ one credit line per contributing article (SC-010).
 - `Range: bytes=0-1023` on the PMTiles artifact ⇒ `206` with exactly 1024 bytes and the manifest `sha256` as `ETag`.
 - Another user's `bundle_id` ⇒ `404`, byte-identical to the unknown-id response.
 
-**Undetermined — flagged, not decided**: (1) `BundleManifestV1` has **no over-budget field**, so the ≤200 MB verdict is reported on the compile stream's `done` frame (`over_budget`/`budget_bytes`) and computed client-side from `size_bytes` on a bare `GET manifest`. If the budget verdict must be durable, the card needs a field — a card change, not a contract choice. (2) The card does not say **how `integrity.manifest_sha256` is computed over the manifest that contains it** (which serialization, and whether the `integrity` key is excluded); `data-model.md` must pin it or two implementations will disagree. (3) Whether bundle objects are served through the API or via a signed object-store URL is left to `compiler/storage.py`; this contract specifies the API path, which is what the client reads.
+**Resolved since drafting**: (1) `integrity.manifest_sha256` canonicalization is now **pinned in the card** — SHA-256 over canonical JSON (UTF-8, keys sorted at every level, no insignificant whitespace) with the `integrity` key **omitted**, digest in lowercase hex. No longer a contract-level unknown. (2) The `withheld[].reason` vocabulary is a **closed enum** (`license_forbids_redistribution`, `source_unavailable`) per ADR-0025 A3 — not free text, and deliberately without an `unstamped` member, since unstamped input is *refused* rather than withheld.
+
+**Still undetermined — flagged, not decided**: (1) `BundleManifestV1` has **no over-budget field**, so the ≤200 MB verdict rides on the compile stream's `done` frame (`over_budget`/`budget_bytes`) and is computed client-side from `size_bytes` on a bare `GET manifest`. If the verdict must be durable, that is a card change, not a contract choice. (2) Whether bundle objects are served through the API or via a signed object-store URL is left to `compiler/storage.py`; this contract specifies the API path, which is what the client reads.
+
+**The bundle must carry the area's local frame, and currently nothing does.** Every bundled time — `Stop.planned_start`, every `Timeline` entry — is **area-local wall clock**, and the frame that makes those times meaningful (`area.timezone`, `area.country_code`) lives on a **database row, not a bundle artifact**. Offline, the travel UI can only read the device clock, which on a phone still set to home time is hours off; it would highlight the wrong stop with no way to detect it. That is an FR-021 violation ("everything the traveller depends on resolves to a manifest path") of exactly the kind ADR-0025 ruling 1 caught for the itinerary itself. **Ruling: the frozen `content.itinerary` carries `timezone` and `country_code` alongside `date`**, copied from the `area` row at compile. The itinerary is the thing whose times need the frame, so the frame travels with it rather than becoming a fourth top-level manifest key. Tracked as `tasks.md` T040a.

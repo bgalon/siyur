@@ -31,7 +31,8 @@
 | `variants` | `{ "B": PlanVariant, "C": PlanVariant }` | ❌ **exists but stays empty** | M2+ Plan B/C. Nobody populates this in 002. |
 | `schema_ver` | `"ItineraryV1"` | ✅ literal | |
 
-**Sub-structures (verbatim from the card):**
+**Sub-structures** — *transcribed from the card before the ADR-0025 amendments; see §9. The card wins, and the
+timeline addressing below is superseded by `stop_order: int` / `leg_id: str`:*
 
 ```
 Stop:                              # a place in the day
@@ -168,6 +169,18 @@ researched area ─▶ POST /plans (SSE) ─▶ propose_itinerary (Opus; ranks +
 Editing an approved plan returns it to `'proposed'` and re-runs feasibility. Nothing in this flow writes to the commons except narration ingestion (US4), which writes `Story` onto `site` through the ordinary Spec 001 upsert path.
 
 ## 9. Schema card gaps found
+
+> **Status: these are RULED, not open.** Every gap below except G9 and G12 was decided by **ADR-0025** (with amendments
+> A1–A4) and the cards were amended accordingly on 2026-08-07. The list is kept as the record of *what was wrong and
+> why it was found*, not as an open queue.
+>
+> **Consequently §§1, 3 and 4 above are stale in specific, known ways** and the amended cards win over every one of
+> them — `docs/data/*.md` is ground truth, this document is a transcription of it. Concretely: §1's sub-structures
+> still show the old `stop_id | leg_id` timeline addressing (now `stop_order: int` / `leg_id: str`) and omit
+> `ItineraryV1.date`; §3 still shows the 4-field `tiles.pmtiles` (now a full embedded `TileSourceV1`), the per-*group*
+> hashes (now seven per-artifact hashes) and `attribution: {path}` (now `{path, sha256}`), and omits `textLicense`,
+> `withheld` and `content.itinerary`; §4 says `Story` is "unchanged", which ruling 8 superseded by adding
+> `observed_at`. **`tasks.md` T007 re-syncs this document against the cards**; until it does, read the card.
 
 Genuine gaps, contradictions and silences found while transcribing. **None is patched here** — each needs a card amendment (Ben) before the code guesses.
 
