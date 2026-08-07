@@ -49,6 +49,28 @@ export const GLYPHS_URL = '/basemap/glyphs/{fontstack}/{range}.pbf'
 /** Vendored sprite sheet (MapLibre appends `.json` / `.png` and the `@2x` variants). */
 export const SPRITE_URL_BASE = '/basemap/sprites'
 
+/**
+ * Resolve a root-relative asset path against the current origin.
+ *
+ * **MapLibre requires `style.sprite` to be absolute** and throws
+ * `Invalid sprite URL "…", must be absolute` during `_loadSprite` otherwise — so a
+ * root-relative path that every other part of the app accepts is rejected here, and the
+ * sprite sheet never loads. `glyphs` has no such rule (it is a URL *template*, resolved
+ * per-fontstack), which is why only this one needs the treatment and why the asymmetry
+ * looks arbitrary until you hit it.
+ *
+ * The failure is quiet in the worst way: the style still loads, tiles still draw, and
+ * only sprite-backed icons are missing — so the map looks fine at a glance and the error
+ * lives in the console (FAIL-007).
+ *
+ * Falls back to the relative path when there is no `location` (non-browser import), where
+ * a sprite is never fetched anyway.
+ */
+export function absoluteAssetUrl(path: string): string {
+  if (typeof location === 'undefined') return path
+  return new URL(path, location.origin).href
+}
+
 /** Protomaps flavors we expose. `dark` matches the app's own surface. */
 export type BasemapFlavor = 'light' | 'dark' | 'white' | 'black' | 'grayscale'
 
@@ -107,7 +129,9 @@ export function basemapStyle(options: BasemapStyleOptions): StyleSpecification {
   return {
     version: 8,
     glyphs: GLYPHS_URL,
-    sprite: `${SPRITE_URL_BASE}/${flavor === 'dark' || flavor === 'black' ? 'dark' : 'light'}`,
+    sprite: absoluteAssetUrl(
+      `${SPRITE_URL_BASE}/${flavor === 'dark' || flavor === 'black' ? 'dark' : 'light'}`,
+    ),
     sources: {
       [BASEMAP_SOURCE_ID]: {
         type: 'vector',
