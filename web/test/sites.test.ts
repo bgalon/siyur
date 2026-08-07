@@ -517,7 +517,13 @@ describe('dot markers keep dense viewports readable without weakening FR-004', (
     const element = buildMarkerElement({ ...CLOCK_TOWER, names: {} } as never)
     peek(element, 'pointerenter')
     expect(element.querySelector('.siyur-value')).toBeNull()
-    expect(element.getAttribute('aria-label')).toBeNull()
+    expect(element.querySelector('.siyur-chip')).toBeNull()
+    // Nothing renders visually, and no name is invented to fill the gap. The
+    // element still needs an accessible name — see the SC 4.1.2 block below for
+    // what it is allowed to be built from.
+    const ariaLabel = element.getAttribute('aria-label') ?? ''
+    expect(ariaLabel).toBeTruthy()
+    expect(ariaLabel).not.toMatch(/Ρολόι|Roloi/)
   })
 
   it('skips an unstamped preferred name when peeking, showing the stamped one', () => {
@@ -534,6 +540,62 @@ describe('dot markers keep dense viewports readable without weakening FR-004', (
     expect(element.textContent).not.toMatch(/Clock Tower/)
     expect(element.querySelector('.siyur-value__text')?.textContent).toBe('Roloi')
     expect(element.querySelector('.siyur-chip')).not.toBeNull()
+  })
+})
+
+/* --------------------------------- WCAG 2.2 SC 4.1.2 (Name, Role, Value) --- */
+
+/** `CLOCK_TOWER` with every stamped name gone — the unnamed-site case. */
+const UNNAMED_OSM = { ...CLOCK_TOWER, names: {} }
+/** Same, but its location is stamped `overture` — proves the chip is read, not hardcoded. */
+const UNNAMED_OVERTURE = { ...PALACE, names: {} }
+
+const ariaLabelOf = (site: unknown, options = {}): string =>
+  buildMarkerElement(site as never, options).getAttribute('aria-label') ?? ''
+
+describe('a focusable marker always has an accessible name (WCAG 2.2 SC 4.1.2)', () => {
+  it('never leaves an unnamed site a focusable role="button" with no name', () => {
+    const element = buildMarkerElement(UNNAMED_OSM as never)
+    // Still keyboard-reachable: the popup is the full cited fact list (its
+    // LOCATION row included), so it must not degrade to pointer-only.
+    expect(element.tabIndex).toBe(0)
+    expect(element.getAttribute('role')).toBe('button')
+    expect(element.getAttribute('aria-label')?.trim()).toBeTruthy()
+  })
+
+  it('names it as an unnamed place instead of inventing a place name', () => {
+    const label = ariaLabelOf(UNNAMED_OSM)
+    expect(label).toMatch(/unnamed place/i)
+    // Nothing from `names` leaks in — there is no stamped name to render.
+    expect(label).not.toMatch(/Ρολόι|Roloi/)
+  })
+
+  it('keeps the location stamp co-present with the coordinates it renders', () => {
+    // The coordinates ARE a displayed value, so the location's own chip text
+    // travels with them inside the same accessible name (ADR-0019, rule 5).
+    expect(ariaLabelOf(UNNAMED_OSM)).toMatch(/36\.44510, 28\.22350/)
+    expect(ariaLabelOf(UNNAMED_OSM)).toContain(CLOCK_TOWER_CHIP)
+  })
+
+  it('reads each record’s own location stamp, never a hardcoded credit', () => {
+    const label = ariaLabelOf(UNNAMED_OVERTURE)
+    expect(label).toMatch(/36\.44430, 28\.22470/)
+    expect(label).toContain('OVERTURE · CDLA-Permissive-2.0')
+    expect(label).not.toMatch(/OpenStreetMap/)
+  })
+
+  it('holds in labelled (sparse) mode too, not only in dot mode', () => {
+    const element = buildMarkerElement(UNNAMED_OSM as never, { labelled: true })
+    expect(element.getAttribute('aria-label')?.trim()).toBeTruthy()
+    expect(element.querySelector('.siyur-value')).toBeNull()
+  })
+
+  it('leaves a named site’s accessible name exactly as it was — name + chip', () => {
+    const label = ariaLabelOf(CLOCK_TOWER)
+    expect(label).toMatch(/Roloi/)
+    expect(label).toContain(CLOCK_TOWER_CHIP)
+    // A named site does not pick up the coordinate fallback.
+    expect(label).not.toMatch(/unnamed place/i)
   })
 })
 
@@ -683,8 +745,12 @@ describe('SitesLayer', () => {
     const element = stub.markers[0]!.opts.element!
     element.dispatchEvent(new Event('pointerenter'))
     expect(element.textContent).not.toMatch(/Invented Tower/)
-    expect(element.getAttribute('aria-label')).toBeNull()
     expect(element.querySelector('.siyur-value')).toBeNull()
+    // The unstamped name must not reach the accessible name either — that is a
+    // display surface too, and it is the one an AT user actually receives.
+    const ariaLabel = element.getAttribute('aria-label') ?? ''
+    expect(ariaLabel).toBeTruthy()
+    expect(ariaLabel).not.toMatch(/Invented Tower/)
   })
 
   it('reports a failed request instead of rendering anything', async () => {
