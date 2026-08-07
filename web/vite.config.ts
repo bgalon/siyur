@@ -1,6 +1,94 @@
 /// <reference types="vitest/config" />
-import { defineConfig } from 'vitest/config'
+import { createReadStream, statSync } from 'node:fs'
+import { extname, join, normalize, resolve } from 'node:path'
+
+import { defineConfig, type Plugin } from 'vitest/config'
 import { VitePWA } from 'vite-plugin-pwa'
+
+/** Where `scripts/fetch-basemap.sh` writes the dev tiles, glyphs and sprites. */
+const DEV_ASSETS = resolve(__dirname, 'dev-assets')
+
+const CONTENT_TYPES: Record<string, string> = {
+  '.pmtiles': 'application/octet-stream',
+  '.pbf': 'application/x-protobuf',
+  '.json': 'application/json',
+  '.png': 'image/png',
+}
+
+/**
+ * Serve the dev basemap from `web/dev-assets/` — **not** from `public/`.
+ *
+ * Footgun 1 above is the whole reason this plugin exists: `public/` copies verbatim
+ * into `dist/`, so parking a multi-MB PMTiles archive there would ship it to
+ * production and defeat the OPFS design. `apply: 'serve'` means none of this runs
+ * during `vite build`, and `dev-assets/` is outside the asset graph entirely, so the
+ * archive can never reach the precache manifest.
+ *
+ * **Range requests are the point.** The `pmtiles` reader addresses the archive with
+ * HTTP `Range` headers and reads a few KB per tile; a middleware that answered every
+ * request with the whole 1.3 MB file would technically work while transferring the
+ * archive on every tile fetch. `206` handling here is load-bearing, not politeness.
+ *
+ * DU-05 deletes this: the archive moves into the compiled bundle and is read from
+ * OPFS, which is the transport swap ADR-0002 describes.
+ */
+function devBasemapAssets(): Plugin {
+  return {
+    name: 'siyur-dev-basemap-assets',
+    apply: 'serve',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const url = (req.url ?? '').split('?', 1)[0] ?? ''
+        if (!url.startsWith('/tiles/') && !url.startsWith('/basemap/')) return next()
+
+        // `decodeURIComponent` because a fontstack path contains spaces
+        // ("Noto Sans Regular"); `normalize` + prefix check to keep `..` from
+        // escaping dev-assets/ even though this is a dev-only surface.
+        const target = normalize(join(DEV_ASSETS, decodeURIComponent(url)))
+        if (!target.startsWith(DEV_ASSETS)) {
+          res.statusCode = 403
+          return res.end('forbidden')
+        }
+
+        let size: number
+        try {
+          const stat = statSync(target)
+          if (!stat.isFile()) return next()
+          size = stat.size
+        } catch {
+          // Not fetched yet — `scripts/fetch-basemap.sh` has not run. A 404 lets
+          // MapLibre fail one source and still paint the rest of the style.
+          return next()
+        }
+
+        res.setHeader('Content-Type', CONTENT_TYPES[extname(target)] ?? 'application/octet-stream')
+        res.setHeader('Accept-Ranges', 'bytes')
+
+        const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? '')
+        if (!range) {
+          res.setHeader('Content-Length', String(size))
+          return createReadStream(target).pipe(res)
+        }
+
+        // An open-ended suffix range (`bytes=-N`) means "the last N bytes", which is
+        // how a reader finds a trailing directory; treat it separately from `N-`.
+        const [, rawStart, rawEnd] = range
+        const start = rawStart === '' ? size - Number(rawEnd) : Number(rawStart)
+        const end = rawStart === '' || rawEnd === '' ? size - 1 : Number(rawEnd)
+        if (!Number.isFinite(start) || start < 0 || start > end || end >= size) {
+          res.statusCode = 416
+          res.setHeader('Content-Range', `bytes */${size}`)
+          return res.end()
+        }
+
+        res.statusCode = 206
+        res.setHeader('Content-Range', `bytes ${start}-${end}/${size}`)
+        res.setHeader('Content-Length', String(end - start + 1))
+        createReadStream(target, { start, end }).pipe(res)
+      })
+    },
+  }
+}
 
 // Siyur web config. Mirrors the ADR-0003 spike (spike/vite_spike/, proven 2026-07-25)
 // so the DU-06 OPFS/PMTiles module worker slots in without re-deriving the two footguns:
@@ -49,6 +137,7 @@ export default defineConfig({
     target: 'es2022',
   },
   plugins: [
+    devBasemapAssets(),
     VitePWA({
       registerType: 'autoUpdate',
       strategies: 'generateSW',

@@ -13,7 +13,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "maplibre-gl": "~5.19.0"
+    "@protomaps/basemaps": "~5.7.2",
+    "maplibre-gl": "~5.19.0",
+    "pmtiles": "~4.4.1"
   },
   "devDependencies": {
     "@types/node": "~22.10.2",

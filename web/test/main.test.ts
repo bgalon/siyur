@@ -57,11 +57,19 @@ vi.mock('maplibre-gl', () => {
       return this
     }
   }
+  // The dev basemap registers a `pmtiles://` protocol handler before constructing
+  // the map (`src/map/basemap.ts`), and `main.ts` builds that style under
+  // `import.meta.env.DEV` — which is true here. Without these the double throws
+  // on import, so they model the surface rather than stub out the behaviour.
+  const addProtocol = vi.fn()
+  const removeProtocol = vi.fn()
   return {
-    default: { Map: FakeMap, Marker: FakeMarker, Popup: FakePopup },
+    default: { Map: FakeMap, Marker: FakeMarker, Popup: FakePopup, addProtocol, removeProtocol },
     Map: FakeMap,
     Marker: FakeMarker,
     Popup: FakePopup,
+    addProtocol,
+    removeProtocol,
   }
 })
 

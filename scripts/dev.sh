@@ -113,7 +113,7 @@ cmd_start() {
     require_free_port "$DB_PORT" postgis SIYUR_DB_PORT
   fi
 
-  bold "1/4  PostGIS"
+  bold "1/5  PostGIS"
   docker compose up -d >/dev/null
   # Wait on compose's own healthcheck, not a bare `pg_isready`. The postgres
   # entrypoint runs a temporary bootstrap server while it creates the database,
@@ -130,7 +130,7 @@ cmd_start() {
   done
   echo "  healthy on :$DB_PORT after ${waited}s"
 
-  bold "2/4  Migrations"
+  bold "2/5  Migrations"
   # No pipe, no `|| true`: a failed migration must stop the script, not print
   # "schema at head" over the top of a traceback. `set -e` does the rest.
   uv run alembic upgrade head 2>&1 | grep -E "Running upgrade|Context impl" || true
@@ -138,7 +138,25 @@ cmd_start() {
     die "migrations did not reach head — run: uv run alembic upgrade head"
   echo "  schema at head"
 
-  bold "3/4  API"
+  bold "3/5  Basemap"
+  # Dev-only vector tiles. Gitignored and machine-produced, so a fresh clone has
+  # none — fetch on demand rather than making every checkout carry ~3 MB of
+  # binaries. Missing tiles are not fatal but they are visible: the style still
+  # loads and paints its own background, so you get flat grey with no streets and
+  # no features, while markers, delimit, research and the sheet all work normally.
+  # That is a degraded map, not a broken stack, so a failed fetch warns and
+  # carries on rather than refusing to start.
+  if [[ -f web/dev-assets/tiles/rhodes.pmtiles ]]; then
+    echo "  present ($(du -h web/dev-assets/tiles/rhodes.pmtiles | cut -f1))"
+  elif ! command -v pmtiles >/dev/null; then
+    warn "  pmtiles CLI not installed — map renders flat grey, no streets. brew install pmtiles, then scripts/fetch-basemap.sh"
+  elif scripts/fetch-basemap.sh >/dev/null 2>&1; then
+    echo "  fetched ($(du -h web/dev-assets/tiles/rhodes.pmtiles | cut -f1))"
+  else
+    warn "  basemap fetch failed — map renders flat grey, no streets. Retry: scripts/fetch-basemap.sh"
+  fi
+
+  bold "4/5  API"
   # shellcheck disable=SC2086
   nohup uv run uvicorn api.app:app --port "$API_PORT" >"$RUN_DIR/api.log" 2>&1 &
   echo $! >"$RUN_DIR/api.pid"
@@ -150,7 +168,7 @@ cmd_start() {
   done
   echo "  http://localhost:$API_PORT — /healthz ok after ${waited}s"
 
-  bold "4/4  Web"
+  bold "5/5  Web"
   # --strictPort: fail loudly on a collision instead of moving to the next port
   # and letting whatever holds this one answer with its SPA fallback.
   nohup pnpm -C web dev --port "$WEB_PORT" --strictPort >"$RUN_DIR/web.log" 2>&1 &
