@@ -41,7 +41,8 @@ Rank findings by severity. A finding needs a concrete failure scenario — speci
 - **Types and lint:** mypy runs `strict`; ruff is `E,F,I,UP,B` at line-length 100, target py312. Flag missing annotations, `Any` escapes, bare `except`.
 - **Tests:** every behaviour change needs a Tier-1 unit test; Tier-2 tests carry the `integration` marker. Every fixed failure needs a regression eval (`/failure` discipline) — a bug fix with no test is incomplete.
 - **Security:** input validation on API boundaries (`api/`), authz on session routes, SQL built through SQLAlchemy rather than string interpolation, no unbounded external fetches without timeouts.
-- **Diff size:** CI job 7 fails a PR over 500 human-authored changed lines without the `size-override` label. If the diff is near the line, say so.
+- **Claims about build output:** a comment or PR description asserting something about the *artifact* — tree-shaken, excluded from the bundle, not shipped to production, under a size budget — is a finding unless the change shows it was measured. Tests do not cover this, and such claims are plausible far more often than they are true.
+- **Diff size:** CI job 7 fails a PR over 500 human-authored changed lines without the `size-override` label. If the diff is near the line, say so. If the PR carries `size-override`, check the claim is *true* — the label writes "legitimately large, justified" into the record, and using it to clear a miscounted diff makes that record false.
 - **Decision hygiene:** if the change picked between libraries, schemas, or architectures, it owes an ADR (`docs/adr/`). Note it.
 
 ## Output
