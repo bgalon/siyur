@@ -16,7 +16,7 @@ There is also no cross-implementation conformance suite published by anyone, and
 
 | Candidate | License | Maintenance | PH / SH |
 |---|---|---|---|
-| **`opening-hours-py`** — Python bindings over the Rust crate `opening-hours` (`remi-dupre/opening-hours-rs`) | **MIT OR Apache-2.0** — elect **Apache-2.0**, which is allowlisted (MIT is not) | **2.1.4, released 2026-07-07** — active | **PH yes** (embedded nager.Date holiday DB, country-scoped); **SH not documented as supported** |
+| **`opening-hours-py`** — Python bindings over the Rust crate `opening-hours` (`remi-dupre/opening-hours-rs`) | **MIT OR Apache-2.0** — both allowlisted (MIT added by ADR-0026) | **2.1.4, released 2026-07-07** — active | **PH yes** (embedded nager.Date holiday DB, country-scoped); **SH not documented as supported** |
 | `opening_hours.js` v3.9 (canonical) | **LGPL-3.0** | active; the reference implementation | **PH and SH**, with `nominatim_object` locale |
 | `pyopening_hours` — bridges to `opening_hours.js` | **GPL-3.0** — not in the bundleable allowlist, and copyleft over `commons/` | **dead: PyPI 0.3.0, last upload 2015-10-09** | via the JS lib |
 | `osm-humanized-opening-hours` / `osm-opening-hours-humanized` | AGPL / varies | README asks for new maintainers | **not an evaluator** — it renders human-readable descriptions |

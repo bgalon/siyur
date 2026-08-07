@@ -69,6 +69,14 @@ BUNDLEABLE_LICENSES: Final[frozenset[str]] = frozenset(
         # carries share-alike and is strictly more restrictive. Apache-2.0 §4 adds one
         # obligation the pipeline must discharge: reproduce NOTICE-file contents.
         "Apache-2.0",
+        # Added 2026-08-07 (ADR-0026). The first entry here added on consistency rather
+        # than a measured loss: Apache-2.0 (above) is allowlisted, and MIT is strictly
+        # more permissive than it — Apache-2.0 adds a patent grant, a modification
+        # notice and NOTICE-file reproduction; MIT asks only that the copyright notice
+        # and license text travel with the work. Quarantining the lighter license while
+        # allowing the heavier one is indefensible. That single obligation is real,
+        # though: the ATTRIBUTION pipeline reproduces it exactly as it does Apache-2.0's.
+        "MIT",
         "CC0-1.0",
         "CC-BY-4.0",
         "CC-BY-SA-4.0",
@@ -87,6 +95,7 @@ _LICENSE_ALIASES: Final[dict[str, str]] = {
     "odbl-1.0": "ODbL-1.0",
     "cdla-permissive-2.0": "CDLA-Permissive-2.0",
     "apache-2.0": "Apache-2.0",
+    "mit": "MIT",
     "apache2.0": "Apache-2.0",
     "apache-license-2.0": "Apache-2.0",
     "cc0": "CC0-1.0",

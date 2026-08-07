@@ -32,7 +32,7 @@ Columns: **Source** · **License (SPDX)** · **In-app attribution required** · 
 ## The quarantine rule (enforced, merge-blocking)
 
 A value may be stamped `bundleable=true` **only if** its `source.license` ∈
-**{ODbL, CDLA-Permissive-2.0, Apache-2.0, CC0, CC-BY-4.0, CC-BY-SA-4.0, PD, OFL, LGPL-as-dependency}**.
+**{ODbL, CDLA-Permissive-2.0, Apache-2.0, MIT, CC0, CC-BY-4.0, CC-BY-SA-4.0, PD, OFL, LGPL-as-dependency}**.
 `open_web` and `review_provider` sources are **always** `bundleable=false`. **No bundle may contain a `bundleable=false`
 value.** This is the invariant `SourcedValue` exists to carry (tech-design §1.0); it is verified by
 `evals/test_structural.py::test_no_unbundleable_in_bundle` and by the DU-06 airplane-mode e2e (zero network requests).
@@ -55,9 +55,19 @@ ordinary permissive housekeeping — retain the notice, ship the license text, r
 one. Two things deliberately did **not** change: `LGPL-3.0` stays in the bundleable allowlist below (it is the
 allowlist's general "as-a-dependency" arm, not a row about this one library), and **`opening_hours_js` remains a live
 `SourceKind`** — it now names *deterministic opening-hours evaluation*, whatever engine backs it (renaming an enum
-value in stored stamps is a `SiteRecordV2` concern). Note the asymmetry the allowlist implies: **`MIT` is not an
-allowlisted *data* license** and none is needed — this row is a code dependency, and no value in the commons is ever
-stamped MIT.
+value in stored stamps is a `SiteRecordV2` concern). This row is a **code dependency**; no value in the commons is
+stamped with it either way. (`MIT` *is* now allowlisted as a data license — see below — but that was decided on its own
+merits, not because of this row.)
+
+**MIT (added 2026-08-07, ADR-0026).** Added on a **consistency** argument rather than a measured loss, which makes it
+the first entry here without a data source behind it — stated plainly because the allowlist's discipline until now was
+"add only on demonstrated need" (Apache-2.0, above). The argument: **Apache-2.0 is allowlisted and MIT is strictly more
+permissive than Apache-2.0.** Apache-2.0 carries a patent grant, a modification-notice requirement and the NOTICE-file
+reproduction obligation; MIT carries one obligation — retain the copyright notice and the license text. Allowlisting
+the more-encumbered license while quarantining the less-encumbered one cannot be defended: an MIT-stamped value would
+be refused from a bundle that happily carries Apache-2.0 beside it. The obligation MIT does carry is real and the
+DU-05 ATTRIBUTION pipeline discharges it the same way it discharges Apache-2.0's — reproduce the copyright line and
+ship the license text. **MIT is permissive, not public domain; "no obligation" would be the wrong summary.**
 
 ## API terms (planning-time only — respect, cache, honest User-Agent)
 
