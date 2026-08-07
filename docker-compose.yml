@@ -49,10 +49,10 @@ services:
     # **1–5 minutes** before `/status` answers, then cached on the named volume, so
     # recompiling the same area is a no-op.
     #
-    # TODO(ADR-0007 resolve-then-pin): `:latest` is a FLOATING TAG and must become a
-    # digest before this service is used in CI. Left floating deliberately rather than
-    # asserting a digest nobody has verified — an invented digest fails opaquely.
-    image: ghcr.io/valhalla/valhalla-scripted:latest
+    # Pinned by digest per ADR-0007 — an image tag is a dependency. Verified 2026-08-07
+    # with `docker buildx imagetools inspect`: multi-arch (arm64 laptop + amd64 runner).
+    # NOT academic: `:latest` resolves to sha256:1e9f511e…, a DIFFERENT image from 3.8.3.
+    image: ghcr.io/valhalla/valhalla-scripted:3.8.3@sha256:24ef7955899dececb94e26c6dfb89d64fabfae875f980432694b0261eb6c251b
     environment:
       # Per-area extract, supplied at compile time; see compiler/routes.py.
       tile_urls: ${SIYUR_VALHALLA_PBF_URL:-}
@@ -73,7 +73,8 @@ services:
     profiles: ["compile"]
     # fake-gcs-server mirrors GCS for bundle artifacts (tech-design §4). Range-request
     # capable, which the resumable bundle download in contracts/bundles.md depends on.
-    image: fsouza/fake-gcs-server:latest
+    # Pinned by digest per ADR-0007; multi-arch, verified 2026-08-07.
+    image: fsouza/fake-gcs-server:1.55.1@sha256:91afded49de804aa61b5f3eb6c7cd65205acf9e5c5e047cf0ba7d9507af806c8
     command: ["-scheme", "http", "-port", "4443", "-public-host", "localhost:4443"]
     ports:
       - "${SIYUR_GCS_PORT:-4443}:4443"

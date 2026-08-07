@@ -37,10 +37,17 @@ dependencies = [
     # uploaded 2016-11-28, licence UNKNOWN (anthill/Python_OpeningHours). Verified against
     # PyPI on 2026-08-07 before locking, per Constitution Article V. One hyphen apart.
     "opening-hours-py~=2.1",
-    # IANA timezone + country for an area polygon (ADR-0025 ruling 2), offline so area
-    # resolution stays reproducible in CI. NOTE: this answers for a POINT; the normative
-    # rule in docs/data/area.md is largest-intersecting-area, so this covers the permitted
-    # single-zone optimization only — see T008.
+    # IANA **timezone** for an area (ADR-0025 ruling 2), offline so area resolution stays
+    # reproducible in CI. Two limits, both verified by execution rather than assumed:
+    #
+    #   1. It answers for a POINT. The normative rule in docs/data/area.md is
+    #      largest-intersecting-area, so this covers the permitted single-zone
+    #      optimization only. `get_geometry(tz_name=...)` exposes zone polygons if the
+    #      full rule is needed.
+    #   2. It does NOT resolve `country_code` — there is no country API on it at all.
+    #      `area.country_code` is a required M1 field and `opening-hours-py` needs it for
+    #      `PH` resolution, so **T008 still lacks a country source**. Not solved by this
+    #      dependency; do not write T008 assuming otherwise.
     "timezonefinder~=8.2",
     # Wikivoyage/Wikipedia wikitext → narration (ADR-0024). The listing templates are the
     # structured prize; parsing them beats scraping rendered HTML.
