@@ -20,12 +20,14 @@ conversion happens.
 
 from __future__ import annotations
 
+import random
 import re
 import time
 from collections import Counter
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from email.utils import parsedate_to_datetime
 from typing import Any, ClassVar, Final
 
 import httpx
@@ -38,7 +40,12 @@ from commons.sources import base
 
 __all__ = ["ATTRIBUTION", "DEFAULT_ENDPOINT", "LICENSE", "OsmAdapter", "OverpassUnavailable"]
 
-DEFAULT_ENDPOINT: Final = "https://overpass-api.de/api/interpreter"
+#: The **kumi.systems mirror**, not the main `overpass-api.de` instance (ADR-0027).
+#: The main instance is the most contended one and its fair-use budget (~10k queries/day,
+#: 2 concurrent) is shared with everyone; the mirror is documented as more permissive
+#: (`methods-stack-reference.md` §4). Overridable per adapter — a self-hosted or private
+#: instance is a constructor argument, never a code change.
+DEFAULT_ENDPOINT: Final = "https://overpass.kumi.systems/api/interpreter"
 LICENSE: Final = "ODbL-1.0"
 ATTRIBUTION: Final = "© OpenStreetMap contributors"
 #: Honest User-Agent — Overpass/OSMF fair-use terms (`DATA-LICENSES.md` "API terms").
@@ -47,6 +54,10 @@ _OSM_BASE: Final = "https://www.openstreetmap.org"
 
 #: Overload/gateway responses worth one more bounded attempt (504 = the ADR's flake).
 _RETRYABLE: Final[frozenset[int]] = frozenset({429, 500, 502, 503, 504})
+#: Ceiling on a single backoff sleep. Retrying is worth a few seconds, not a stalled pass —
+#: a server that asks for a two-minute wait is telling us to degrade, not to hold the
+#: request open (FR-012: partial results beat a hang).
+_MAX_BACKOFF: Final = 8.0
 #: Tag keys that describe *what a place is*; emitted as ``key.value`` categories.
 _CATEGORY_TAGS: Final[tuple[str, ...]] = (
     "amenity",
@@ -100,7 +111,8 @@ class OsmAdapter:
     #: One bounded request each — a 504 on one type still leaves the others (FR-012).
     element_types: tuple[str, ...] = ("node", "way", "relation")
     timeout: float = 30.0
-    retries: int = 1
+    #: Three attempts total. One retry cannot survive a rate limit (ADR-0027).
+    retries: int = 2
     backoff: float = 0.5
     limit: int | None = None
     observed_at: date | None = None
@@ -147,10 +159,12 @@ class OsmAdapter:
         """POST one sub-query with bounded retries; raise once the budget is spent."""
         last = "unknown error"
         for attempt in range(self.retries + 1):
+            retry_after: float | None = None
             try:
                 response = client.post(self.endpoint, data={"data": query}, timeout=self.timeout)
                 if response.status_code in _RETRYABLE:
                     last = f"HTTP {response.status_code}"
+                    retry_after = _retry_after_seconds(response)
                 else:
                     response.raise_for_status()
                     payload = response.json()
@@ -160,8 +174,51 @@ class OsmAdapter:
             except (httpx.HTTPError, ValueError) as error:
                 last = f"{type(error).__name__}: {error}"
             if attempt < self.retries and self.backoff:
-                time.sleep(self.backoff * (attempt + 1))
+                time.sleep(self._sleep_for(attempt, retry_after))
         raise OverpassUnavailable(last)
+
+    def _sleep_for(self, attempt: int, retry_after: float | None) -> float:
+        """How long to wait before the next attempt.
+
+        **The server's own answer wins.** A `429` means the fair-use budget is spent, not
+        that the request was unlucky — so a fixed sub-second wait retries into the same
+        wall and burns the budget faster. When Overpass sends `Retry-After` we honour it
+        (capped, see below); otherwise we back off **exponentially with jitter**, because
+        every parallel research pass that fails at the same instant would otherwise retry
+        at the same instant.
+
+        The cap is deliberate: FR-012 says a slow source degrades to partial results, so a
+        server asking for two minutes is telling us to give up and flag `degraded`, not to
+        hold the user's stream open.
+        """
+        wait = retry_after if retry_after is not None else self.backoff * (2**attempt)
+        wait = min(wait, _MAX_BACKOFF)
+        # Full jitter over [wait/2, wait] — spreads a thundering herd without ever
+        # sleeping longer than the cap, and keeps the wait deterministic enough to test.
+        return wait / 2 + random.random() * (wait / 2)
+
+
+def _retry_after_seconds(response: httpx.Response) -> float | None:
+    """Parse `Retry-After`, which RFC 9110 allows as **either** delta-seconds or a date.
+
+    Returns ``None`` when the header is absent or unparseable, so the caller falls back to
+    exponential backoff rather than treating a malformed header as "retry immediately".
+    A negative or past value clamps to ``0`` — the server is saying "now", not "yesterday".
+    """
+    raw = response.headers.get("Retry-After")
+    if not raw:
+        return None
+    try:
+        return max(0.0, float(raw.strip()))
+    except ValueError:
+        pass
+    try:
+        when = parsedate_to_datetime(raw.strip())
+    except (TypeError, ValueError):
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    return max(0.0, (when - datetime.now(UTC)).total_seconds())
 
 
 def _stamp(value: str, ref: SourceRef, confidence: float, observed: date) -> SourcedValue[str]:

@@ -10,8 +10,11 @@ mapping, ODbL stamping, Greek `name:el` preservation and — the load-bearing on
 from __future__ import annotations
 
 import json
+import random
+import time
 from collections.abc import Callable
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
+from email.utils import format_datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs
@@ -22,6 +25,7 @@ from shapely.geometry import Point, box
 
 from commons.models import SiteRecordV1, SourcedValue
 from commons.sources import base
+from commons.sources import osm as osm_module
 from commons.sources.osm import ATTRIBUTION, LICENSE, OsmAdapter
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -170,3 +174,121 @@ def test_retries_are_bounded_and_timeouts_degrade() -> None:
     assert attempts == 3, "bounded: retries + 1 attempts, then give up"
     assert (result.degraded, len(result)) == (True, 0)
     assert result.reason is not None and "timeout" in result.reason
+
+
+# ── ADR-0027: a retry policy that can actually survive a rate limit ───────────────
+#
+# The 2026-08-07 Rhodes pass lost every `relation` to `HTTP 429` while the old policy
+# retried once, 0.5s later, into the same spent fair-use budget. A 429 means "your quota
+# is gone", not "you were unlucky" — so the wait must come from the server when it offers
+# one, and grow when it does not. These pin the policy, not the implementation's arithmetic.
+
+
+def _sleepless(handler: Callable[[httpx.Request], httpx.Response], **kwargs: Any) -> OsmAdapter:
+    """Like `adapter()` but keeps a real `backoff`, so the sleep can be observed."""
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    return OsmAdapter(client=client, observed_at=OBSERVED, element_types=("node",), **kwargs)
+
+
+def _serve(status: int, headers: dict[str, str] | None = None) -> Callable[..., httpx.Response]:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, headers=headers or {}, json=EMPTY)
+
+    return handler
+
+
+def test_retry_after_seconds_is_honoured_over_our_own_backoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The server's own answer wins — retrying sooner than asked just burns the budget."""
+    waits: list[float] = []
+    monkeypatch.setattr(time, "sleep", waits.append)
+
+    result = _sleepless(_serve(429, {"Retry-After": "3"}), retries=1).fetch(AREA)
+
+    # Full jitter over [wait/2, wait]: never longer than asked, never instant.
+    assert len(waits) == 1 and 1.5 <= waits[0] <= 3.0
+    assert result.degraded is True
+
+
+def test_backoff_grows_exponentially_when_the_server_offers_no_hint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No `Retry-After` ⇒ widening windows, not a flat 0.5s that retries into the wall.
+
+    **The jitter is pinned deliberately.** Asserting each sleep merely falls inside its
+    jitter window `[w/2, w]` does *not* discriminate: the previous linear policy
+    (0.5, 1.0, 1.5) lands inside the exponential windows (0.5, 1.0, 2.0) at **every**
+    attempt, so such a test passes against the very bug it guards — the FAIL-007 shape,
+    a test asserting what the code does rather than what is required. Pinning
+    `random.random()` to its maximum makes the wait exactly the window ceiling, so the
+    doubling is asserted and linear backoff fails at the third attempt (1.5 ≠ 2.0).
+    """
+    waits: list[float] = []
+    monkeypatch.setattr(time, "sleep", waits.append)
+    monkeypatch.setattr(random, "random", lambda: 1.0)
+
+    _sleepless(_serve(503), retries=3, backoff=0.5).fetch(AREA)
+
+    assert waits == [0.5, 1.0, 2.0], "each window must double; linear would give 0.5, 1.0, 1.5"
+
+
+def test_an_absurd_retry_after_is_capped_rather_than_stalling_the_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FR-012: a source asking for two minutes means degrade, not hold the stream open."""
+    waits: list[float] = []
+    monkeypatch.setattr(time, "sleep", waits.append)
+
+    result = _sleepless(_serve(429, {"Retry-After": "120"}), retries=1).fetch(AREA)
+
+    assert waits and max(waits) <= osm_module._MAX_BACKOFF
+    assert result.degraded is True
+
+
+def test_a_malformed_retry_after_falls_back_instead_of_retrying_instantly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unparseable header must not read as "retry now" — the worst possible reading."""
+    waits: list[float] = []
+    monkeypatch.setattr(time, "sleep", waits.append)
+
+    _sleepless(_serve(429, {"Retry-After": "soon-ish"}), retries=1, backoff=0.5).fetch(AREA)
+
+    assert len(waits) == 1 and waits[0] > 0.0
+
+
+def test_retry_after_accepts_an_http_date_not_only_seconds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RFC 9110 allows either form, and Overpass mirrors differ on which they send."""
+    waits: list[float] = []
+    monkeypatch.setattr(time, "sleep", waits.append)
+    when = format_datetime(datetime.now(UTC) + timedelta(seconds=4))
+
+    _sleepless(_serve(429, {"Retry-After": when}), retries=1).fetch(AREA)
+
+    assert len(waits) == 1 and 0.0 < waits[0] <= 4.0
+
+
+def test_the_default_endpoint_is_the_mirror_not_the_main_instance() -> None:
+    """ADR-0027: the main instance's fair-use budget is shared with the whole world."""
+    assert "kumi.systems" in OsmAdapter().endpoint
+    assert "overpass-api.de" not in OsmAdapter().endpoint
+
+
+def test_three_attempts_by_default_because_one_retry_cannot_survive_a_rate_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx.Response(429, json=EMPTY)
+
+    monkeypatch.setattr(time, "sleep", lambda _s: None)
+    result = _sleepless(handler).fetch(AREA)
+
+    assert attempts == 3, "retries=2 ⇒ three attempts"
+    assert result.degraded is True
