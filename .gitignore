@@ -27,3 +27,6 @@ dist/
 
 # Throwaway discovery spike (D5) — never merged
 spike/
+
+# Local dev-stack run dir (pids + logs from scripts/dev.sh)
+.dev/
