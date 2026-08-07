@@ -50,6 +50,10 @@ event: done         data: {"plan_id":"7be2…-uuid","state":"proposed"}
 {
   "plan": { /* ItineraryV1 verbatim, per the card */ },
   "feasibility": { "ok": true, "violations": [], "checked_at": "2026-08-07T09:12:00Z" },
+  // ↑ `ok`/`violations`/`checked_at` map to user_plan.feasible / .violations /
+  //   .feasibility_checked_at. `checked_at` is UTC and is set ONLY when feasibility
+  //   runs — never from `updated_at`, which bumps on any write and would report a
+  //   time the check did not happen.
   "approval": { "state": "proposed", "approved_at": null, "superseded_by": null },
   "attribution": ["© OpenStreetMap contributors"]   // union across the plan's values and legs
 }
