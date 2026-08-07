@@ -16,8 +16,8 @@ Authoritative source: `docs/design/tech-design.md` §1.4, §5.3. Never guess thi
   `bundleable=false` value** before freezing `content` (the §1.0 invariant applied), then regenerates `attribution` →
   `ATTRIBUTION.md` (ODbL + CC-BY-SA credits). License registry → [`/DATA-LICENSES.md`](../../DATA-LICENSES.md).
   **What the filter drops, the manifest records:** every removal is listed in `withheld` (`site_id` + dotted `field` +
-  `reason`), which is what lets the travel UI render a withheld value as "needs connectivity" rather than as a blank or
-  an error.
+  an **enumerated** `reason`), which is what lets the travel UI render a withheld value as "needs connectivity" rather
+  than as a blank or an error.
   **Airplane-mode invariant (release gate):** everything the travel UI reads resolves to a manifest path; **no
   `bundleable=false` value is present**; review links (M2) render as "needs connectivity," never errors. Tested by
   `test_structural.py::test_no_unbundleable_in_bundle` and the DU-06 airplane-mode e2e (zero network requests).
@@ -35,9 +35,24 @@ Authoritative source: `docs/design/tech-design.md` §1.4, §5.3. Never guess thi
 | `routing` | `{ walk_graph, walk_graph_sha256, legs, legs_sha256 }` | M1 | pruned walk graph (geojson-path-finder) + precomputed legs (incl. B/C branches at M2), **each hashed on its own**; see [`route-leg.md`](./route-leg.md) |
 | `content` | `{ sites, sites_sha256, narrations, narrations_sha256, itinerary, itinerary_sha256 }` | M1 | **only `bundleable=true` values** (post-quarantine): `SiteRecordV1` subset + CC-BY-SA narrations + the **frozen `ItineraryV1` JSON** (`itinerary`) the travel timeline renders from; each artifact hashed on its own |
 | `attribution` | `{ path, sha256 }` | M1 | `ATTRIBUTION.md`, regenerated **per bundle** (ODbL + per-article CC-BY-SA credits); hashed like every other artifact — it is legally obligated content, not a decoration |
-| `withheld` | `[{ site_id: UUID, field: str, reason: str }]` | M1 | what the **quarantine filter removed** and why — dotted `field` path (`reviews`, `notes[2]`, `names.el`), `reason` from `licenses.quarantine_reason`. Empty list = nothing withheld. Renders as "needs connectivity" in travel (FR-021) |
+| `withheld` | `[{ site_id: UUID, field: str, reason: WithheldReason }]` | M1 | what the **quarantine filter removed** and why — dotted `field` path (`reviews`, `notes[2]`, `names.el`); `reason` is a **closed enum**, never free text (below). Empty list = nothing withheld. Renders as "needs connectivity" in travel (FR-021) |
 | `integrity` | `{ manifest_sha256 }` | M1 | launch-time check (iOS storage-eviction guard); canonicalization pinned below |
 | `schematic` | `{ style_json, sha256 } \| null` | M2+ | illustrated-map render |
+
+**`withheld[].reason` is a closed enum — free text is not permitted here** (ADR-0025 A3). `withheld` ships inside an
+artifact the user downloads and can open, so the vocabulary is fixed at exactly what the affordance needs:
+
+```
+WithheldReason:
+  "license_forbids_redistribution"   # the value's license (or its always-excluded source kind —
+                                     #   open_web, review_provider) bars it from an offline bundle
+  "unstamped"                        # no SourceRef / no derivable stamp — refused, not guessed
+  "source_unavailable"               # the value existed but could not be frozen at compile time
+```
+
+Naming *why* a value is missing is enough to render "needs connectivity"; a free-text reason would be a channel
+through which a future withholding rule — including one touching the private side of the PRD §13 #4 boundary — could
+carry content out inside a downloadable file. The set is closed here and extended only by ADR amendment.
 
 **Integrity discipline — one hash per artifact, no shared hashes.** Each artifact is **SHA-256**'d individually:
 `tiles.pmtiles.sha256`, `routing.walk_graph_sha256`, `routing.legs_sha256`, `content.sites_sha256`,
@@ -83,7 +98,7 @@ upload to GCS → client downloads whole archive to OPFS.
   "attribution": { "path": "ATTRIBUTION.md", "sha256": "6cd1…" },
   "withheld": [
     { "site_id": "c9d1…-uuid", "field": "reviews",
-      "reason": "source.kind='review_provider' is never bundleable" }
+      "reason": "license_forbids_redistribution" }
   ],
   "integrity": { "manifest_sha256": "e11d…" }
 }

@@ -95,8 +95,9 @@ area supplies the clock. `opening-hours-py` then needs `country_code` on top, be
 expression resolves against a **country's** holiday calendar; without it public holidays evaluate wrongly and silently
 — which is precisely the failure SC-002 exists to prevent.
 
-**Straddling is normal, and the rule must not vary between runs.** SC-009 says this works for *any* area, so both
-degenerate cases are specified rather than left to whichever library is called first:
+**The rule is largest intersecting area, not a sampled point** (ADR-0025 ruling 2, as amended a second time — see the
+note below). **Straddling is normal, and the rule must not vary between runs.** SC-009 says this works for *any* area,
+so both degenerate cases are specified rather than left to whichever library is called first:
 
 1. **A polygon straddling a timezone boundary** (a bay, a valley, a drawn ring across a line). Resolve to the timezone
    whose zone polygon has the **largest area of intersection** with the resolved polygon; ties break on the
@@ -105,14 +106,31 @@ degenerate cases are specified rather than left to whichever library is called f
    polygons: **largest intersecting area**, ties on the lexicographically smallest ISO 3166-1 alpha-2 code.
 
 Both are pure functions of the polygon and the pinned boundary dataset, so the same delimitation always resolves the
-same way. **What was picked is recorded** — the stored `timezone` / `country_code` *are* the record — so a plan can
-always be read back in the frame it was planned in, even if the derivation rule or the boundary data later changes.
-A polygon that intersects **no** zone or **no** country (open ocean) is an unresolvable area, refused like any other
-failing polygon — never defaulted to `UTC`, never defaulted to a country.
+same way, in CI and on a server, forever. **What was picked is recorded** — the stored `timezone` / `country_code`
+*are* the record, and later reads never re-derive, so a plan is always readable in the frame it was planned in even
+after the rule or the boundary data changes. A polygon intersecting **no** zone or **no** country (open ocean) is a
+**hard failure at resolve time** — never a silent `UTC` fallback, never a defaulted country; a plan whose frame is a
+guess is worse than a plan that was refused.
 
-The boundary dataset and the library that queries it are pinned at implementation under ADR-0007's
-resolve-then-pin discipline; whatever is chosen is **offline, deterministic and licence-registered in**
-[`/DATA-LICENSES.md`](../../DATA-LICENSES.md) before it ships.
+*Permitted implementation shortcut:* where the polygon intersects exactly one zone (the overwhelmingly common case for
+a walkable day), a single point-in-polygon lookup is equivalent and may be used. If a point lookup is used, take
+`polygon.representative_point()` and **never the centroid** — a centroid can fall *outside* a concave or multi-part
+polygon, the ordinary case for a coastal old town or an island municipality. The shortcut must agree with the rule
+above wherever both are defined; the rule is what is normative.
+
+> **Why this is stated twice.** An earlier amendment replaced the largest-intersection rule with a bare
+> `representative_point()` lookup, on the reasoning that a centroid can fall outside its polygon. That reasoning is
+> sound but applies to *centroids*, which this rule never used — so the amendment fixed a problem that did not exist
+> here and, in doing so, made a straddling polygon resolve to whichever zone happened to contain one sampled point
+> rather than the zone it mostly lies in. The largest-intersection rule is restored as normative and the point lookup
+> demoted to an optimization. Recorded rather than quietly reverted, because the original rule was right and the
+> correction was not.
+
+The boundary datasets and the library that queries them are pinned at implementation under ADR-0007's resolve-then-pin
+discipline (`tasks.md` T008). Two non-negotiables on that choice: it must work **with no network** — an area resolve
+that phones a timezone API is not reproducible in CI and not available to a compile — and it must be
+**licence-registered in** [`/DATA-LICENSES.md`](../../DATA-LICENSES.md) before it ships (a timezone-boundary dataset
+built from OSM carries ODbL and its attribution obligation with it).
 
 ## Overture divisions — the columns actually read
 
@@ -175,11 +193,17 @@ When it does, **its schema belongs in this card**, and the questions it must ans
   that line. **Unresolved — this card does not assert an answer**;
 - whether resolutions are cached/reused, which would give the shape an `observed_at` it does not have today.
 
-**One part of that persisted shape is no longer open: `timezone` and `country_code` are columns, not derivations at
-read time.** The `area` table gains `timezone text NOT NULL` and `country_code text NOT NULL` (ADR-0025), because a
-plan must be readable in the frame it was planned in even if the boundary data or the derivation rule changes later.
-That is an **Alembic migration** — hand-written like `0002_area`, and **`ask`-gated: Ben approves it before it runs**
-(`CLAUDE.md`, "Always ask Ben first"). Nothing else in this section is settled by it.
+**Two corrections to the sketch above, as of slice 002.** First, the `area` table **does now exist** — migrations
+`0002_area` (`id`, `geom`, `name`, `created_by`, `created_at`) and `0004_area_researched_at` shipped after this section
+was written; the *open* questions it lists (per-user vs shared, caching, `observed_at`) are still open, but "there is
+no table" is no longer one of them.
+
+Second, **`timezone` and `country_code` are columns, not derivations at read time.** The `area` table gains
+`timezone text NOT NULL` and `country_code text NOT NULL` (ADR-0025), because a plan must be readable in the frame it
+was planned in even if the boundary data or the derivation rule later changes. That is an **Alembic migration** —
+hand-written like `0002_area`, backfilling existing rows from their stored `geom` by the same derivation before the
+`NOT NULL` is applied, and **`ask`-gated: Ben approves it before it runs** (`CLAUDE.md`, "Always ask Ben first").
+Nothing else in this section is settled by it.
 
 ## Example values
 
@@ -214,9 +238,9 @@ That is an **Alembic migration** — hand-written like `0002_area`, and **`ask`-
   "candidates": []
 }
 
-// 4 — a drawn ring straddling a border: largest intersecting area wins, deterministically.
-//     (Basel: ~70% CH / ~30% DE by intersected area ⇒ CH; both sides share Europe/Zurich…
-//     had they differed, the same largest-intersection rule would have picked the zone.)
+// 4 — a drawn ring straddling a border: the representative point decides, deterministically.
+//     Its representative_point() falls on the Swiss side ⇒ CH / Europe/Zurich. One area,
+//     one clock, one holiday calendar — never a prompt, never a per-run coin flip.
 {
   "polygon": { "type": "Polygon", "coordinates": [ /* a ring across the Swiss–German line */ ] },
   "source": { "kind": "user", "id": "user:polygon", "url": null,
