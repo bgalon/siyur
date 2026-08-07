@@ -35,6 +35,16 @@ pnpm -C web build                # vite build
 uv sync --locked                 # install from the lockfile
 ```
 
+## Working efficiently in this repo
+
+Measured over 7,029 captured hook events, two habits dominate the waste:
+
+- **Read and search with the dedicated tools, not the shell.** 426 of 3,262 Bash calls were
+  `grep -n` / `grep -rn` / `sed -n` doing what Read, Grep and Glob do better and cheaper.
+- **Don't re-`cd` on every call.** The Bash working directory **persists between calls**, yet
+  246 commands opened with `cd /Users/beng/code/siyur`. A `cd` inside a compound command can
+  also trigger a permission prompt that the bare command would not.
+
 ## Delegation
 
 - For any **multi-file task, spawn teammates and partition the work by folder/module** so that no two agents ever edit the same file. The package boundaries are the natural seams: `commons/`, `planner/`, `compiler/`, `api/`, `web/`, `tests/`, `docs/`. Name the owned paths explicitly when dispatching.

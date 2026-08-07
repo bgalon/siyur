@@ -38,9 +38,11 @@ pnpm -C web test && pnpm -C web typecheck        # if you touched web/
 
 Every behaviour change ships with a Tier-1 unit test in the same change. Tier-2 tests carry the `integration` marker. Tests never hit live Overture, Overpass, or Anthropic.
 
+**Verify the artifact, not your description of it.** Tests prove behaviour; they say nothing about what a build actually emitted. If you claim a property of the *output* — tree-shaken, excluded from the bundle, not shipped to production, under a size budget — **measure it and paste the result**. A comment asserting "tree-shaken out of the production bundle" was plausible, conventional, and false; grepping `dist/` disproved it in one command (`exhibit/U5-footgun-in-the-file-i-edited`). The same applies to a migration: compare `alembic heads` against `alembic current`, because `upgrade head` on a stale checkout reports success and changes nothing.
+
 ## Scope and boundaries
 
-Keep changes small and reviewable — **CI job 7 fails a PR over 500 human-authored changed lines** without a `size-override` label. Stay inside the files you were assigned: when working as part of a team, another agent owns the other modules, and two agents editing one file corrupts both.
+Keep changes small and reviewable — **CI job 7 fails a PR over 500 human-authored changed lines** without a `size-override` label. That label **records a claim**: apply it only when the diff genuinely is large and justified, never to clear a count you think is wrong. Stay inside the files you were assigned: when working as part of a team, another agent owns the other modules, and two agents editing one file corrupts both.
 
 Stop and report rather than proceeding when you need to: run a migration (`alembic upgrade`), push, open a PR, edit `.github/workflows/**`, add a dependency that is not already pinned in `pyproject.toml`, or reverse an ADR. These are human-approved.
 
