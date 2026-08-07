@@ -13,7 +13,8 @@
 event: status    data: {"phase":"tiles","bbox":[28.216,36.440,28.232,36.451],"maxzoom":15,"bytes":4194304}
 event: status    data: {"phase":"routes","legs":4,"walk_graph_edges":812,"connected":true}
 event: status    data: {"phase":"quarantine","values_dropped":12,
-                        "withheld":[{"site_id":"c9d1…","field":"reviews","reason":"bundleable=false"}]}
+                        "withheld":[{"site_id":"c9d1…","field":"reviews",
+                                     "reason":"license_forbids_redistribution"}]}
 event: status    data: {"phase":"content","sites":5,"narrations":3}
 event: status    data: {"phase":"attribution","licenses":["ODbL-1.0","CDLA-Permissive-2.0","CC-BY-SA-4.0"]}
 event: status    data: {"phase":"hash","artifacts":4}

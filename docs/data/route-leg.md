@@ -27,6 +27,11 @@ guesswork, for the field shape.*
   (`<engine>:<costing>`), which is where a produced work records the machinery without claiming to be a source. This
   stamp is precisely what makes a leg bundleable: `commons/licenses.py::bundleable("osm", "ODbL-1.0")` is `True`,
   **derived, never author-set**. A leg with any other `kind`/`license` pair is a defect, not a variation.
+  **`RouteLegV1` has no `bundleable` field to read** — like `Story` ([`poi-site.md`](./poi-site.md)), `ResolvedArea` and
+  `AreaCandidate` ([`area.md`](./area.md)), it carries a bare `SourceRef`. The quarantine filter must therefore derive
+  structurally — *only a `SourcedValue` carries a `bundleable` field* — not special-case `Story`. A filter that reads
+  the attribute off a leg finds nothing and **drops every walking leg from every bundle**, past every hash and path
+  check, leaving a day with no routes.
 
 ## `RouteLegV1` fields
 

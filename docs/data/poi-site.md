@@ -99,14 +99,25 @@ FieldConflict:
   resolution: "unresolved" | "picked:<source.id>" | "user-override"
 ```
 
-**`Story` is the one fact-bearing structure that is *not* a `SourcedValue` — the quarantine filter must derive, not
-read.** A `Story` carries a **bare `SourceRef`** (plus `observed_at`); it has **no `bundleable` and no `confidence`
+**`Story` is one of several fact-bearing structures that are *not* `SourcedValue`s — the quarantine filter must derive,
+not read.** A `Story` carries a **bare `SourceRef`** (plus `observed_at`); it has **no `bundleable` and no `confidence`
 field**, because the whole story is one attributed adaptation of one article, not a stamped value in a field map. So
 the compile quarantine filter cannot ask a story whether it may be bundled — it must **compute** the answer:
 `commons/licenses.py::bundleable(story.source.kind, story.source.license)`, exactly the function that derives the
 `SourcedValue` stamp everywhere else. **A filter that reads `bundleable` off a story reads `None` and silently drops
 (or silently ships) every narration** — this asymmetry is the trap, and it is why the rule is written here rather than
 inferred. A story whose `source` is missing or unstamped is refused like any other unstamped input.
+
+**And `Story` is not alone — this is the important half.** The same bare-`SourceRef` shape is carried by **`RouteLegV1`**
+([`route-leg.md`](./route-leg.md)), **`ResolvedArea`** and **`AreaCandidate`** ([`area.md`](./area.md)). Every one of
+them must have its bundleability **derived** the same way. The rule is therefore *structural*, not a `Story` special
+case: **derive for anything that is not a `SourcedValue`; only a `SourcedValue` carries a `bundleable` field to read.**
+
+A filter written as `derive if isinstance(v, Story) else v.bundleable` — the shape the single-case wording invites —
+reaches `routing.legs`, finds no `bundleable` attribute on `RouteLegV1`, and either raises mid-compile or, with the
+likelier `getattr(v, "bundleable", False)` repair, **drops every walking leg from every bundle**. The bundle still
+compiles, still hashes, still passes every path check, and the traveller's day has no routes. That failure is silent
+at every gate, which is why the enumeration above is normative rather than illustrative.
 
 **M1 must populate:** `id`, `location`, `names.en`, `categories`, and — where the source has it — `address` and
 `opening_hours`; every populated value carries a real `SourceRef` and `bundleable` stamp. Empty M2+ fields are valid
@@ -227,8 +238,10 @@ logged**, never returned as a half-record (FR-003).
   // A Story has a bare `source` + `observed_at` — no `bundleable`/`confidence` stamp.
   // Bundleability is DERIVED: bundleable("wikivoyage", "CC-BY-SA-4.0") is True.
   "stories": [ { "text_by_lang": { "en": "The cobbled street once housed the …" },
-    "source": { "kind": "wikivoyage", "id": "Rhodes", "url": "https://en.wikivoyage.org/wiki/Rhodes",
-    "license": "CC-BY-SA-4.0", "attribution": "Wikivoyage: Rhodes (CC BY-SA 4.0)" },
+    "source": { "kind": "wikivoyage", "id": "en:Rhodes",
+    "url": "https://en.wikivoyage.org/wiki/Rhodes?oldid=4812301",
+    "license": "CC-BY-SA-4.0",
+    "attribution": "\"Rhodes\", Wikivoyage, https://en.wikivoyage.org/wiki/Rhodes — authors via page history" },
     "observed_at": "2026-07-25" } ],
   "reviews": { "ratings": [ { "provider": "example", "stars": 4.6, "count": 1200,
     "url": "https://…" } ], "fetched_at": "2026-07-25T10:00:00Z" },

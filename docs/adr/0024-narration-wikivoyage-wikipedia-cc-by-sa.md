@@ -39,19 +39,27 @@ Chosen: **S1 + P1 + A1** — the **MediaWiki Action API** over **Wikivoyage** (l
 
 `commons/sources/wikivoyage.py` is a **source adapter exactly like the Overture and Overpass ones** (ADR-0009): it **stamps at the boundary**, so nothing above it is ever unstamped, and the quarantine filter above it needs no source-specific knowledge.
 
-**The stamp, concretely:**
+**The stamp, concretely.** Two objects, and the split is load-bearing — `SourceRef` has **exactly five fields** and `StampedModel` is `extra="forbid"`, so anything else placed inside it is not a documentation nicety but an object that **cannot be constructed**:
 
 ```jsonc
+// Story.source — a SourceRef. These five keys and no others.
 { "kind": "wikivoyage" | "wikipedia",
-  "id":   "<lang>:<Page Title>",
-  "url":  "<canonical article URL>",
+  "id":   "<lang>:<Page Title>",          // e.g. "en:Rhodes" — always lang-qualified
+  "url":  "<canonical article URL, pinned to the revid>",
   "license": "CC-BY-SA-4.0",
-  "attribution": "\"<Title>\", <Wikivoyage|Wikipedia>, <url> — authors via page history",
-  "observed_at": "<revision timestamp>",
-  "bundleable": true }
+  "attribution": "\"<Title>\", <Wikivoyage|Wikipedia>, <url> — authors via page history" }
+
+// Story itself carries the staleness key (ADR-0025 ruling 8).
+{ "text_by_lang": { "en": "…" }, "source": { /* above */ },
+  "observed_at": "<revision timestamp>",  // on Story, NOT on SourceRef
+  "claims": [] }                          // M2+; stays empty at M1
 ```
 
-The **`revid`** is fetched with the extract and stored, so the credit points at the exact revision adapted. Wikimedia's reuse guidance accepts a link to the article or its history as author attribution; the revid is what makes that link **honest** rather than approximately true. Both `kind` values already exist in the `SourceRef.kind` enum (`docs/data/poi-site.md`) — **no schema change is required for the source stamp**.
+**`bundleable` appears nowhere above, deliberately.** A `Story` carries a bare `SourceRef` and is **not** a `SourcedValue`, so there is no `bundleable` field to set — the quarantine filter **derives** it via `commons/licenses.py::bundleable(kind, license)` (ADR-0025 ruling 8). Author-setting it would be the precise failure that `SourcedValue._enforce_quarantine` exists to prevent: a stamp asserted rather than computed.
+
+The **`revid`** is fetched with the extract and stored, so the credit points at the exact revision adapted. Wikimedia's reuse guidance accepts a link to the article or its history as author attribution; the revid is what makes that link **honest** rather than approximately true. Both `kind` values already exist in the `SourceRef.kind` enum (`docs/data/poi-site.md`) — **no schema change is required for the source stamp**; the only schema change narration needs is `Story.observed_at`, which ADR-0025 ruling 8 already makes.
+
+**`id` is always `<lang>:<Page Title>`** (`en:Rhodes`, never bare `Rhodes`), across both adapters and both cards. `tests/test_compiler_attribution.py` dedupes contributing articles on `source.id`, so a bare title from one adapter and a qualified one from the other would credit a single article twice.
 
 ### The share-alike obligation, stated plainly
 

@@ -238,9 +238,13 @@ Nothing else in this section is settled by it.
   "candidates": []
 }
 
-// 4 — a drawn ring straddling a border: the representative point decides, deterministically.
-//     Its representative_point() falls on the Swiss side ⇒ CH / Europe/Zurich. One area,
-//     one clock, one holiday calendar — never a prompt, never a per-run coin flip.
+// 4 — a drawn ring straddling the Swiss–German line: largest intersecting area decides.
+//     Note this ring genuinely straddles TWO IANA zones — Europe/Zurich and Europe/Berlin.
+//     They share a UTC offset, which is exactly why offset is not the thing being resolved:
+//     the field holds an IANA id, and the two zones' holiday calendars differ. Here ~70% of
+//     the ring's area lies on the Swiss side, so CH / Europe/Zurich wins outright and the
+//     lexicographic tie-break never fires. One area, one clock, one holiday calendar —
+//     never a prompt, never a per-run coin flip.
 {
   "polygon": { "type": "Polygon", "coordinates": [ /* a ring across the Swiss–German line */ ] },
   "source": { "kind": "user", "id": "user:polygon", "url": null,

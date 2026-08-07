@@ -7,16 +7,23 @@
 ```jsonc
 {
   "text_by_lang": { "en": "The cobbled street once housed the …" },   // `en` canonical at M1; translations M3
-  "source": {
+  "source": {                                                        // a SourceRef: these five keys and NO others
     "kind": "wikivoyage",                                            // wikivoyage | wikipedia — nothing else at M1
-    "id": "Rhodes",                                                  // the article title, exactly as fetched
-    "url": "https://en.wikivoyage.org/wiki/Rhodes",                  // the article URL — the credit link
+    "id": "en:Rhodes",                                               // ALWAYS "<lang>:<Page Title>", never bare
+    "url": "https://en.wikivoyage.org/wiki/Rhodes?oldid=4812301",    // credit link, pinned to the revid
     "license": "CC-BY-SA-4.0",
-    "attribution": "Wikivoyage: Rhodes (CC BY-SA 4.0)"               // MUST be non-null
-  }
+    "attribution": "\"Rhodes\", Wikivoyage, https://en.wikivoyage.org/wiki/Rhodes — authors via page history"
+  },
+  "observed_at": "2026-08-07"                                        // the revision timestamp — on Story, NOT SourceRef
   // `claims: [{span, SourceRef}]` — per-claim provenance — is M2+ and stays empty here.
 }
 ```
+
+**`id` is lang-qualified, always.** `tests/test_compiler_attribution.py` asserts every contributing article is credited
+**exactly once** and dedupes on `source.id`; a bare `Rhodes` from one adapter and `en:Rhodes` from the other would
+credit one article twice. **`SourceRef` carries no `observed_at` and no `bundleable`** — it is `extra="forbid"` with
+exactly five fields, so both belong elsewhere: `observed_at` on the `Story`, and `bundleable` nowhere at all, because a
+`Story` is not a `SourcedValue` and its bundleability is **derived** via `licenses.bundleable(kind, license)`.
 
 **Refused at the boundary — not warned about, refused:**
 

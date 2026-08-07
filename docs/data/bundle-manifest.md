@@ -35,6 +35,7 @@ Authoritative source: `docs/design/tech-design.md` §1.4, §5.3. Never guess thi
 | `routing` | `{ walk_graph, walk_graph_sha256, legs, legs_sha256 }` | M1 | pruned walk graph (geojson-path-finder) + precomputed legs (incl. B/C branches at M2), **each hashed on its own**; see [`route-leg.md`](./route-leg.md) |
 | `content` | `{ sites, sites_sha256, narrations, narrations_sha256, itinerary, itinerary_sha256 }` | M1 | **only `bundleable=true` values** (post-quarantine): `SiteRecordV1` subset + CC-BY-SA narrations + the **frozen `ItineraryV1` JSON** (`itinerary`) the travel timeline renders from; each artifact hashed on its own |
 | `attribution` | `{ path, sha256 }` | M1 | `ATTRIBUTION.md`, regenerated **per bundle** (ODbL + per-article CC-BY-SA credits); hashed like every other artifact — it is legally obligated content, not a decoration |
+| `textLicense` | `str \| null` | M1 | the license of the **bundled narration text** — `"CC-BY-SA-4.0"` whenever any story is present, `null` when `content.narrations` is empty (ADR-0024). Adapted CC BY-SA prose is a derivative, so the bundle must **declare** share-alike, not merely credit the articles: attribution discharges BY, this discharges SA. Machine-readable on purpose — a reuser reading the manifest must not have to parse `ATTRIBUTION.md` prose to learn the terms |
 | `withheld` | `[{ site_id: UUID, field: str, reason: WithheldReason }]` | M1 | what the **quarantine filter removed** and why — dotted `field` path (`reviews`, `notes[2]`, `names.el`); `reason` is a **closed enum**, never free text (below). Empty list = nothing withheld. Renders as "needs connectivity" in travel (FR-021) |
 | `integrity` | `{ manifest_sha256 }` | M1 | launch-time check (iOS storage-eviction guard); canonicalization pinned below |
 | `schematic` | `{ style_json, sha256 } \| null` | M2+ | illustrated-map render |
@@ -46,13 +47,18 @@ artifact the user downloads and can open, so the vocabulary is fixed at exactly 
 WithheldReason:
   "license_forbids_redistribution"   # the value's license (or its always-excluded source kind —
                                      #   open_web, review_provider) bars it from an offline bundle
-  "unstamped"                        # no SourceRef / no derivable stamp — refused, not guessed
   "source_unavailable"               # the value existed but could not be frozen at compile time
 ```
 
 Naming *why* a value is missing is enough to render "needs connectivity"; a free-text reason would be a channel
 through which a future withholding rule — including one touching the private side of the PRD §13 #4 boundary — could
 carry content out inside a downloadable file. The set is closed here and extended only by ADR amendment.
+
+**There is deliberately no `"unstamped"` member.** An earlier draft of this enum had one, which contradicted FR-012:
+unstamped input is **refused** — the compile *fails* — it is not withheld and shipped as a placeholder. A value is
+withheld **or** refused, never both, and giving "unstamped" a withheld reason would have turned a merge-blocking
+refusal into a "needs connectivity" affordance that looks identical to success. Quarantine drops what it may not
+redistribute; it does not launder a missing stamp.
 
 **Integrity discipline — one hash per artifact, no shared hashes.** Each artifact is **SHA-256**'d individually:
 `tiles.pmtiles.sha256`, `routing.walk_graph_sha256`, `routing.legs_sha256`, `content.sites_sha256`,
@@ -96,6 +102,7 @@ upload to GCS → client downloads whole archive to OPFS.
     "narrations": "content/narrations.json", "narrations_sha256": "8ba3…",
     "itinerary": "content/itinerary.json", "itinerary_sha256": "2f70…" },
   "attribution": { "path": "ATTRIBUTION.md", "sha256": "6cd1…" },
+  "textLicense": "CC-BY-SA-4.0",
   "withheld": [
     { "site_id": "c9d1…-uuid", "field": "reviews",
       "reason": "license_forbids_redistribution" }
@@ -132,7 +139,8 @@ upload to GCS → client downloads whole archive to OPFS.
     "narrations": "content/narrations.json", "narrations_sha256": "…",
     "itinerary": "content/itinerary.json", "itinerary_sha256": "…" },
   "attribution": { "path": "ATTRIBUTION.md", "sha256": "…" },
-  "withheld": [],
+  "attribution": { "path": "ATTRIBUTION.md", "sha256": "…" },
+  "textLicense": "CC-BY-SA-4.0",
   "integrity": { "manifest_sha256": "…" },
   "schematic": { "style_json": "schematic/style.json", "sha256": "…" }
 }
