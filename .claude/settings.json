@@ -31,6 +31,17 @@
     "                                resolver output.",
     "  - ~/code/siyur-course       → the course repo is observed one-way; this repo",
     "                                emits exhibit tags and issues, never edits it.",
+    "  - this file + .claude/hooks → ask. Every gate above is advisory to an agent",
+    "                                that can quietly widen its own rules first.",
+    "",
+    "PATH DENIES BIND THE READ TOOL, NOT BASH. `grep KEY .env` is a different code",
+    "path from `Read(./.env)`, and the runner allows (uv:*, python3:*, grep:*) are far",
+    "too broad to close that by pattern without flooding every session with prompts.",
+    ".claude/hooks/guard_secrets.py inspects the Bash command string and is the layer",
+    "that actually closes it. Defence in depth — the deny rules remain the real",
+    "boundary — and it FAILS OPEN by design, because a hook that crashes on every",
+    "tool call is worse than one that misses a case (FAIL-002). Covered by",
+    "tests/test_agent_hooks.py.",
     "",
     "Run scripts/permission_report.py to see which calls are still prompting and what",
     "rule would cover them."
@@ -212,7 +223,12 @@
       "Bash(npm:*)",
 
       "Edit(./.github/workflows/**)",
-      "Write(./.github/workflows/**)"
+      "Write(./.github/workflows/**)",
+
+      "Edit(./.claude/settings.json)",
+      "Write(./.claude/settings.json)",
+      "Edit(./.claude/hooks/**)",
+      "Write(./.claude/hooks/**)"
     ],
     "deny": [
       "Read(**/.env)",
@@ -291,6 +307,12 @@
         "matcher": "*",
         "hooks": [
           { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/log_event.py PreToolUse" }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard_secrets.py" }
         ]
       }
     ],
