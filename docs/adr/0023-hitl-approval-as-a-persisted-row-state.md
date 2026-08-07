@@ -34,9 +34,9 @@ Chosen: **A — the pause is a persisted row state, and approval is a compare-an
 |---|---|
 | `status` | `proposing` \| `proposed` \| `approved` \| `superseded` \| `compiling` \| `compiled` \| `failed` |
 | `revision` | `int`, incremented on every edit |
-| `approved_at` | `timestamptz` (UTC), set at approval, cleared on edit |
+| `approved_at` | `timestamptz` (UTC), set at approval. **Never cleared** — see below |
 | `approved_by` | the auth subject that approved (`SessionUser.sub`) |
-| `itinerary_hash` | SHA-256 over the canonical `ItineraryV1` JSON — what an approval is *of* |
+| `itinerary_hash` | SHA-256 over the `ItineraryV1` serialized per **RFC 8785 (JCS)** — what an approval is *of*. "Canonical JSON" without a named standard is insufficient in the two ways ADR-0025 A5 documents (Python escapes non-ASCII and renders `28.0` where JS renders `28`); a hash compared across the Python writer and any other reader needs the same pinning the manifest hash does |
 | `superseded_by` | `uuid \| null` — the successor row when this one was superseded by an edit. **Required**: `contracts/plans.md` returns it on `GET /plans/{id}` and in the `409 plan_superseded` body, and without it a superseded row has no link to its successor and the field cannot be filled. Set in the same transaction that writes `revision+1`. |
 
 Every read and write is row-scoped to the auth subject (FR-007); another subject's `plan_id` is a `404`, never a `403`.
@@ -57,6 +57,14 @@ approved  ──compile claims it────────────▶ compili
 **Double approve resolves by compare-and-set.** `UPDATE user_plan SET status='approved', approved_at=now(), approved_by=:sub WHERE plan_id=:id AND status='proposed' AND itinerary_hash=:hash`. The first approve updates one row; the second updates **zero** and the handler returns the **existing** approval — an idempotent `200` carrying the same `approval_id` and the same `approved_at`. Never two approvals, never two bundles, and never an error the user has to interpret as a failure when nothing failed.
 
 **Stale approve is a `409` naming the successor.** If the user approves revision 3 while revision 4 exists, zero rows update and the response is `409` carrying `superseded_by` and the current `revision` — deliberately **the same idiom as ADR-0016's process-local `409` research guard**, so the API has one concurrency shape rather than two.
+
+**Nothing is ever cleared, and an earlier draft of this ADR said otherwise.** The column table used to read
+"`approved_at` … cleared on edit", which contradicts this ADR's own row-per-revision model and is **unimplementable**
+against `data-model.md` §6's constraint: the superseded row keeps `approved_at` as history, so an `UPDATE … SET
+status='superseded', approved_at=NULL` would both destroy the audit trail and, depending on the constraint's shape,
+raise a check violation and roll back — the exact transition Confirmation (d) and T026 assert. **An edit clears
+nothing.** The prior row keeps its approval and gains `superseded_by`; the successor row starts at `proposing` with
+`approved_at` and `approved_by` both `NULL` because it has never been approved.
 
 **How the two zero-row cases are told apart — corrected.** An earlier draft of this ADR said "the status predicate failing is idempotency; the *hash* predicate failing is staleness." **That is wrong given this ADR's own edit semantics.** Because an edit writes a *new row* at `revision+1` and marks the prior row `superseded`, the stale row is never mutated in place: its `itinerary_hash` still matches, and it is the **status** predicate (`superseded` ≠ `proposed`) that fails. The stated rule would therefore classify every real stale approve as idempotency and return `200` for a plan the user can no longer approve — and `itinerary_hash` would never be load-bearing at all.
 

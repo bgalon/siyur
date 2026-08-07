@@ -73,13 +73,32 @@ artifact bytes**. A hash that spans two files cannot say *which* one corrupted, 
 this manifest has exactly one hash beside it. The whole manifest is then hashed into `integrity.manifest_sha256` and
 checked at launch — the guard against silent OPFS eviction/corruption on iOS.
 
-**The manifest hash is canonicalized — this is a rule, not an implementation note.** `integrity.manifest_sha256` is the
-SHA-256 of the manifest serialized as **canonical JSON**: UTF-8 encoded, object keys sorted **lexicographically at every
-level**, no insignificant whitespace (`,` and `:` separators, no indentation), and the **`integrity` key omitted**
-entirely (a hash cannot cover itself). The digest is lowercase hex. Two implementations that canonicalize differently
-produce different digests and every bundle fails its own launch check, so this is fixed here rather than left to the
-writer: **sorted keys, no whitespace, `integrity` removed — not `integrity` set to `null`, not `integrity` set to an
-empty string.**
+**The manifest hash is canonicalized by RFC 8785 (JCS) — a named standard, not a list of properties.**
+`integrity.manifest_sha256` is the SHA-256 of the manifest serialized per
+**[RFC 8785, JSON Canonicalization Scheme](https://www.rfc-editor.org/rfc/rfc8785)**, with the **`integrity` key
+omitted** entirely before serialization (a hash cannot cover itself) — *removed*, not set to `null`, not set to an
+empty string. The digest is lowercase hex.
+
+**Why a named standard and not "sorted keys, UTF-8, no whitespace".** That description was this card's first attempt
+and it is **insufficient in exactly the two ways that fire on every real bundle.** The writer is Python and the
+launch-time verifier is TypeScript (T053), and they disagree by default:
+
+```
+PY  json.dumps(o, sort_keys=True, separators=(",",":"))
+    {"attribution":"© OpenStreetMap contributors","bbox":[28.0,36.0,28.5,36.5]}
+JS  JSON.stringify(o)
+    {"attribution":"© OpenStreetMap contributors","bbox":[28,36,28.5,36.5]}
+```
+
+Both divergences are real and both are load-bearing here: `json.dumps` defaults to `ensure_ascii=True` and escapes the
+`©`, which **every** manifest carries in its ODbL attribution; and Python renders `28.0` where JavaScript renders `28`,
+and `bbox` is the only float array in the schema. Sorted keys and stripped whitespace do not address either. A manifest
+written by one side and verified by the other therefore fails its own launch check — **offline, on the traveller's
+device, with no way to diagnose it.**
+
+RFC 8785 pins **string escaping and number formatting** as well as key ordering, which is precisely the gap. Verified
+implementations exist on both sides and are pinned at implementation per ADR-0007: **`rfc8785`** (PyPI) and
+**`canonicalize`** (npm, Apache-2.0). Hand-rolling either side re-opens the gap this paragraph exists to close.
 
 The compile order that produces this manifest (tech-design §5.3): `pmtiles extract` → base
 MapLibre style → Valhalla per-area build → legs + pruned graph → **quarantine filter** (recording `withheld`) → freeze

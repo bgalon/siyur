@@ -131,6 +131,7 @@ Feasibility compares `planned_start + dwell_min` against `opening_hours` **in th
 | `itinerary_hash` | `text NOT NULL` | SHA-256 over the canonical `ItineraryV1` JSON — what an approval is *of* |
 | `feasible` | `boolean NOT NULL` | the verdict |
 | `violations` | `jsonb NOT NULL DEFAULT '[]'` | the **named** violations of FR-005 |
+| `feasibility_checked_at` | `timestamptz NULL` | UTC; when feasibility last ran. **`contracts/plans.md` returns it as `feasibility.checked_at`** and had no column behind it — T024 would have either violated the contract or filled it from `updated_at`, which bumps on any write and would report a time feasibility did not run. Adding it after T009 would need a second `ask`-gated migration |
 | `created_at` / `updated_at` | `timestamptz NOT NULL` | UTC |
 
 ### The reconciled shape (T007b) — five documents previously disagreed
@@ -144,12 +145,28 @@ Feasibility compares `planned_start + dwell_min` against `opening_hours` **in th
 **The constraints, written over the post-approval set:**
 
 ```sql
-CHECK ((status IN ('approved','compiling','compiled')) = (approved_at IS NOT NULL))
+-- Post-approval states REQUIRE an approval timestamp. An IMPLICATION, not a
+-- biconditional: a `superseded` row keeps its `approved_at` as history, and a
+-- biconditional would reject exactly that row.
+CHECK (status NOT IN ('approved','compiling','compiled') OR approved_at IS NOT NULL)
 CHECK (status NOT IN ('approved','compiling','compiled') OR feasible)
+CHECK ((approved_at IS NULL) = (approved_by IS NULL))
 CHECK ((status = 'superseded') = (superseded_by IS NOT NULL))
 ```
 
-⚠️ **The obvious first constraint is wrong and was written down before this reconciliation:** `CHECK ((status='approved') = (approved_at IS NOT NULL))` **rejects `compiling` and `compiled` rows outright** — an approved plan violates its own constraint the moment ADR-0023's state machine advances it. Same trap for the infeasibility check. Both must name the whole post-approval set, not the single `approved` state.
+⚠️ **Two ways to get the first constraint wrong, and this document has now made both.**
+
+The *first* draft wrote `CHECK ((status='approved') = (approved_at IS NOT NULL))`, which **rejects `compiling` and
+`compiled` rows outright** — an approved plan violates its own constraint the moment the state machine advances it.
+
+The reconciliation then widened the left side to the post-approval set but **kept the biconditional**, which is wrong a
+second time: a `superseded` row that *was* approved keeps `approved_at` as history, giving `FALSE = TRUE` → violation.
+So superseding an approved plan — the transition ADR-0023's Confirmation (d) and T026 both assert — was **impossible at
+runtime**. Only an **implication** is correct: post-approval states *require* a timestamp; other states neither require
+nor forbid one. The `(approved_at IS NULL) = (approved_by IS NULL)` pairing stays a biconditional because those two
+genuinely move together.
+
+*(Original note, retained:)* **The obvious first constraint is wrong and was written down before this reconciliation:** `CHECK ((status='approved') = (approved_at IS NOT NULL))` **rejects `compiling` and `compiled` rows outright** — an approved plan violates its own constraint the moment ADR-0023's state machine advances it. Same trap for the infeasibility check. Both must name the whole post-approval set, not the single `approved` state.
 
 - Indexes: `ix_user_plan_user_id_area_id` (the scoped list read, mirroring `ix_user_note_user_id_site_id`) and `ix_user_plan_user_id_status`.
 - **Approval is a compare-and-set** on `(id, user_id, status='proposed', itinerary_hash)`. One row updates; a concurrent second updates **zero**, and the handler then *reads the row* and branches on its actual state — `approved` with the same hash ⇒ idempotent `200`; `superseded` ⇒ `409` with `superseded_by`; `proposed` with a different hash ⇒ `409` stale. **Do not infer staleness from which predicate failed**: because an edit writes a *new* row rather than mutating this one, the stale row's hash still matches and it is the *status* predicate that fails (ADR-0023, corrected).
