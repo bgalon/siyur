@@ -380,6 +380,15 @@ copying. `prompts/narration.md` v1 owns that"*. v1's answers:
   Enforced as a bound on the longest verbatim token run shared with the source. CC BY-SA would
   permit a straight copy; the product should still not ship one, and the prompt says so in a form
   a test can check.
+  - **The bound is 20 tokens** (`MAX_VERBATIM_RUN` in `planner/nodes/narrate.py`): a shared run of
+    **21 or more** lowercased `\w+` tokens drops the story. Recorded here because §4.1 makes this
+    number **version-bumping**, and a version-bumping constant that lives only in code cannot be
+    bumped by anyone reading the registry. v1 set it at 20 on the evidence in this file: §3.2's own
+    worked example shares runs of 9–10 tokens with its source, and an encyclopedic sentence runs
+    longer than that, so a tighter bound would drop honest adaptations while a looser one stops
+    catching lifted paragraphs.
+  - Comparison is by hashed n-gram in one pass, not by longest-common-subsequence over the full
+    wikitext — the same question, answered without the quadratic cost on a 31,000-character article.
 
 **The cacheable-prefix floor.** The `curate` tier pins Sonnet 5, whose **minimum cacheable prefix
 is 1,024 tokens** (`MIN_CACHEABLE_PREFIX_TOKENS` in `evals/test_caching.py`, read from the
