@@ -76,6 +76,44 @@ Both `auto_*` flags **default to `True`**, and with `auto_country=True` an uncov
 
 **Confirmation owed by T014/T015**, in addition to the frozen-clock table already specified: a test that both `auto_*` flags are passed `False`; a test that an `SH`-bearing expression yields `hours_unknown` **via the token scan**, not via a `ParserError` that never fires; and a test that an uncovered country (e.g. `IL`) yields `hours_unknown` rather than an evaluated answer.
 
+### Amendments (2026-08-07/08, second session — verified by execution)
+
+*Numbered A7+ to sit after the 2026-08-08 block above; two sessions amended this ADR in parallel and both sets are kept.*
+
+- **A7 — `SH` does not raise, so "reject loudly" cannot be a `try/except`.** `OpeningHours("SH off")` constructs cleanly and `.state()` returns `CLOSED`; only genuinely malformed input raises `ParserError`. A `try/except ParserError` wrapper would evaluate `SH` rules as ordinary ones — wrong answers, no exception — while passing every row of its own rejection table. The wrapper must **detect the `SH` token itself**. `OpeningHours(...).warnings` is an attribute (not a method) and is **empty** for `SH`, so it is not an alternative.
+- **A8 — a missing country degrades to "open", which is the dangerous direction.** `Mo-Fr 09:00-17:00; PH off` on Greek Independence Day (Wed 2026-03-25) returns **`open` without a country** and `closed` with `country="GR"`. The fail-closed posture therefore has to cover the *input* as well as the expression: **a `PH`-bearing expression with no `country_code` yields `hours_unknown`, never a verdict.** This also promotes `area.country_code` from a completeness gap to a **correctness blocker** — `timezonefinder` resolves no country, so until one is wired every `PH` rule in the commons would evaluate wrongly.
+- **A9 — `.state()` takes a `datetime`, not a string.** A string raises `TypeError`, which reads like a parse failure and would be swallowed by a broad `except`. (This one cost me a wrong verification: my first check passed strings and concluded `SH` *did* raise, from all four expressions including the valid ones.)
+
+  **SUPERSEDED IN PART on 2026-08-08.** The `auto_country=False` half stands. The
+  `auto_timezone=True` half is **withdrawn**: this amendment argued the flag on for solar
+  accuracy, not having seen the wheel's SBOM. **A6 above is decisive** — the flag reads
+  `tzf-dist` (**ODbL-1.0**), the one share-alike component among 144, so enabling it would
+  give the project a share-alike obligation in exchange for a selector M1 barely uses. Both
+  flags are pinned **off**, and the solar cost measured here is paid instead by refusing sun
+  expressions outright (A11). The measurement below is retained because it is what makes that
+  cost explicit rather than invisible.
+
+- **A10 — the library infers a country from coordinates unless told not to, and the obvious hardening of its sibling flag is wrong.** Two constructor flags, measured on 2026-08-08 rather than assumed:
+
+  | | |
+  |---|---|
+  | `auto_country` | defaults to inferring a country **from `coords`**. With coords supplied, `Mo-Fr 09:00-17:00; PH off` on Greek Independence Day returns `closed` — a correct-looking verdict from a country **nobody supplied or vetted**. Without coords the flag is inert. |
+  | `auto_timezone` | gates whether `coords` are used for **solar** computation at all. |
+
+  The hazard is not that it fails open — it is that it **quietly succeeds**, which would *bypass* A2's rule that a `PH`-bearing expression with no `country_code` yields `hours_unknown`. The guard would never fire. So the wrapper pins **`auto_country=False`** explicitly at every construction site, even where no coords are passed today, so that adding coords later cannot silently re-enable inference.
+
+  **`auto_timezone` is pinned `True`, and the instinct to "make them consistent" is a defect.** Measured at Rhodes on the summer solstice with coords and an explicit timezone supplied in both runs:
+
+  ```
+  auto_timezone=True    06:30 = open     19:45 = open      ← the real sun
+  auto_timezone=False   06:30 = closed   19:45 = closed    ← a generic 07:00–19:00 day,
+  no coords             06:30 = closed   19:45 = closed      byte-identical to passing no coords
+  ```
+
+  Setting it `False` makes coordinates inert for solar work and silently degrades every sun-event expression to a generic day — while looking like hardening. It does **not** override the caller's timezone (Rhodes coords with `America/New_York` yields the same instant, differently expressed). *This amendment exists because the coordinator directed `auto_timezone=False` and the implementer refused it with the measurement above. The measurement belongs in the ADR so the directive cannot be re-issued.*
+
+- **A11 — sun events are refused OUTRIGHT, and coordinates do not rescue them.** `sunrise-sunset` with no `coords` falls back to a generic day, so at **Reykjavik in winter** it reports **open** at 08:00, 09:00, 16:00, 17:00 and 18:00 while the sun is down. With `auto_timezone` pinned off (A6/A10) coordinates are inert for solar work, so a sun expression cannot be answered correctly *at all*: **any sun-bearing expression yields `hours_unknown`**, with or without a location. Accepting one with coordinates would return the generic window dressed as the sun. Together with A2 this makes the rule general — *any* expression whose evaluation depends on context the caller did not supply is `hours_unknown`, not a guess.
+
 ### Consequences
 
 - Good: the opening-window half of feasibility is deterministic, offline, permissively licensed, and runs in Tier 1 with no sidecar; `DATA-LICENSES.md` loses an LGPL row rather than gaining an obligation.
