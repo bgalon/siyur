@@ -53,6 +53,21 @@ dependencies = [
     # structured prize; parsing them beats scraping rendered HTML.
     "mwparserfromhell~=0.7",
     # --- data model + web/service spine ---
+    # RFC 8785 (JSON Canonicalization Scheme) — the ONE serialization the manifest hash and
+    # `itinerary_hash` are defined over (ADR-0025 A5). Not a convenience: the writer is Python
+    # and the launch-time verifier is TypeScript (T053), and `json.dumps(sort_keys=True)`
+    # disagrees with `JSON.stringify` on both halves of every real manifest — it escapes the
+    # `©` that every ODbL attribution carries, and renders `28.0` where JS renders `28` (bbox
+    # is the schema's only float array). Each bundle would fail its own integrity check
+    # offline, on the device. JCS pins escaping and number formatting as well as key order;
+    # `canonicalize` (npm) is the pinned counterpart on the TS side.
+    #
+    # Publisher checked before locking per Constitution Article V (slopsquatting gate, CI job
+    # 6): `rfc8785` is Trail of Bits' trailofbits/rfc8785.py, Apache-2.0, first published
+    # 2024-03-06, 0.1.4 on 2024-09-27. Pinned to the patch series (`~=0.1.4`, i.e. <0.2)
+    # rather than the usual `~=major.minor`, because for a 0.x release a minor bump is a
+    # major bump — and a change in canonical output is a change in every bundle's hash.
+    "rfc8785~=0.1.4",
     "pydantic~=2.11",
     "fastapi~=0.118",
     "uvicorn~=0.34",

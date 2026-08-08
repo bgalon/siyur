@@ -80,7 +80,7 @@ omitted** entirely before serialization (a hash cannot cover itself) — *remove
 empty string. The digest is lowercase hex.
 
 **Why a named standard and not "sorted keys, UTF-8, no whitespace".** That description was this card's first attempt
-and it is **insufficient in exactly the two ways that fire on every real bundle.** The writer is Python and the
+and it is **insufficient in exactly the two ways Python and JavaScript disagree.** The writer is Python and the
 launch-time verifier is TypeScript (T053), and they disagree by default:
 
 ```
@@ -90,11 +90,17 @@ JS  JSON.stringify(o)
     {"attribution":"© OpenStreetMap contributors","bbox":[28,36,28.5,36.5]}
 ```
 
-Both divergences are real and both are load-bearing here: `json.dumps` defaults to `ensure_ascii=True` and escapes the
-`©`, which **every** manifest carries in its ODbL attribution; and Python renders `28.0` where JavaScript renders `28`,
-and `bbox` is the only float array in the schema. Sorted keys and stripped whitespace do not address either. A manifest
-written by one side and verified by the other therefore fails its own launch check — **offline, on the traveller's
-device, with no way to diagnose it.**
+Both divergences are real, and they fail differently — which matters for how they'd be found:
+
+- **Escaping fires on every manifest.** `json.dumps` defaults to `ensure_ascii=True` and escapes the `©` that every
+  bundle carries in its ODbL attribution. Constant, universal.
+- **Number formatting fires intermittently.** Python renders `28.0` where JavaScript renders `28`, but *only for
+  integral-valued floats*: a real Rhodes bbox `[28.216, 36.44, …]` serializes identically on both sides. It fires when
+  a `bbox` bound happens to land on a whole degree. **The intermittency makes this the worse of the two** — a hash
+  that mismatches for some areas and not others reads like corruption, not like a serialization bug.
+
+Sorted keys and stripped whitespace address neither. A manifest written by one side and verified by the other fails its
+own launch check — **offline, on the traveller's device, with no way to diagnose it.**
 
 RFC 8785 pins **string escaping and number formatting** as well as key ordering, which is precisely the gap. Verified
 implementations exist on both sides and are pinned at implementation per ADR-0007: **`rfc8785`** (PyPI) and
