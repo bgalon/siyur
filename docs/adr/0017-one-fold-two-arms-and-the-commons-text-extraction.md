@@ -1,8 +1,8 @@
 # 0017 — Cross-engine string folding: one definition, two emitted arms — and the `commons/text.py` extraction it owes
 
-- Status: proposed
+- Status: accepted
 - Decision Maker(s): Ben
-- drafted-by: claude-code · approved-by: _pending_ · Date: 2026-08-01
+- drafted-by: claude-code · approved-by: Ben · Date: 2026-08-01 · accepted: 2026-08-07
 
 ## Context and Problem Statement
 

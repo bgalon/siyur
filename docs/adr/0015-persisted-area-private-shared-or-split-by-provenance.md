@@ -1,8 +1,8 @@
 # 0015 — A persisted `area` is private, row-scoped to `created_by` (and what would change that)
 
-- Status: proposed
+- Status: accepted
 - Decision Maker(s): Ben
-- drafted-by: claude-code · approved-by: _pending_ · Date: 2026-08-01
+- drafted-by: claude-code · approved-by: Ben · Date: 2026-08-01 · accepted: 2026-08-07
 
 ## Context and Problem Statement
 
@@ -83,6 +83,24 @@ against a later Overture release is not the same answer, and nothing recovers wh
 came from the viewport button or from a lasso. If Ben expects to land on C, persisting the
 `SourceRef` on the area row is worth doing *before* there is data to backfill; that is a
 schema addition A does not need but C requires, and it decides nothing on its own.
+
+> **Accepted 2026-08-07: keep the door open.** The resolver's `SourceRef` **is** to be persisted on
+> the `area` row, landing in the **Spec 002 T009 migration** — the migration already touching
+> `area` to add `timezone` and `country_code` (ADR-0025 ruling 2) — so it costs one migration
+> instead of two, and lands while the table is still effectively empty.
+>
+> This is **not** a decision to adopt option C, and it does not resolve PRD §13 #4. Policy stays
+> **A — always private**. What it buys is that C remains *available*: the column records which
+> division answered, or that no source did, at the only moment that information exists. If Ben
+> later settles on A or B permanently, the column is a small piece of honest provenance on a row
+> that has none; if he settles on C, it is the difference between a policy change and an
+> unrecoverable one.
+>
+> **Owed by T009's author:** the column is written on **every** insert path, including the
+> user-supplied `bbox`/`polygon` path — where the honest value records that the geometry came from
+> the user (`kind="user"`), not `NULL`. A nullable column filled only on the division path
+> reproduces the exact ambiguity it exists to remove, because "no source" and "not recorded" become
+> indistinguishable.
 
 **This ADR does not resolve §13 #4.** It records the slice-001 posture for one table and names
 what would change it. The reserved-decisions list is not amended.

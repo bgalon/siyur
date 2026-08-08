@@ -1,8 +1,13 @@
 # 0019 — Attribution is *co-present* with its value, not *permanently visible*
 
-- Status: proposed
+- Status: accepted
 - Decision Maker(s): Ben
-- drafted-by: claude-code · approved-by: _pending_ · Date: 2026-08-06
+- drafted-by: claude-code · approved-by: Ben · Date: 2026-08-06 · accepted: 2026-08-08
+
+> **Ratified 2026-08-08 on the value-scoped reading of FR-004**, with option F as an **explicitly
+> interim** state rather than the destination. One consequence below is discharged, three items
+> are pulled forward, and one contradiction is flagged rather than settled. See the amendment at
+> the end.
 
 ## Context and Problem Statement
 
@@ -207,8 +212,20 @@ the place-scoped reading is preferred, **E** is the option that satisfies it at 
   a touch user's path to a name is the popup (tap), which is the full cited fact list. Correct, but
   a heavier interaction than the desktop peek, and undocumented in the UI.
 - **Bad — accessibility, where co-presence is easiest to lose.** Three distinct gaps:
-  (a) an unnamed site is a focusable `role="button"` with **no accessible name** (WCAG 4.1.2),
-  pinned today by `sites.test.ts:516-521`;
+  (a) ~~an unnamed site is a focusable `role="button"` with **no accessible name** (WCAG 4.1.2),
+  pinned today by `sites.test.ts:516-521`~~ — **✎ FIXED, and more completely than this ADR asked.
+  Verified 2026-08-08.** `aria-label` is now set **before** the early return
+  (`web/src/map/sites.ts:305-310`, with the SC 4.1.2 reasoning in the comment), and
+  `markerAccessibleName` gives an unnamed marker `"Unnamed place <lat, lon> <location chip>"` —
+  carrying **the location's own stamp, read per record** (an Overture site reads
+  `OVERTURE · CDLA-Permissive-2.0`, never a hardcoded OSM credit). Five cases pin it under
+  *"a focusable marker always has an accessible name (WCAG 2.2 SC 4.1.2)"*, including that it
+  holds in labelled mode and that nothing from `names` leaks in.
+  **This strengthens the decision's central argument rather than merely closing a bug.** §1 above
+  defends dot mode on the grounds that a dot's only rendered value is `site.location`, whose chip
+  "has always lived in the popup" — i.e. it leaned on a *tolerated exemption*. That exemption is
+  now closed: the coordinates a dot renders carry their stamp co-presently, so rule 5 is
+  implemented and tested rather than asserted;
   (b) a screen-reader user tabbing a dense viewport hears the full chip text on **every** marker —
   "· ODbL-1.0 · © OpenStreetMap contributors" ~780 times — which is co-presence honoured at the
   cost of usability;
@@ -259,3 +276,45 @@ Revisit on **either**, whichever comes first:
 One forward-looking note, not a trigger: **E** is the destination this decision is deferring, and
 it gets cheaper the earlier it is taken — every surface built against `Marker`-per-site DOM is
 another surface to port.
+
+---
+
+## Amendment — ratification terms (2026-08-08)
+
+**FR-004 is read value-scoped**, as `contracts/sites.md` already glossed it before #64 existed.
+Option **F is ratified as an interim state, not the destination**: the sparse case keeps literal
+place-scoped compliance, and **E remains the end state**.
+
+**What is settled.** A value's text never reaches any surface without its `source + license` stamp
+in the same element, in the same frame. Density may vary **whether a value is rendered at all** —
+never whether its stamp accompanies it. The map-level ODbL credit renders unconditionally, gated
+by no interaction. Neither of those is up for revisiting.
+
+**Three items pulled forward, because two of them fire inside the slice already in flight:**
+
+1. **Write the owed mechanical guard.** *(Verified absent 2026-08-08.)* An AST test alongside the
+   genericity scan asserting that **no module outside `attribution-chip.ts` reads
+   `SourcedValue.value` for display**. This is the one property the whole invariant rests on and
+   the only one with nothing behind it but review — and review is exactly what the 2026-08-07
+   Footgun-1 violation showed is not a guard. `renderSourcedValue`'s shape makes "name without
+   chip" hard; it does not make it impossible for the *next* module.
+2. **Decide the bundle's co-presence mechanism at T051, not after it.** Revisit trigger 1 above —
+   "the first surface that renders values with no interaction available" — **is the compiled
+   offline bundle**, which is DU-06 and in flight now. There, "on interaction" is not somewhere
+   attribution can move to, so co-presence must be discharged by **layout**: a chip inline with
+   every value, or a per-page credit block naming each value's source. The bundle's existing
+   answer, a regenerated `ATTRIBUTION.md`, is an **aggregate** credit and does **not** establish
+   per-value co-presence. Whoever implements T051 owes that decision explicitly rather than
+   discovering it.
+3. **Schedule E rather than treating it as hypothetical.** It is the only option that closes
+   consequence (c) — the low-vision user who magnifies but runs no screen reader, and therefore
+   gets neither the visual label nor the `aria-label`. No test can catch that gap and `aria-label`
+   does not discharge it. Every surface built on `Marker`-per-site DOM is another port.
+
+**Flagged, deliberately not settled here: the authoritative UX spec contradicts this invariant.**
+`ux-handoff` Screen 2 puts the place name permanently on the map with its stamps in the
+place-record sheet — value and stamp on two surfaces, which rule 2 forbids. The shipped
+implementation is therefore **stricter than the design authority**, not looser. Building M2's
+schematic map to the mock means amending this ADR; building it to this ADR means deviating from
+the mock. That is a live contradiction with a known owner, and it should be resolved **when M2
+starts, not inside it**.
