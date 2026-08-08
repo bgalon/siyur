@@ -1,8 +1,8 @@
 # 0016 — The `409` "research already running" guard stays process-local for slice 001
 
-- Status: proposed
+- Status: accepted
 - Decision Maker(s): Ben
-- drafted-by: claude-code · approved-by: _pending_ · Date: 2026-08-01
+- drafted-by: claude-code · approved-by: Ben · Date: 2026-08-01 · accepted: 2026-08-07
 
 ## Context and Problem Statement
 
@@ -118,6 +118,22 @@ Revisit the moment the API is deployed as **more than one process**, by any of t
 That is a configuration change, so it is checkable at deploy time rather than by vigilance: **if
 the process count is about to exceed one, this ADR must be revisited in the same change.** Until
 then the guard is exactly as strong as the deployment needs it to be, and no stronger.
+
+> **Accepted 2026-08-07, with one addition: make the trigger announce itself.** As written the
+> trigger is *checkable* at deploy time, but nothing performs the check — it relies on whoever
+> changes the worker count remembering that this ADR exists. That is the same shape as the
+> Footgun-1 violation of 2026-08-07 and the duplicated-session waste of FAIL-008: a correct,
+> well-placed rule that nobody read at the moment it applied.
+>
+> **Owed:** a startup check in the API that detects a multi-process deployment (worker count > 1,
+> or an equivalent signal) and emits a loud warning naming this ADR and the `409` contract clause
+> it invalidates. A **warning, not a refusal** — the deployment is not wrong, only the contract's
+> promise is, and refusing to boot over a cost-saving guard would be a worse trade than the
+> duplicate fan-out it prevents.
+>
+> This is a guardrail, not a fix: it does not make the guard cross-process. When it fires, the
+> landing change is **B (the Postgres advisory lock)**, and it owes the test this ADR notes is
+> absent — two sessions, one area, exactly one `409`.
 
 A second, weaker trigger: if the UI ever needs to *display* an in-flight pass to another user,
 the claim must become observable and C wins over B on that requirement alone.

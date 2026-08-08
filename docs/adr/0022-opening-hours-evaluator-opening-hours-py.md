@@ -32,11 +32,17 @@ Chosen: **`opening-hours-py`**, wrapped behind a narrow `commons/opening_hours.p
 
 **M1 supports the subset `opening-hours-py` parses, plus PH where the country is covered by the embedded holiday database. Everything else is a named infeasibility, not a guess.** Partial support that fails closed is the posture; a silent wrong answer is the failure SC-002 exists to prevent.
 
+> **Amended 2026-08-08, before approval — three claims below were verified false against the
+> installed 2.1.4 wheel.** The *decision* is unchanged and still right; three of the *reasons*
+> given for it were wrong, and one is load-bearing for the entire fail-closed posture. Struck in
+> place rather than deleted, per the ADR-0018 precedent. **Approving this ADR does not approve the
+> struck claims.**
+
 **It fails closed three ways:**
 
-1. An expression the library refuses to parse is **never guessed** — the stop is marked **`hours_unknown`**, which **blocks a silent feasibility pass** and surfaces as a **named conflict** per FR-005.
-2. **`SH`-bearing expressions**, and any form the parser rejects, are **rejected loudly with the raw string shown** — never approximated, never smoothed over.
-3. **`PH` is trusted only where the area's country is in the embedded holiday database**; elsewhere PH-bearing rules degrade to **`hours_unknown`**, never to "open".
+1. An expression the library refuses to parse is **never guessed** — the stop is marked **`hours_unknown`**, which **blocks a silent feasibility pass** and surfaces as a **named conflict** per FR-005. *(Holds.)*
+2. ~~**`SH`-bearing expressions**, and any form the parser rejects, are **rejected loudly with the raw string shown** — never approximated, never smoothed over.~~ **✎ The library does not do this.** `"Mo-Su 10:00-18:00; SH off"` parses clean, `warnings == []`, `validate()` returns `True`, and it evaluates as though the `SH` clause were absent. **`commons/opening_hours.py` (T014) must detect the `SH` token itself** and force `hours_unknown`. The obvious implementation — `try: OpeningHours(...) except ParserError` — **never fires**, so T015's rejection table would pass against a wrapper that does nothing while a school-holiday closure evaluates as open in production.
+3. **`PH` is trusted only where the area's country is in the embedded holiday database**; elsewhere PH-bearing rules degrade to **`hours_unknown`**, never to "open". *(Holds — but only under amendment A1.)* **Coverage is 122 countries**: probing all 676 two-letter codes, 554 raise `UnknownCountryError`. Absent include **`IL`**, `IN`, `TH`, `MY`, `PK`, `AE`, `SA`, `QA`, `JO`, `LB`, `IQ`, `IR`, `PS`, `ET`, `TZ`, `SN`, `CI`, `DZ` — most of the Middle East, South and Southeast Asia, and much of Africa; roughly 127 assigned codes in total. `UnknownCountryError` is raised **at construction**, before any evaluation, and for **every** expression rather than only PH-bearing ones — so the wrapper must route it to `hours_unknown` and **must never retry without a country** (see A1).
 
 **Nothing is ever defaulted to open.** A documented library limit is carried through as-is: expressions evaluate as **closed before 1900 and after 9999**. And **the LLM never evaluates hours** (FR-004).
 
@@ -46,7 +52,29 @@ Chosen: **`opening-hours-py`**, wrapped behind a narrow `commons/opening_hours.p
 - **Win 2 — no second language runtime in compile or CI.** A Node sidecar means a JS runtime and per-call IPC in a Python compile path, for a feature that must run inside a deterministic pytest tier. Prebuilt wheels also keep the Rust toolchain out of CI.
 - **Loss — `SH` support.** Real, and paid rather than hidden: `opening_hours.js` has full PH **and SH** with locale context, and we do not. Every SH-bearing expression is rejected into `hours_unknown` — a worse plan-review experience on the (rare) stops that use it, in exchange for the two wins above. `opening_hours.js` is kept as the **conformance oracle**, not the runtime.
 
-**Version discipline:** 2.1.4 (2026-07-07) is what was verified; the exact pin is **resolved-then-pinned at implementation** (ADR-0007), at which point two things are checked against the installed wheel — whether any embedded **school-holiday** dataset exists (none was found), and **wheel coverage on the CI runner architecture** (PyPI advertises cp310–cp314 across manylinux / macOS-arm64; a source build would drag Rust into CI).
+**Version discipline:** 2.1.4 (2026-07-07) is what was verified; the exact pin is **resolved-then-pinned at implementation** (ADR-0007), at which point two things are checked against the installed wheel — ~~whether any embedded **school-holiday** dataset exists (none was found)~~ *(see A3 — one exists)*, and **wheel coverage on the CI runner architecture** (PyPI advertises cp310–cp314 across manylinux / macOS-arm64; a source build would drag Rust into CI).
+
+### Amendments (2026-08-08) — verified against the installed 2.1.4 wheel
+
+**A1 — the mandatory call shape. This ADR's central claim is true only under it.** Every construction is:
+
+```python
+OpeningHours(expr, timezone=tz, country=cc, auto_country=False, auto_timezone=False)
+```
+
+Both `auto_*` flags **default to `True`**, and with `auto_country=True` an uncovered country is **silently swallowed**: `OpeningHours("Mo-Su 00:00-24:00; PH off", coords=(32.08, 34.78))` — Tel Aviv — constructs fine, `warnings == []`, and `PH` is simply never applied. Same for Delhi, Juba, and open ocean at `(0.0, -140.0)`: no error, no warning. Separately, **`country=None` with a `PH` clause evaluates `OPEN`** — so "omit the country on failure" is the one repair the wrapper must never make.
+
+"**Nothing is ever defaulted to open**" is therefore a property of *how we call the library*, not of the library. That makes it a **ruling**, not a style note, and **T014 owes a test asserting both flags are off**.
+
+**A2 — regional public holidays are a silent hole, closed by an oracle rather than by the library.** With `country="DE"`, 2026-01-06 Epiphany, 08-15 Assumption and 10-31 Reformation all return `state=open, is_unknown()=False` — although all three are present in the wheel's own `holidays_public.regional.txt` (733 DE rows). No subdivision code is accepted: `DE-BY`, `US-CA`, `ES-CT`, `GB-SCT` all raise `UnknownCountryError`. **The data ships and is unreachable**, and upstream's 1.4.0 changelog claim that regional holidays surface as unknown does not hold from Python in 2.1.4.
+
+**Mitigation (ADR-0029):** `holidays~=0.102` is pinned as a **coverage gate and cross-check oracle** — it is subdivision-aware where this library is not. Disagreement between the two → `hours_unknown`.
+
+**A3 — an embedded school-holiday dataset does exist**, contrary to Version discipline above: `holidays_school.global.txt`, covering **5 entities (DK, GL, IE, MX, NL)**. Partial, never applied, and unwarned — which is a **worse** failure mode than absent, and is the second reason A1's token scan is required rather than optional.
+
+**A4 — the wheel ships ODbL data, and our licence position depends on A1.** Parsing the CycloneDX SBOM the wheel carries at `opening_hours_py-2.1.4.dist-info/sboms/`: of 144 components exactly one is share-alike — **`tzf-dist 0.0.2026-b-fix1`, ODbL-1.0** (timezone-boundary polygons behind `auto_timezone`) — alongside `country-boundaries 1.2.0` (Apache-2.0, OSM-derived, behind `auto_country`). Nothing else is copyleft; no GPL/AGPL/LGPL anywhere. **Under A1 we read neither dataset**, so the `DATA-LICENSES.md` row stays a code-dependency row. Recorded because the flag defaults are `True`: a future caller who omits them changes the project's licence position without noticing, which is exactly the class of thing the registry exists to make mechanical.
+
+**Confirmation owed by T014/T015**, in addition to the frozen-clock table already specified: a test that both `auto_*` flags are passed `False`; a test that an `SH`-bearing expression yields `hours_unknown` **via the token scan**, not via a `ParserError` that never fires; and a test that an uncovered country (e.g. `IL`) yields `hours_unknown` rather than an evaluated answer.
 
 ### Amendments (2026-08-07, verified by execution after the ADR was drafted)
 
