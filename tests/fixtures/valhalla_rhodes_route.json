@@ -1,0 +1,394 @@
+{
+  "trip": {
+    "locations": [
+      {
+        "type": "break",
+        "lat": 36.44605,
+        "lon": 28.228003,
+        "original_index": 0
+      },
+      {
+        "type": "break",
+        "lat": 36.443635,
+        "lon": 28.228275,
+        "original_index": 1
+      },
+      {
+        "type": "break",
+        "lat": 36.44252,
+        "lon": 28.225656,
+        "side_of_street": "left",
+        "original_index": 2
+      }
+    ],
+    "legs": [
+      {
+        "maneuvers": [
+          {
+            "type": 1,
+            "instruction": "Walk southeast on Ακτή Σαχτούρη.",
+            "verbal_succinct_transition_instruction": "Walk southeast. Then Turn right to stay on Ακτή Σαχτούρη.",
+            "verbal_pre_transition_instruction": "Walk southeast on Ακτή Σαχτούρη. Then Turn right to stay on Ακτή Σαχτούρη.",
+            "verbal_post_transition_instruction": "Continue for less than 10 meters.",
+            "street_names": [
+              "Ακτή Σαχτούρη"
+            ],
+            "bearing_after": 142,
+            "time": 5.599,
+            "length": 0.007,
+            "cost": 5.599,
+            "begin_shape_index": 0,
+            "end_shape_index": 1,
+            "verbal_multi_cue": true,
+            "travel_mode": "pedestrian",
+            "travel_type": "foot"
+          },
+          {
+            "type": 10,
+            "instruction": "Turn right to stay on Ακτή Σαχτούρη.",
+            "verbal_transition_alert_instruction": "Turn right to stay on Ακτή Σαχτούρη.",
+            "verbal_succinct_transition_instruction": "Turn right.",
+            "verbal_pre_transition_instruction": "Turn right to stay on Ακτή Σαχτούρη.",
+            "verbal_post_transition_instruction": "Continue for 200 meters.",
+            "street_names": [
+              "Ακτή Σαχτούρη"
+            ],
+            "bearing_before": 142,
+            "bearing_after": 201,
+            "time": 163.999,
+            "length": 0.205,
+            "cost": 163.999,
+            "begin_shape_index": 1,
+            "end_shape_index": 14,
+            "travel_mode": "pedestrian",
+            "travel_type": "foot"
+          },
+          {
+            "type": 10,
+            "instruction": "Turn right onto the walkway.",
+            "verbal_transition_alert_instruction": "Turn right onto the walkway.",
+            "verbal_succinct_transition_instruction": "Turn right.",
+            "verbal_pre_transition_instruction": "Turn right onto the walkway.",
+            "verbal_post_transition_instruction": "Continue for 20 meters.",
+            "bearing_before": 136,
+            "bearing_after": 223,
+            "time": 16.0,
+            "length": 0.019,
+            "cost": 19.96,
+            "begin_shape_index": 14,
+            "end_shape_index": 16,
+            "rough": true,
+            "travel_mode": "pedestrian",
+            "travel_type": "foot"
+          },
+          {
+            "type": 10,
+            "instruction": "Turn right onto the walkway.",
+            "verbal_transition_alert_instruction": "Turn right onto the walkway.",
+            "verbal_succinct_transition_instruction": "Turn right.",
+            "verbal_pre_transition_instruction": "Turn right onto the walkway.",
+            "verbal_post_transition_instruction": "Continue for 50 meters.",
+            "bearing_before": 129,
+            "bearing_after": 230,
+            "time": 40.0,
+            "length": 0.05,
+            "cost": 36.0,
+            "begin_shape_index": 16,
+            "end_shape_index": 19,
+            "rough": true,
+            "travel_mode": "pedestrian",
+            "travel_type": "foot"
+          },
+          {
+            "type": 15,
+            "instruction": "Turn left onto Ερμού.",
+            "verbal_transition_alert_instruction": "Turn left onto Ερμού.",
+            "verbal_succinct_transition_instruction": "Turn left.",
+            "verbal_pre_transition_instruction": "Turn left onto Ερμού.",
+            "verbal_post_transition_instruction": "Continue for 20 meters.",
+            "street_names": [
+              "Ερμού"
+            ],
+            "bearing_before": 234,
+            "bearing_after": 157,
+            "time": 16.8,
+            "length": 0.021,
+            "cost": 20.119,
+            "begin_shape_index": 19,
+            "end_shape_index": 21,
+            "travel_mode": "pedestrian",
+            "travel_type": "foot"
+          },
+          {
+            "type": 8,
+            "instruction": "Continue on the walkway.",
+            "verbal_transition_alert_instruction": "Continue on the walkway.",
+            "verbal_pre_transition_instruction": "Continue on the walkway. Then Turn left onto the walkway.",
+            "verbal_post_transition_instruction": "Continue for less than 10 meters.",
+            "bearing_before": 162,
+            "bearing_after": 172,
+            "time": 4.0,
+            "length": 0.005,
+            "cost": 8.6,
+            "begin_shape_index": 21,
+            "end_shape_index": 22,
+            "verbal_multi_cue": true,
+            "travel_mode": "pedestrian",
+            "travel_type": "foot"
+          },
+          {
+            "type": 15,
+            "instruction": "Turn left onto the walkway.",
+            "verbal_transition_alert_instruction": "Turn left onto the walkway.",
+            "verbal_succinct_transition_instruction": "Turn left. Then Turn right onto the walkway.",
+            "verbal_pre_transition_instruction": "Turn left onto the walkway. Then Turn right onto the walkway.",
+            "verbal_post_transition_instruction": "Continue for 20 meters.",
+            "bearing_before": 172,
+            "bearing_after": 116,
+            "time": 13.6,
+            "length": 0.017,
+            "cost": 12.24,
+            "begin_shape_index": 22,
+            "end_shape_index": 24,
+            "verbal_multi_cue": true,
+            "travel_mode": "pedestrian",
+            "travel_type": "foot"
+          },
+          {
+            "type": 10,
+            "instruction": "Turn right onto the walkway.",
+            "verbal_transition_alert_instruction": "Turn right onto the walkway.",
+            "verbal_succinct_transition_instruction": "Turn right. Then You will arrive at your destination.",
+            "verbal_pre_transition_instruction": "Turn right onto the walkway. Then You will arrive at your destination.",
+            "verbal_post_transition_instruction": "Continue for less than 10 meters.",
+            "bearing_before": 131,
+            "bearing_after": 190,
+            "time": 2.437,
+            "length": 0.003,
+            "cost": 2.193,
+            "begin_shape_index": 24,
+            "end_shape_index": 25,
+            "verbal_multi_cue": true,
+            "travel_mode": "pedestrian",
+            "travel_type": "foot"
+          },
+          {
+            "type": 4,
+            "instruction": "You have arrived at your destination.",
+            "verbal_transition_alert_instruction": "You will arrive at your destination.",
+            "verbal_pre_transition_instruction": "You have arrived at your destination.",
+            "bearing_before": 190,
+            "time": 0.0,
+            "length": 0.0,
+            "cost": 0.0,
+            "begin_shape_index": 25,
+            "end_shape_index": 25,
+            "travel_mode": "pedestrian",
+            "travel_type": "foot"
+          }
+        ],
+        "summary": {
+          "has_time_restrictions": false,
+          "has_toll": false,
+          "has_highway": false,
+          "has_ferry": false,
+          "min_lat": 36.443628,
+          "min_lon": 28.227812,
+          "max_lat": 36.446027,
+          "max_lon": 28.22852,
+          "time": 262.437,
+          "length": 0.328,
+          "cost": 268.713
+        },
+        "shape": "usnodA_|{yt@~A}AfCx@vZtLhGbArHEzDi@zGoBzDwA~FsCdB_ApAaBlAoBlJsNlBeC~AlBpC}EdJpOt@zAlCtFvCqArEwApAMrBmH\\Fz@L"
+      },
+      {
+        "maneuvers": [
+          {
+            "type": 1,
+            "instruction": "Walk south on the walkway.",
+            "verbal_succinct_transition_instruction": "Walk south. Then Turn right onto Σωκράτους.",
+            "verbal_pre_transition_instruction": "Walk south on the walkway. Then Turn right onto Σωκράτους.",
+            "verbal_post_transition_instruction": "Continue for less than 10 meters.",
+            "bearing_after": 190,
+            "time": 4.762,
+            "length": 0.005,
+            "cost": 4.286,
+            "begin_shape_index": 0,
+            "end_shape_index": 1,
+            "verbal_multi_cue": true,
+            "travel_mode": "pedestrian",
+            "travel_type": "foot"
+          },
+          {
+            "type": 10,
+            "instruction": "Turn right onto Σωκράτους.",
+            "verbal_transition_alert_instruction": "Turn right onto Σωκράτους.",
+            "verbal_succinct_transition_instruction": "Turn right.",
+            "verbal_pre_transition_instruction": "Turn right onto Σωκράτους.",
+            "verbal_post_transition_instruction": "Continue for 200 meters.",
+            "street_names": [
+              "Σωκράτους"
+            ],
+            "bearing_before": 190,
+            "bearing_after": 295,
+            "time": 159.4,
+            "length": 0.198,
+            "cost": 758.064,
+            "begin_shape_index": 1,
+            "end_shape_index": 14,
+            "travel_mode": "pedestrian",
+            "travel_type": "foot"
+          },
+          {
+            "type": 15,
+            "instruction": "Turn left onto Αγίου Φανουρίου.",
+            "verbal_transition_alert_instruction": "Turn left onto Αγίου Φανουρίου.",
+            "verbal_succinct_transition_instruction": "Turn left.",
+            "verbal_pre_transition_instruction": "Turn left onto Αγίου Φανουρίου.",
+            "verbal_post_transition_instruction": "Continue for 50 meters.",
+            "street_names": [
+              "Αγίου Φανουρίου"
+            ],
+            "bearing_before": 278,
+            "bearing_after": 184,
+            "time": 39.999,
+            "length": 0.05,
+            "cost": 41.0,
+            "begin_shape_index": 14,
+            "end_shape_index": 18,
+            "travel_mode": "pedestrian",
+            "travel_type": "foot"
+          },
+          {
+            "type": 10,
+            "instruction": "Turn right to stay on Αγίου Φανουρίου.",
+            "verbal_transition_alert_instruction": "Turn right to stay on Αγίου Φανουρίου.",
+            "verbal_succinct_transition_instruction": "Turn right. Then Turn left to stay on Αγίου Φανουρίου.",
+            "verbal_pre_transition_instruction": "Turn right to stay on Αγίου Φανουρίου. Then Turn left to stay on Αγίου Φανουρίου.",
+            "verbal_post_transition_instruction": "Continue for less than 10 meters.",
+            "street_names": [
+              "Αγίου Φανουρίου"
+            ],
+            "bearing_before": 193,
+            "bearing_after": 279,
+            "time": 4.0,
+            "length": 0.005,
+            "cost": 3.599,
+            "begin_shape_index": 18,
+            "end_shape_index": 19,
+            "verbal_multi_cue": true,
+            "travel_mode": "pedestrian",
+            "travel_type": "foot"
+          },
+          {
+            "type": 15,
+            "instruction": "Turn left to stay on Αγίου Φανουρίου.",
+            "verbal_transition_alert_instruction": "Turn left to stay on Αγίου Φανουρίου.",
+            "verbal_succinct_transition_instruction": "Turn left.",
+            "verbal_pre_transition_instruction": "Turn left to stay on Αγίου Φανουρίου.",
+            "verbal_post_transition_instruction": "Continue for 40 meters.",
+            "street_names": [
+              "Αγίου Φανουρίου"
+            ],
+            "bearing_before": 279,
+            "bearing_after": 191,
+            "time": 35.2,
+            "length": 0.044,
+            "cost": 31.68,
+            "begin_shape_index": 19,
+            "end_shape_index": 22,
+            "travel_mode": "pedestrian",
+            "travel_type": "foot"
+          },
+          {
+            "type": 10,
+            "instruction": "Turn right to stay on Αγίου Φανουρίου.",
+            "verbal_transition_alert_instruction": "Turn right to stay on Αγίου Φανουρίου.",
+            "verbal_succinct_transition_instruction": "Turn right.",
+            "verbal_pre_transition_instruction": "Turn right to stay on Αγίου Φανουρίου.",
+            "verbal_post_transition_instruction": "Continue for 50 meters.",
+            "street_names": [
+              "Αγίου Φανουρίου"
+            ],
+            "bearing_before": 186,
+            "bearing_after": 277,
+            "time": 41.6,
+            "length": 0.052,
+            "cost": 37.44,
+            "begin_shape_index": 22,
+            "end_shape_index": 29,
+            "travel_mode": "pedestrian",
+            "travel_type": "foot"
+          },
+          {
+            "type": 10,
+            "instruction": "Turn right onto Ζήνωνος.",
+            "verbal_transition_alert_instruction": "Turn right onto Ζήνωνος.",
+            "verbal_succinct_transition_instruction": "Turn right. Then Your destination will be on the left.",
+            "verbal_pre_transition_instruction": "Turn right onto Ζήνωνος. Then Your destination will be on the left.",
+            "verbal_post_transition_instruction": "Continue for 20 meters.",
+            "street_names": [
+              "Ζήνωνος"
+            ],
+            "bearing_before": 175,
+            "bearing_after": 258,
+            "time": 12.426,
+            "length": 0.015,
+            "cost": 16.183,
+            "begin_shape_index": 29,
+            "end_shape_index": 32,
+            "verbal_multi_cue": true,
+            "travel_mode": "pedestrian",
+            "travel_type": "foot"
+          },
+          {
+            "type": 6,
+            "instruction": "Your destination is on the left.",
+            "verbal_transition_alert_instruction": "Your destination will be on the left.",
+            "verbal_pre_transition_instruction": "Your destination is on the left.",
+            "bearing_before": 263,
+            "time": 0.0,
+            "length": 0.0,
+            "cost": 0.0,
+            "begin_shape_index": 32,
+            "end_shape_index": 32,
+            "travel_mode": "pedestrian",
+            "travel_type": "foot"
+          }
+        ],
+        "summary": {
+          "has_time_restrictions": false,
+          "has_toll": false,
+          "has_highway": false,
+          "has_ferry": false,
+          "min_lat": 36.442569,
+          "min_lon": 28.225659,
+          "max_lat": 36.443824,
+          "max_lon": 28.228319,
+          "time": 297.388,
+          "length": 0.37,
+          "cost": 892.254
+        },
+        "shape": "y}iodA}l|yt@hBVwB`IIfFSbQ?jDZjKgAzJK~AoBhZy@lIWjCALqAvSKlCjADvCPlFPlLvBMjBPLlJx@fKn@K|BhBf@L@dIdA\\D`DBrDSXjCR|D??"
+      }
+    ],
+    "summary": {
+      "has_time_restrictions": false,
+      "has_toll": false,
+      "has_highway": false,
+      "has_ferry": false,
+      "min_lat": 36.442569,
+      "min_lon": 28.225659,
+      "max_lat": 36.446027,
+      "max_lon": 28.22852,
+      "time": 559.826,
+      "length": 0.698,
+      "cost": 1160.967
+    },
+    "status_message": "Found route between points",
+    "status": 0,
+    "units": "kilometers",
+    "language": "en-US"
+  }
+}

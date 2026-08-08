@@ -1,0 +1,94 @@
+{
+  "sources_to_targets": [
+    [
+      {
+        "from_index": 0,
+        "to_index": 0,
+        "time": 0,
+        "distance": 0.0
+      },
+      {
+        "from_index": 0,
+        "to_index": 1,
+        "time": 262,
+        "distance": 0.328
+      },
+      {
+        "from_index": 0,
+        "to_index": 2,
+        "time": 504,
+        "distance": 0.629
+      }
+    ],
+    [
+      {
+        "from_index": 1,
+        "to_index": 0,
+        "time": 262,
+        "distance": 0.328
+      },
+      {
+        "from_index": 1,
+        "to_index": 1,
+        "time": 0,
+        "distance": 0.0
+      },
+      {
+        "from_index": 1,
+        "to_index": 2,
+        "time": 297,
+        "distance": 0.369
+      }
+    ],
+    [
+      {
+        "from_index": 2,
+        "to_index": 0,
+        "time": 525,
+        "distance": 0.654
+      },
+      {
+        "from_index": 2,
+        "to_index": 1,
+        "time": 296,
+        "distance": 0.368
+      },
+      {
+        "from_index": 2,
+        "to_index": 2,
+        "time": 0,
+        "distance": 0.0
+      }
+    ]
+  ],
+  "sources": [
+    {
+      "lat": 36.446027,
+      "lon": 28.228047
+    },
+    {
+      "lat": 36.443628,
+      "lon": 28.228319
+    },
+    {
+      "lat": 36.442569,
+      "lon": 28.225659
+    }
+  ],
+  "targets": [
+    {
+      "lat": 36.446027,
+      "lon": 28.228047
+    },
+    {
+      "lat": 36.443628,
+      "lon": 28.228319
+    },
+    {
+      "lat": 36.442569,
+      "lon": 28.225659
+    }
+  ],
+  "units": "kilometers",
+  "algorithm": "timedistancematrix"
+}
