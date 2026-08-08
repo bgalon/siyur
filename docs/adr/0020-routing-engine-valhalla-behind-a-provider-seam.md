@@ -1,8 +1,8 @@
 # 0020 — Routing engine: self-hosted Valhalla, per-area graph at compile, behind a `RoutingProvider` seam
 
-- Status: proposed
+- Status: accepted
 - Decision Maker(s): Ben
-- drafted-by: claude-code (Opus 5) · approved-by: _pending_ · Date: 2026-08-07
+- drafted-by: claude-code (Opus 5) · approved-by: Ben · Date: 2026-08-07 · accepted: 2026-08-08
 
 ## Context and Problem Statement
 
