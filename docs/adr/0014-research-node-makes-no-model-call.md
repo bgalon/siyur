@@ -1,8 +1,8 @@
 # 0014 — The `research` node makes no model call: a deterministic adapter fan-out
 
-- Status: proposed
+- Status: accepted
 - Decision Maker(s): Ben
-- drafted-by: claude-code · approved-by: _pending_ · Date: 2026-08-01
+- drafted-by: claude-code · approved-by: Ben · Date: 2026-08-01 · accepted: 2026-08-08
 
 ## Context and Problem Statement
 
@@ -52,3 +52,20 @@ Option 3 was rejected because the label is load-bearing in three places (`tasks.
 - **`prompts/research.md` §2** — the registry states the absence explicitly and links here, so the next reader of T033's label finds the reconciliation.
 - **Trajectory eval** — `resolve_area → research → curate` superset match still holds; the node sequence is unchanged by this decision, only the tool-vs-model character of one step.
 - **Open until closed:** T033's label still reads "(Haiku tier via the seam)" in `tasks.md`. That is the one live inconsistency this ADR knowingly leaves behind.
+
+### Revisit trigger — LLM query formulation, expected but not yet earned
+
+**Accepted 2026-08-08 with an explicit expectation of revisiting.** Ben's view on approval: *option A is right now, and option C will be needed later.* Recorded here so it is a **scheduled question rather than a rediscovered one** — the next session to ask "where is the LLM in research?" should find this section, not re-derive the whole debate.
+
+**Option C — the model formulates the query, not the results.** Today `SourceAdapter.fetch(polygon)` takes **only a polygon**: no query, no interests, no categories. Nothing lets "half-day, art + coffee" influence *what gets fetched*; the pipeline fetches everything inside the polygon and lets `curate` rank it. C would put a model *before* the fetch, turning a user's stated interests into source-side selectors (Overture categories, OSM tags).
+
+C is materially different from option 2 above, and does **not** fall to the objections that killed it: the model would emit **tags, never values or coordinates**, so FR-003 and FR-005 are untouched, and it adds nothing to the record — it only narrows what is asked for.
+
+**Why it is not adopted now, and the condition that changes it.** The blocker is architectural rather than technical: **the commons is a shared global resource** and `research` is what populates it. Filtering the fetch by one user's interests writes one person's taste into shared data — the next user delimiting the same area inherits a commons shaped by someone else's preferences, and the coverage model (`researched_fraction`) would start meaning "researched *for art and coffee*" while still reporting a bare fraction. Interest filtering is **per-user**; the commons is **shared**; so today it belongs at plan time, where it already is.
+
+**Revisit when either becomes true:**
+
+1. **Fetch cost or volume makes fetch-everything untenable** — a metropolitan-scale polygon, or a source whose full extract is too large or too rate-limited to pull wholesale. This is the likely one, and it is a *cost* trigger, not a quality one.
+2. **Coverage becomes dimensioned.** The moment `researched_fraction` must answer "researched *for what*" rather than "researched", C stops being an optimisation and becomes the honest model. That is the real prerequisite: **C needs coverage to record which selectors a pass used**, or reuse silently serves a narrow pass as if it were a complete one — the same class of error ADR-0018's `covered = count > 0` was.
+
+Whichever lands first, C owes: a `fetch(polygon, query)` seam, selectors recorded on the coverage row, and a test that a narrowed pass can never satisfy a broader later request.
