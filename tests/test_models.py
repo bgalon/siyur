@@ -283,6 +283,9 @@ def test_stories_still_accept_a_cc_by_sa_story() -> None:
             license="CC-BY-SA-4.0",
             attribution="Wikivoyage: Rhodes (CC BY-SA 4.0)",
         ),
+        # Required since slice 002 (ADR-0025 ruling 8): a `Story` is not a `SourcedValue`,
+        # so this is the only staleness key bundled narration has.
+        observed_at=date(2026, 7, 25),
     )
     record = _record(stories=[story])
     assert record.stories[0].source.attribution is not None
