@@ -3,7 +3,9 @@
 # "front-matter (version, model, date, linked eval score)" (.specify/memory/constitution.md,
 # Article VII). They appear below under those names; everything else is annotation.
 prompt: narration
-version: 1 # v1 (2026-08-08): first version; specifies the text spec-002 T032 must ship
+version: 2 # v2 (2026-08-08): §3.2's worked examples rebuilt on an invented place — the shipped
+  # text carried a real one, which put a place name in product code (FR-001/SC-005) and made
+  # `evals/test_genericity.py` red. v1 (2026-08-08): first version; the text spec-002 T032 ships.
 date: 2026-08-08 # when this version was pinned / last re-verified against the code
 status: candidate # NOT `production` — planner/nodes/narrate.py does not exist yet (§3.1)
 
@@ -244,53 +246,59 @@ substantive prose and the answer is `{"text": null}`.
 
 ## Worked examples
 
+The place, the order and the article below are invented, so that no part of either example can
+be answered from memory rather than from the text in front of you.
+
 Given:
 
 {"language": "en",
- "place": {"names": ["Κάστρο Ιπποτών", "Palace of the Grand Master"]},
- "article": {"title": "Rhodes (city)",
-             "text": "The palace at the head of the Street of the Knights was built by the
- Knights Hospitaller in the 14th century on the site of a Byzantine citadel, and served as the
- residence of the Grand Master and the administrative seat of the order. An explosion in 1856
- destroyed much of the structure. The Italian administration rebuilt it in the 1930s, intending
- it as a residence for Victor Emmanuel III, and its interiors date from that reconstruction.
- Open 08:00-15:40 except Mondays; admission EUR 8."}}
+ "place": {"names": ["Вескельдская палата", "Hall of the Wardens"]},
+ "article": {"title": "Veskeld (city)",
+             "text": "The hall at the head of the Ropewalk Stair was built by the Wardens of
+ the Salt Road in the 15th century on the site of an earlier timber fortress, and served as the
+ residence of the First Warden and the administrative seat of the order. A fire in 1802
+ destroyed much of the structure. The Harmell Company, which then administered the coast,
+ rebuilt it in the 1890s as a residence for its governor Ansel Corveth, and its interiors date
+ from that reconstruction. Open 09:00-16:30 except Tuesdays; admission 5 crowns."}}
 
 Reply:
 
-{"text": "The Knights Hospitaller built this palace at the head of the Street of the Knights in
-the fourteenth century, on ground a Byzantine citadel had held before them. It was where the
-Grand Master lived and where the order administered its affairs.\n\nMuch of what they built did
-not survive: an explosion in 1856 destroyed a large part of the structure, and the Italian
-administration rebuilt it in the 1930s, intending it as a residence for Victor Emmanuel III. The
-interiors around you date from that reconstruction rather than from the medieval palace."}
+{"text": "The Wardens of the Salt Road built this hall at the head of the Ropewalk Stair in the
+fifteenth century, on ground an earlier timber fortress had held before them. It was where the
+First Warden lived and where the order administered its affairs.\n\nMuch of what they built did
+not survive: a fire in 1802 destroyed a large part of the structure, and the Harmell Company, by
+then the administration of the coast, rebuilt the hall in the 1890s as a residence for its
+governor, Ansel Corveth. The interiors around you date from that reconstruction rather than from
+the medieval hall."}
 
 Every sentence traces to the article, and the account stops where the article stops. The opening
 hours and the admission price are in the source and are absent from the reply — they are exactly
 the numbers that reach the traveller from their own data, on their own day. Nothing is added
-about the Knights Hospitaller, the citadel or Victor Emmanuel III from outside the article,
-although a great deal more is known about all three.
+about the Wardens of the Salt Road, the fortress or Ansel Corveth from outside the article. The
+invention is only a device for this example: where the place is real and a great deal more is
+known about all three, the rule is identical and considerably harder to keep.
 
 A second place, given the same article:
 
 {"language": "en",
  "place": {"names": ["Parking P3"]},
- "article": {"title": "Rhodes (city)",
-             "text": "Rhodes is the largest city on the island of Rhodes and its capital. The
- medieval old town, enclosed by the walls of the Knights Hospitaller, is a UNESCO World Heritage
- Site, and the modern town extends north and west of it around two harbours."}}
+ "article": {"title": "Veskeld (city)",
+             "text": "Veskeld is the largest city on the peninsula of the same name and its
+ administrative centre. The walled lower town, enclosed by the ramparts of the Wardens of the
+ Salt Road, is a protected historic quarter, and the modern city extends north and west of it
+ around two harbours."}}
 
 Reply:
 
 {"text": null}
 
-The article is real, substantive and correctly fetched; it simply says nothing about this car
-park. An account built from its description of the city would be about the city, credited to
+The article is substantive, well-formed and correctly fetched; it simply says nothing about this
+car park. An account built from its description of the city would be about the city, credited to
 this article, and attached to a car park — three separate ways of being wrong, and the sort of
 text that reads perfectly well while being worthless. `null` is the complete and correct answer,
-and a reply of `{"text": "Parking P3 sits within the medieval old town, a UNESCO World Heritage
-Site…"}` is the failure this whole prompt exists to prevent: every clause of it is traceable to
-the article, and it is still not an account of this place.
+and a reply of `{"text": "Parking P3 sits within the walled lower town, a protected historic
+quarter…"}` is the failure this whole prompt exists to prevent: every clause of it is traceable
+to the article, and it is still not an account of this place.
 ```
 
 ### 3.3 Call shape
@@ -370,7 +378,7 @@ copying. `prompts/narration.md` v1 owns that"*. v1's answers:
   faithfully adapted is short. A floor tight enough to bite would be standing pressure to pad
   from the model's own knowledge — which is the single failure this prompt exists to prevent, so
   a length rule that manufactured it would be worse than no length rule. Below 40 words the
-  instruction is `null`, not a stretched account. The worked example in §3.2 is 93 words for
+  instruction is `null`, not a stretched account. The worked example in §3.2 is 102 words for
   exactly this reason: its source extract is short, and the faithful adaptation of a short
   extract is the normal case, not a defect.
 - **A story outside the bound is dropped, not trimmed.** This matters more than the numbers: it
@@ -384,9 +392,12 @@ copying. `prompts/narration.md` v1 owns that"*. v1's answers:
     **21 or more** lowercased `\w+` tokens drops the story. Recorded here because §4.1 makes this
     number **version-bumping**, and a version-bumping constant that lives only in code cannot be
     bumped by anyone reading the registry. v1 set it at 20 on the evidence in this file: §3.2's own
-    worked example shares runs of 9–10 tokens with its source, and an encyclopedic sentence runs
-    longer than that, so a tighter bound would drop honest adaptations while a looser one stops
-    catching lifted paragraphs.
+    worked example shares a run of **11 tokens** with its source — measured with `_verbatim_run`,
+    not estimated — and an encyclopedic sentence runs longer than that, so a tighter bound would
+    start dropping honest adaptations while a looser one stops catching lifted paragraphs. The
+    worked example is held to the bound it documents: run through `_refuse` against its own source
+    extract, the reply in §3.2 passes every post-check, which an example a reader is meant to
+    imitate has to do.
   - Comparison is by hashed n-gram in one pass, not by longest-common-subsequence over the full
     wikitext — the same question, answered without the quadratic cost on a 31,000-character article.
 
@@ -394,9 +405,9 @@ copying. `prompts/narration.md` v1 owns that"*. v1's answers:
 is 1,024 tokens** (`MIN_CACHEABLE_PREFIX_TOKENS` in `evals/test_caching.py`, read from the
 `claude-api` skill). Anthropic caches nothing below the minimum **and raises no error** — that is
 FAIL-006, and it is why `cache_prefix=True` needs a prefix that clears the bar rather than a hope
-that it does. The §3.2 text is **9,333 UTF-8 bytes** — measured by extracting the fenced block
+that it does. The §3.2 text is **9,717 UTF-8 bytes** — measured by extracting the fenced block
 with the drift guard's own locator, not estimated. At `TYPICAL_BYTES_PER_TOKEN = 4` that is
-roughly 2,333 tokens, comfortably over Sonnet 5's floor. (Note the direction of the rigorous
+roughly 2,429 tokens, comfortably over Sonnet 5's floor. (Note the direction of the rigorous
 bound: `max_possible_tokens` proves a prefix is *under* a minimum, never over it. The claim here
 is an estimate, and the honest way to settle it is `usage.cache_creation_input_tokens` on a real
 call — which is what FAIL-006's guardrail measures for `curate`, and what nothing measures for
@@ -487,7 +498,7 @@ canary**, and strip scaffolding the newer model no longer needs. Two narration-s
 - **No judge pin.** Article VII pins the judge to a dated snapshot; T063 chooses it. Recorded as
   `null` with a reason rather than guessed.
 - **Caching is unasserted for this prompt (§3.5).** `evals/test_caching.py` watches `curate`'s
-  ranking prompt. 9,333 measured bytes clears Sonnet 5's floor today; nothing keeps it there,
+  ranking prompt. 9,717 measured bytes clears Sonnet 5's floor today; nothing keeps it there,
   and no call has yet confirmed a non-zero `cache_creation_input_tokens` for this prefix.
 - **`prompts/README.md`'s index does not list this file**, and its Status column has no
   `candidate` row. This session owns only `prompts/narration.md`; the index line belongs to
