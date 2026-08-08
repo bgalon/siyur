@@ -172,8 +172,8 @@ def test_public_holiday_needs_the_country_to_be_the_right_one() -> None:
             "country_not_supported",
         ),
         # Sun events without coordinates get a generic day, not a refusal, from the library.
-        ("sunrise-sunset", SOLSTICE_EVENING, GR, None, "sun_event_without_location"),
-        ("Mo-Su dawn-dusk", SOLSTICE_EVENING, GR, None, "sun_event_without_location"),
+        ("sunrise-sunset", SOLSTICE_EVENING, GR, None, "sun_event_unsupported"),
+        ("Mo-Su dawn-dusk", SOLSTICE_EVENING, GR, None, "sun_event_unsupported"),
         # Genuinely malformed input — the only rows a try/except wrapper would catch.
         ("not opening hours at all", TUE_MIDDAY, GR, None, "unparseable"),
         ("Mo-Fr 09:00-17:00 ||", TUE_MIDDAY, GR, None, "unparseable"),
@@ -261,21 +261,30 @@ def test_a_country_outside_the_holiday_database_only_blocks_holiday_rules() -> N
     assert evaluate(ALWAYS, GREEK_PH_MIDDAY, **israel).state == "open"
 
 
-def test_sun_events_use_the_real_sun_when_the_place_has_coordinates() -> None:
-    """19:30 at Rhodes on the solstice is daylight — and the generic fallback says otherwise.
+def test_sun_events_are_refused_outright_even_with_coordinates() -> None:
+    """A sun expression is `hours_unknown` whether or not the place has coordinates.
 
-    The library's coordinate-free sun window is a flat 07:00–19:00 everywhere on Earth, and it
-    *also* falls back to that window when `auto_timezone=False`, coordinates or not. So this
-    row is the tripwire for that flag: with the real sun (sunset 20:28 local) the answer is
-    open, with the fallback it is closed.
+    This test was the inverse until 2026-08-08: it asserted that coordinates unlock the real
+    sun (sunset 20:28 local at Rhodes on the solstice) and only a *missing* location was
+    refused. That behaviour required `auto_timezone=True`, and the flag reads `tzf-dist`
+    (**ODbL-1.0**) — the single share-alike component among the wheel's 144. A share-alike
+    obligation is not worth a selector M1 barely uses, so the flag is pinned off and solar
+    computation goes with it: verified, `coords` then yield a flat 07:00–19:00 day,
+    byte-identical to supplying none.
+
+    Which is why refusal is now **unconditional**. Accepting a sun expression *with*
+    coordinates would return that generic window dressed as the sun — at Reykjavik in winter
+    it reports open at 08:00 and 17:00 with the sun down. Same silent-wrong-answer class as
+    `PH` without a country, so the same answer: refuse.
     """
-    with_coords = evaluate("sunrise-sunset", SOLSTICE_EVENING, location=RHODES, **GR)
-    assert with_coords.state == "open"
-    # After the true sunset it closes — so the row above is not just "open all evening".
-    after_sunset = evaluate("sunrise-sunset", datetime(2026, 6, 21, 21, 0), location=RHODES, **GR)
-    assert after_sunset.state == "closed"
-    # And without the coordinates it is not answered at all.
-    assert evaluate("sunrise-sunset", SOLSTICE_EVENING, **GR).state == "hours_unknown"
+    for location in (RHODES, None):
+        result = evaluate("sunrise-sunset", SOLSTICE_EVENING, location=location, **GR)
+        assert result.state == "hours_unknown"
+        assert result.reason == "sun_event_unsupported"
+        assert result.expression == "sunrise-sunset", "the raw expression is always retained"
+
+    # An ordinary expression is unaffected — the refusal is scoped to the selector.
+    assert evaluate(WEEKDAYS, TUE_MIDDAY, location=RHODES, **GR).state == "open"
 
 
 def test_the_caller_supplied_instant_is_the_one_evaluated(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -306,7 +315,11 @@ def test_the_caller_supplied_instant_is_the_one_evaluated(monkeypatch: pytest.Mo
     call = calls[0]
     assert call["when"] == TUE_MIDDAY, "state() must be given the caller's instant, never now()"
     assert call["auto_country"] is False, "a country inferred from coords is not the audited one"
-    assert call["auto_timezone"] is True, "False here silently ignores coords for sun events"
+    assert call["auto_timezone"] is False, (
+        "pinned OFF for licensing: the flag reads tzf-dist (ODbL-1.0), the one share-alike "
+        "component among the wheel's 144 (ADR-0022 A6). The cost — coords become inert for "
+        "solar work — is paid by refusing sun expressions outright, not by flipping this."
+    )
     assert call["country"] == "GR"
     # (lat, lon) at the library boundary; (lon, lat) everywhere in Siyur.
     assert call["coords"] == (RHODES.y, RHODES.x)

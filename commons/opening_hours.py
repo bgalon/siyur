@@ -116,7 +116,7 @@ UnknownReason = Literal[
     "school_holiday_selector",
     "public_holiday_without_country",
     "country_not_supported",
-    "sun_event_without_location",
+    "sun_event_unsupported",
     "unknown_timezone",
     "unparseable",
     "expression_says_unknown",
@@ -277,18 +277,26 @@ def evaluate(
             "silently ignored and the place reports as open",
         )
 
-    if _SUN_EVENT_RE.search(selectors) and location is None:
-        # Same shape as A2, one selector over. Without coordinates the library substitutes a
-        # generic day rather than refusing: verified at Reykjavik on the winter solstice,
-        # `sunrise-sunset` answers *open* at 08:00, 09:00, 16:00, 17:00 and 18:00 local while
-        # the sun is down — because the fallback window is roughly 07:00–19:00 everywhere on
-        # Earth. Latitude and season decide which way that error points, so it cannot be
-        # tolerated in either direction.
+    if _SUN_EVENT_RE.search(selectors):
+        # Refused UNCONDITIONALLY, not merely when `location` is missing — and the reason is
+        # licensing, not capability. Solar computation is gated by `auto_timezone`, which is
+        # pinned OFF because the flag reads `tzf-dist` (ODbL-1.0), the one share-alike
+        # component among the wheel's 144 (ADR-0022 A6). With it off, `coords` are inert for
+        # solar work: verified at Rhodes on the 2026 solstice, `sunrise-sunset` answers a
+        # generic 07:00–19:00 day whether or not coordinates are supplied.
+        #
+        # So supplying `location` cannot rescue a sun expression, and accepting one would
+        # return that generic window as if it were the sun. Verified dangerous direction:
+        # at Reykjavik on the winter solstice it reports *open* at 08:00, 09:00, 16:00, 17:00
+        # and 18:00 while the sun is down. `location` is still taken and still validated —
+        # it is what a future ADR would need to turn this back on — but it does not unlock
+        # a verdict today.
         return _unknown(
             expression,
-            "sun_event_without_location",
-            "sunrise/sunset/dawn/dusk need the place's coordinates; without them the "
-            "evaluator substitutes a generic day that is wrong away from the equator",
+            "sun_event_unsupported",
+            "sunrise/sunset/dawn/dusk need solar computation, which is disabled because it "
+            "reads ODbL timezone-boundary data (ADR-0022 A6); the evaluator would otherwise "
+            "substitute a generic day that is wrong away from the equator",
         )
 
     try:
@@ -379,22 +387,27 @@ def _construct(
     It earns its place by making the ``PH`` guard's removal or reordering fail closed instead
     of silently confident.
 
-    **``auto_timezone=True`` — pinned on, and it must stay on.** Despite the name, this flag
-    also gates whether ``coords`` are used for *solar* computation at all; turning it off does
-    not merely stop timezone inference, it makes ``coords`` a **no-op**. Verified at Rhodes
-    (36.4443, 28.2276) on the 2026 summer solstice for ``sunrise-sunset``, timezone
-    ``Europe/Athens`` supplied explicitly in both runs: ``True`` gives the real solar window
-    **05:49–20:28** local, ``False`` gives **07:00–19:00** — byte-identical to passing no
-    coordinates at all.
+    **``auto_timezone=False`` — pinned off, and the reason is licensing.** Of the 144
+    components in the wheel's CycloneDX SBOM, exactly one is share-alike: ``tzf-dist``
+    (**ODbL-1.0**), the timezone-boundary polygons this flag reads. ``country-boundaries``
+    behind ``auto_country`` is Apache-2.0. With both flags off we read neither dataset, so
+    the ``DATA-LICENSES.md`` row stays a *code-dependency* row rather than acquiring a
+    share-alike obligation — and a caller who quietly omits these kwargs would change the
+    project's licence position without noticing (ADR-0022 A6).
 
-    So ``False`` here would defeat the ``sun_event_without_location`` guard from the other
-    side: coordinates *were* supplied, the guard rightly stays quiet, and the answer is a
-    generic day anyway — wrong by an hour and a half at each end in Rhodes, and far worse at
-    high latitude. It does not override the caller's timezone either: with ``coords`` at Rhodes
-    but ``timezone=America/New_York``, sunset comes back as ``13:28-04:00`` — the same instant
-    as ``20:28+03:00``, rendered in the timezone we asked for. And with no ``coords`` the flag
-    is inert (verified identical results both ways), which is why it is safe to state
-    unconditionally here.
+    **The cost is real and is paid explicitly, not hidden.** Despite the name, this flag also
+    gates whether ``coords`` are used for *solar* computation at all. Verified at Rhodes
+    (36.4443, 28.2276) on the 2026 summer solstice for ``sunrise-sunset``, ``Europe/Athens``
+    supplied explicitly in both runs: ``True`` gives the real solar window **05:49–20:28**
+    local, ``False`` gives **07:00–19:00** — byte-identical to passing no coordinates at all.
+
+    So with the flag off, ``coords`` cannot rescue a sun expression. That is exactly why the
+    sun-event guard above refuses **unconditionally** rather than only when ``location`` is
+    missing: a generic window returned as if it were the sun is the same silent-wrong-answer
+    class as ``PH`` without a country, and it points either way depending on latitude and
+    season. An earlier version of this module pinned ``True`` for the solar accuracy and had
+    not yet seen the SBOM; the licence position is not tradeable for a selector M1 barely
+    uses.
     """
     return OpeningHours(
         expression,
@@ -402,5 +415,5 @@ def _construct(
         country=country_code,
         coords=coords,
         auto_country=False,
-        auto_timezone=True,
+        auto_timezone=False,
     )
