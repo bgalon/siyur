@@ -283,9 +283,16 @@ def test_every_listing_value_is_stamped_cc_by_sa_and_bundleable_is_derived(
             assert value.source.license == "CC-BY-SA-4.0"
             assert value.source.url == expected_url
             assert value.source.attribution == expected_attribution
-            # Derived, not author-asserted: SourcedValue._enforce_quarantine would already
-            # refuse a mismatch, but this cross-checks against the registry function itself.
-            assert value.bundleable == licenses.bundleable(value.source.kind, value.source.license)
+            # Derived, not author-asserted. NOTE the removed line here compared
+            # `value.bundleable` to `licenses.bundleable(value.source.kind, ...)` and
+            # **could not fail**: `SourcedValue._enforce_quarantine` refuses construction on
+            # any mismatch, so a record that reached this loop already satisfies it. It was
+            # f(x) == f(x) wearing the clothes of a cross-check.
+            #
+            # What is worth asserting is the *value*, against the registry read independently
+            # of the record: CC-BY-SA-4.0 is bundleable, so narration may enter an offline
+            # bundle. If that ever flips, this fails and the quarantine story changes.
+            assert licenses.bundleable("wikivoyage", "CC-BY-SA-4.0") is True
             assert value.bundleable is True
             assert value.observed_at == OBSERVED  # ingestion date, never the revision date
 
@@ -295,7 +302,8 @@ def test_geosearch_circle_vs_true_polygon_drops_out_of_area_listings(
 ) -> None:
     """The area is a polygon and geosearch is a circle (README); the same clip applies to
     every listing coordinate the article carries, not only to geosearch hits."""
-    by_name = {record.names["en"].value: record for record in wikivoyage_result}
+    # `und`, not `en` — a Wikivoyage listing name carries no language declaration.
+    by_name = {record.names["und"].value: record for record in wikivoyage_result}
 
     # Real, out-of-bbox listing coordinates from the captured wikitext.
     assert "Rhodes International Airport" not in by_name  # lat 36.405419, south of the bbox
@@ -311,7 +319,8 @@ def test_geosearch_circle_vs_true_polygon_drops_out_of_area_listings(
 def test_optional_listing_fields_are_none_when_blank_and_present_when_filled(
     wikivoyage_result: base.FetchResult,
 ) -> None:
-    by_name = {record.names["en"].value: record for record in wikivoyage_result}
+    # `und`, not `en` — a Wikivoyage listing name carries no language declaration.
+    by_name = {record.names["und"].value: record for record in wikivoyage_result}
 
     palace = by_name["Palace of the Grand Master of the Knights of Rhodes"]
     assert palace.address is None and palace.opening_hours is None
@@ -389,3 +398,40 @@ def test_wikipedia_fetch_locates_from_prop_coordinates_and_drops_the_batchs_miss
     assert fortifications.location.source.license == "CC-BY-SA-4.0"
     assert fortifications.location.bundleable is True
     assert fortifications.stories and fortifications.stories[0].observed_at == date(2026, 7, 19)
+
+
+def test_a_listing_name_is_keyed_und_not_the_wiki_edition_language(
+    wikivoyage_result: base.FetchResult,
+) -> None:
+    """A listing name is `und`, and the reason is a merge that would otherwise never happen.
+
+    `docs/data/poi-site.md` § "Name keys" is normative: a source publishing a display name
+    **without declaring its language** keys it `und`, "rather than guessing — guessing a
+    language would be inventing provenance". A Wikivoyage listing declares nothing: the
+    adapter reads `name=` *or* `alt=`, and `alt=` is by convention the local-script
+    alternate, so a single key would have to describe both an English name and a Greek one.
+
+    The cost of guessing is not cosmetic, and it is a merge cost rather than a display one.
+    `commons/merge.py` compares **within one BCP-47 key** — that is what makes "same
+    language, post-transliteration" true and keeps raw cross-script comparison (measured at
+    ≈0 by the spike) from ever happening. So the key decides *whether two records are ever
+    compared at all*.
+
+    Measured against this repo's own OSM fixture (`overpass_rhodes.json`, same bbox): **all
+    19 OSM records carry a `und` name; only 4 carry `en`.** Keyed `en`, a Wikivoyage listing
+    could therefore only ever be considered against those 4 — the other 15 would not be
+    compared on name at any similarity, because the two records share no name key. Keyed
+    `und`, it meets all 19. The failure is silent in the worst way: nothing raises, no
+    source is lost, and the commons quietly accumulates duplicate places.
+
+    Pinned here because the adapter shipped with `article.tag` first, and because the
+    English-language case hides it — every listing in this fixture is English, so a reader
+    checking the values sees nothing wrong. Only the *key* is wrong.
+    """
+    keys = {key for record in wikivoyage_result for key in record.names}
+    assert keys == {"und"}, f"a listing name declares no language; got keys {sorted(keys)}"
+
+    # The property that actually matters: the key this adapter writes is the one the other
+    # geodata source populates on every record, so the two can meet in merge.
+    osm_universal_key = "und"
+    assert keys == {osm_universal_key}

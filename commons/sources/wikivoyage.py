@@ -601,7 +601,21 @@ def _from_listing(
     ref = article.ref
     content = params.get("content", "")
     return SiteRecordV1(
-        names={article.tag: _stamp(name, ref, _CONFIDENCE, observed)},
+        # `und`, NOT the wiki edition's language. A listing's `name=`/`alt=` carries no
+        # language declaration of its own, and this very expression reads *either* slot —
+        # `alt=` is by convention the local-script alternate — so one key would have to
+        # describe both an English name and a Greek one. `docs/data/poi-site.md` § "Name
+        # keys" is normative: a source that publishes a display name without declaring its
+        # language keys it `und`, "rather than guessing — guessing a language would be
+        # inventing provenance". `osm.py` does the same for a bare `name` tag.
+        #
+        # This is not bookkeeping. `commons/merge.py` compares **within one BCP-47 key**,
+        # precisely so raw cross-script comparison never happens. File `Πύλη Ταρσανά`
+        # under `en` and it is compared against the OSM record's English `Gate of the
+        # Arsenal`, scores ≈0, misses τ=0.6, and the same gate — 3.4 m apart, this repo's
+        # own cross-source anchor — stays two commons records forever. The `und`↔`und`
+        # pairing that would match at 1.0 never happens, because the key was never made.
+        names={_UNDETERMINED: _stamp(name, ref, _CONFIDENCE, observed)},
         location=SourcedValue[Wgs84Point].stamp(
             value=point, source=ref, confidence=_CONFIDENCE, observed_at=observed
         ),
