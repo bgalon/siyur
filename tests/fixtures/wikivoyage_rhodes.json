@@ -1,0 +1,527 @@
+{
+  "_capture": {
+    "captured_utc": "2026-08-08T16:04:54Z",
+    "api": "MediaWiki Action API (action=query), formatversion=2",
+    "user_agent": "siyur/0.0 (https://github.com/bgalon/siyur)",
+    "area_bbox_4326": [
+      28.216,
+      36.44,
+      28.232,
+      36.451
+    ],
+    "geosearch_center_lat_lon": "36.4455|28.2240",
+    "note": "Verbatim API responses, one entry per request. Nothing reshaped, nothing hand-edited. See tests/fixtures/README.md for the field mapping ADR-0024's SourceRef needs."
+  },
+  "calls": [
+    {
+      "name": "wikivoyage_geosearch",
+      "endpoint": "https://en.wikivoyage.org/w/api.php",
+      "params": {
+        "action": "query",
+        "format": "json",
+        "formatversion": "2",
+        "list": "geosearch",
+        "gscoord": "36.4455|28.2240",
+        "gsradius": "1000",
+        "gslimit": "20"
+      },
+      "http_status": 200,
+      "response": {
+        "batchcomplete": true,
+        "query": {
+          "geosearch": [
+            {
+              "pageid": 29573,
+              "ns": 0,
+              "title": "Rhodes (city)",
+              "lat": 36.44,
+              "lon": 28.22,
+              "dist": 708.6,
+              "primary": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "wikivoyage_page_rhodes_city",
+      "endpoint": "https://en.wikivoyage.org/w/api.php",
+      "params": {
+        "action": "query",
+        "format": "json",
+        "formatversion": "2",
+        "prop": "revisions|info",
+        "rvprop": "ids|timestamp|content",
+        "rvslots": "main",
+        "inprop": "url",
+        "titles": "Rhodes (city)"
+      },
+      "http_status": 200,
+      "response": {
+        "batchcomplete": true,
+        "query": {
+          "pages": [
+            {
+              "pageid": 29573,
+              "ns": 0,
+              "title": "Rhodes (city)",
+              "revisions": [
+                {
+                  "revid": 5289050,
+                  "parentid": 5237282,
+                  "timestamp": "2026-06-07T13:23:53Z",
+                  "slots": {
+                    "main": {
+                      "contentmodel": "wikitext",
+                      "contentformat": "text/x-wiki",
+                      "content": "{{pagebanner | Rhodos banner Palace of Grand masters detail.jpg| pgname=Rhodes | unesco=yes}}\n'''Rhodes''' ([[Greek phrasebook|Greek]]: Ρόδος, ''Ródos'') is the largest settlement and capital city of the island of [[Rhodes|the same name]]. It is famous as the former site of the Colossus, one of the [[seven wonders]] of the ancient world, and as the oldest inhabited medieval town in Europe.\n\n==Understand==\n[[Image:Rhodes Knights St.JPG|thumb|The Avenue of the Knights in Rhodes Old Town]]\nMedieval buildings, mosques, traditional fountains, oriental motifs, Byzantine and Gothic churches, shops and cafeterias are scattered throughout the Old Town of Rhodes. There are approximately 200 streets or lanes that have no name, so getting lost is a distinct possibility.\n\n6000 people live and work in the same buildings in which the Knights of St. John lived 6 centuries ago.\n\n===Orientation===\nFor the traveller, Rhodes City falls into four more or less distinct areas.\n\n* '''Rhodes Old Town,''' still enclosed by its medieval wall.\n* '''Rhodes New Town,''' north and west of the Old Town, is an extensive modern city, with various places of interest.\n* New Town's '''eastern waterfront''', containing ''Commercial Harbor'', the yacht and ferry harbour ''Mandhraki Harbor'', and extensive ''Elli Beach''.\n* '''Acropolis of Rhodes,''' the ruins of the ancient city, are about 2 km southwest of the Old Town.\n\n===Tourist information===\n{{listing\n| name=Tourist information office | alt= | url=http://www.rhodes.gr/?lang=en  | email=\n| address= | lat=36.4476657 | long=28.220654 | directions=corner of Makariou & Papagou st\n| phone=+30 2241 044335, +30 2241 044336 | tollfree=\n| hours= | price=\n| wikipedia= | wikidata=\n| lastedit=2019-04-16\n| content=\n}}\n\n==Get in==\n{{mapframe|zoom=14|36.4418|28.2243}}\n{{Mapmask |36.4213,28.2315 |36.4219,28.2321 |36.4221,28.2329 |36.4220,28.2330 |36.4219,28.2332 |36.4220,28.2333 |36.4228,28.2333 |36.4231,28.2335 |36.4240,28.2336 |36.4250,28.2332 |36.4253,28.2330 |36.4255,28.2329 |36.4257,28.2330 |36.4259,28.2331 |36.4260,28.2333 |36.4260,28.2333 |36.4262,28.2335 |36.4270,28.2336 |36.4271,28.2336 |36.4274,28.2337 |36.4277,28.2339 |36.4280,28.2341 |36.4284,28.2343 |36.4286,28.2345 |36.4288,28.2347 |36.4289,28.2349 |36.4292,28.2351 |36.4296,28.2357 |36.4296,28.2357 |36.4298,28.2361 |36.4299,28.2364 |36.4300,28.2369 |36.4300,28.2370 |36.4300,28.2371 |36.4300,28.2372 |36.4299,28.2373 |36.4299,28.2374 |36.4297,28.2374 |36.4296,28.2375 |36.4295,28.2377 |36.4294,28.2379 |36.4293,28.2380 |36.4293,28.2382 |36.4292,28.2383 |36.4291,28.2386 |36.4293,28.2387 |36.4293,28.2386 |36.4294,28.2385 |36.4296,28.2385 |36.4298,28.2385 |36.4301,28.2387 |36.4302,28.2388 |36.4304,28.2390 |36.4306,28.2391 |36.4308,28.2393 |36.4312,28.2396 |36.4314,28.2398 |36.4317,28.2401 |36.4320,28.2403 |36.4324,28.2406 |36.4326,28.2408 |36.4328,28.2409 |36.4356,28.2409 |36.4361,28.2410 |36.4375,28.2409 |36.4375,28.2408 |36.4375,28.2405 |36.4375,28.2404 |36.4375,28.2404 |36.4373,28.2405 |36.4373,28.2406 |36.4328,28.2406 |36.4328,28.2405 |36.4327,28.2405 |36.4327,28.2405 |36.4317,28.2397 |36.4318,28.2396 |36.4316,28.2395 |36.4316,28.2394 |36.4318,28.2396 |36.4318,28.2395 |36.4317,28.2394 |36.4317,28.2393 |36.4319,28.2394 |36.4319,28.2394 |36.4320,28.2393 |36.4320,28.2385 |36.4326,28.2385 |36.4326,28.2392 |36.4324,28.2392 |36.4324,28.2393 |36.4327,28.2393 |36.4327,28.2392 |36.4326,28.2392 |36.4326,28.2385 |36.4335,28.2385 |36.4335,28.2391 |36.4335,28.2397 |36.4335,28.2398 |36.4335,28.2398 |36.4335,28.2396 |36.4335,28.2392 |36.4335,28.2382 |36.4350,28.2382 |36.4350,28.2392 |36.4350,28.2397 |36.4350,28.2398 |36.4351,28.2398 |36.4351,28.2397 |36.4351,28.2392 |36.4351,28.2382 |36.4357,28.2382 |36.4360,28.2386 |36.4360,28.2395 |36.4360,28.2395 |36.4360,28.2399 |36.4362,28.2399 |36.4362,28.2399 |36.4361,28.2399 |36.4361,28.2396 |36.4360,28.2396 |36.4361,28.2389 |36.4362,28.2389 |36.4364,28.2388 |36.4365,28.2388 |36.4365,28.2389 |36.4365,28.2389 |36.4365,28.2390 |36.4380,28.2390 |36.4380,28.2390 |36.4383,28.2390 |36.4383,28.2390 |36.4384,28.2389 |36.4383,28.2387 |36.4383,28.2386 |36.4384,28.2385 |36.4386,28.2385 |36.4389,28.2385 |36.4391,28.2385 |36.4392,28.2385 |36.4394,28.2386 |36.4394,28.2387 |36.4394,28.2388 |36.4394,28.2390 |36.4394,28.2391 |36.4394,28.2392 |36.4398,28.2392 |36.4403,28.2391 |36.4432,28.2391 |36.4446,28.2390 |36.4446,28.2390 |36.4470,28.2389 |36.4471,28.2389 |36.4472,28.2389 |36.4472,28.2389 |36.4476,28.2389 |36.4488,28.2371 |36.4487,28.2370 |36.4476,28.2386 |36.4474,28.2383 |36.4473,28.2385 |36.4447,28.2385 |36.4447,28.2372 |36.4443,28.2372 |36.4443,28.2369 |36.4430,28.2369 |36.4430,28.2366 |36.4418,28.2366 |36.4418,28.2364 |36.4417,28.2364 |36.4416,28.2364 |36.4416,28.2364 |36.4415,28.2362 |36.4415,28.2361 |36.4415,28.2361 |36.4413,28.2362 |36.4413,28.2362 |36.4413,28.2362 |36.4414,28.2360 |36.4413,28.2359 |36.4411,28.2361 |36.4410,28.2360 |36.4410,28.2359 |36.4409,28.2357 |36.4409,28.2354 |36.4409,28.2351 |36.4409,28.2348 |36.4410,28.2345 |36.4413,28.2341 |36.4415,28.2336 |36.4417,28.2334 |36.4420,28.2333 |36.4424,28.2333 |36.4425,28.2334 |36.4425,28.2335 |36.4426,28.2335 |36.4427,28.2335 |36.4429,28.2333 |36.4430,28.2333 |36.4431,28.2332 |36.4432,28.2332 |36.4433,28.2332 |36.4433,28.2332 |36.4433,28.2333 |36.4433,28.2333 |36.4433,28.2333 |36.4433,28.2334 |36.4434,28.2334 |36.4434,28.2334 |36.4434,28.2336 |36.4468,28.2332 |36.4472,28.2328 |36.4477,28.2321 |36.4476,28.2320 |36.4450,28.2320 |36.4445,28.2320 |36.4445,28.2314 |36.4442,28.2312 |36.4440,28.2312 |36.4439,28.2311 |36.4437,28.2310 |36.4436,28.2309 |36.4435,28.2307 |36.4435,28.2305 |36.4435,28.2299 |36.4435,28.2294 |36.4436,28.2293 |36.4438,28.2292 |36.4438,28.2293 |36.4439,28.2292 |36.4440,28.2290 |36.4458,28.2289 |36.4458,28.2287 |36.4448,28.2284 |36.4447,28.2281 |36.4448,28.2280 |36.4450,28.2279 |36.4452,28.2279 |36.4453,28.2279 |36.4454,28.2279 |36.4454,28.2279 |36.4462,28.2283 |36.4462,28.2283 |36.4462,28.2283 |36.4463,28.2284 |36.4463,28.2285 |36.4462,28.2293 |36.4462,28.2294 |36.4462,28.2295 |36.4461,28.2296 |36.4461,28.2296 |36.4461,28.2296 |36.4461,28.2296 |36.4461,28.2296 |36.4461,28.2296 |36.4461,28.2297 |36.4462,28.2297 |36.4462,28.2297 |36.4462,28.2298 |36.4463,28.2298 |36.4463,28.2298 |36.4463,28.2297 |36.4464,28.2297 |36.4464,28.2297 |36.4465,28.2296 |36.4465,28.2294 |36.4465,28.2293 |36.4466,28.2293 |36.4465,28.2292 |36.4466,28.2291 |36.4466,28.2291 |36.4466,28.2291 |36.4466,28.2290 |36.4466,28.2290 |36.4466,28.2288 |36.4466,28.2288 |36.4466,28.2287 |36.4466,28.2287 |36.4466,28.2286 |36.4467,28.2284 |36.4468,28.2283 |36.4469,28.2282 |36.4470,28.2282 |36.4472,28.2281 |36.4476,28.2280 |36.4481,28.2280 |36.4482,28.2280 |36.4481,28.2281 |36.4480,28.2281 |36.4481,28.2282 |36.4482,28.2281 |36.4483,28.2282 |36.4484,28.2282 |36.4484,28.2281 |36.4488,28.2282 |36.4489,28.2282 |36.4489,28.2281 |36.4491,28.2281 |36.4493,28.2281 |36.4496,28.2282 |36.4503,28.2283 |36.4508,28.2283 |36.4508,28.2283 |36.4510,28.2283 |36.4512,28.2283 |36.4514,28.2282 |36.4515,28.2281 |36.4516,28.2279 |36.4516,28.2277 |36.4515,28.2275 |36.4512,28.2275 |36.4511,28.2272 |36.4512,28.2265 |36.4511,28.2265 |36.4511,28.2266 |36.4511,28.2266 |36.4509,28.2275 |36.4507,28.2278 |36.4492,28.2276 |36.4480,28.2276 |36.4473,28.2269 |36.4473,28.2269 |36.4481,28.2259 |36.4488,28.2256 |36.4488,28.2258 |36.4487,28.2258 |36.4487,28.2260 |36.4489,28.2259 |36.4490,28.2259 |36.4489,28.2257 |36.4488,28.2257 |36.4488,28.2256 |36.4498,28.2254 |36.4498,28.2255 |36.4497,28.2255 |36.4497,28.2258 |36.4500,28.2257 |36.4500,28.2254 |36.4499,28.2255 |36.4498,28.2253 |36.4503,28.2252 |36.4503,28.2252 |36.4505,28.2252 |36.4505,28.2252 |36.4506,28.2252 |36.4506,28.2252 |36.4508,28.2253 |36.4509,28.2254 |36.4509,28.2257 |36.4510,28.2258 |36.4510,28.2259 |36.4511,28.2259 |36.4510,28.2258 |36.4510,28.2256 |36.4511,28.2256 |36.4512,28.2255 |36.4526,28.2253 |36.4526,28.2253 |36.4526,28.2254 |36.4527,28.2254 |36.4527,28.2257 |36.4526,28.2257 |36.4526,28.2257 |36.4526,28.2257 |36.4524,28.2258 |36.4524,28.2260 |36.4526,28.2259 |36.4526,28.2260 |36.4527,28.2262 |36.4527,28.2263 |36.4528,28.2263 |36.4528,28.2264 |36.4528,28.2265 |36.4526,28.2266 |36.4525,28.2265 |36.4525,28.2266 |36.4524,28.2266 |36.4525,28.2267 |36.4525,28.2267 |36.4526,28.2267 |36.4527,28.2267 |36.4527,28.2267 |36.4528,28.2267 |36.4528,28.2268 |36.4528,28.2268 |36.4528,28.2268 |36.4528,28.2269 |36.4528,28.2269 |36.4527,28.2270 |36.4527,28.2270 |36.4527,28.2271 |36.4528,28.2271 |36.4530,28.2272 |36.4530,28.2273 |36.4531,28.2272 |36.4531,28.2272 |36.4531,28.2270 |36.4532,28.2269 |36.4533,28.2269 |36.4533,28.2268 |36.4532,28.2268 |36.4533,28.2267 |36.4533,28.2266 |36.4533,28.2265 |36.4533,28.2264 |36.4533,28.2264 |36.4533,28.2264 |36.4532,28.2262 |36.4532,28.2262 |36.4532,28.2261 |36.4532,28.2260 |36.4532,28.2260 |36.4532,28.2260 |36.4531,28.2259 |36.4530,28.2259 |36.4531,28.2255 |36.4532,28.2250 |36.4534,28.2246 |36.4536,28.2242 |36.4538,28.2237 |36.4540,28.2234 |36.4544,28.2230 |36.4546,28.2228 |36.4548,28.2226 |36.4552,28.2223 |36.4555,28.2221 |36.4557,28.2219 |36.4559,28.2218 |36.4561,28.2217 |36.4564,28.2217 |36.4566,28.2217 |36.4568,28.2216 |36.4570,28.2216 |36.4572,28.2215 |36.4574,28.2214 |36.4576,28.2213 |36.4577,28.2210 |36.4578,28.2208 |36.4579,28.2208 |36.4580,28.2206 |36.4580,28.2203 |36.4580,28.2201 |36.4579,28.2199 |36.4577,28.2196 |36.4574,28.2194 |36.4572,28.2192 |36.4569,28.2191 |36.4566,28.2190 |36.4563,28.2189 |36.4559,28.2189 |36.4549,28.2187 |36.4545,28.2186 |36.4542,28.2185 |36.4540,28.2184 |36.4540,28.2183 |36.4536,28.2180 |36.4533,28.2178 |36.4532,28.2175 |36.4531,28.2173 |36.4531,28.2172 |36.4532,28.2171 |36.4533,28.2169 |36.4533,28.2168 |36.4532,28.2167 |36.4530,28.2166 |36.4528,28.2165 |36.4526,28.2164 |36.4523,28.2163 |36.4521,28.2163 |36.4519,28.2162 |36.4516,28.2161 |36.4511,28.2160 |36.4504,28.2157 |36.4501,28.2154 |36.4500,28.2154 |36.4499,28.2152 |36.4498,28.2150 |36.4496,28.2149 |36.4470,28.2131 |36.4456,28.2127 |36.4450,28.2123 |36.4433,28.2105 |36.4424,28.2095 |36.4418,28.2090 |36.4408,28.2086 |36.4376,28.2080 |36.4368,28.2076 |36.4361,28.2074 |36.4355,28.2076 |36.4347,28.2070 |36.4326,28.2063 |36.4314,28.2065 |36.4303,28.2075 |36.4293,28.2088 |36.4286,28.2088 |36.4274,28.2080 |36.4255,28.2069 |36.4242,28.2059 |36.4237,28.2054 |36.4229,28.2083 |36.4215,28.2097 |36.4213,28.2104 |36.4207,28.2108 |36.4201,28.2119 |36.4195,28.2147 |36.4186,28.2177 |36.4185,28.2185 |36.4188,28.2195 |36.4193,28.2201 |36.4192,28.2211 |36.4192,28.2228 |36.4189,28.2238 |36.4182,28.2252 |36.4182,28.2266 |36.4186,28.2278 |36.4194,28.2295 |36.4214,28.2297 |36.4211,28.2305 |36.4213,28.2315}}\n===By plane===\n{{go\n| name=Rhodes International Airport | alt={{IATA|RHO}} also known as Diagoras International Airport [Greek: Κρατικός Αερολιμένας Ρόδου, \"Διαγόρας\"] | url=https://www.rho-airport.gr/en/ | email=\n| address= | lat=36.405419 | long=28.086192 | directions=on the west coast about 14 km from Rhodes Town\n| phone= | tollfree= | fax=\n| hours= | price=\n| wikipedia=Rhodes International Airport | image=RHO RW25.png | wikidata=Q833555\n| content=It is the only airport of the island. Daily scheduled flights year-round from [[Athens]] and [[Thessaloniki]] on Aegean, while SkyExpress flies daily from/to Athens and [[Heraklion]] and less frequently to smaller Greek airports. Seasonal and charter flights by many European companies.\n}}\n\n''Getting from the airport:''\n* '''Buses''' arrive once or twice per hour at the central bus station (Averof st.), €2.50 (€3.50 at driver - payment only by card), ride takes 35 min. [https://www.rodospublictransport.gr/index.php?c=schedule&p=line&uid=NO50 Online timetable]{{Dead link|date=November 2025 |bot=InternetArchiveBot }}.\n* '''Taxi''' cost €25-30 (Apr 2019).\n\n===By bus===\nTwo bus stations are just outside the Old Town wall, near the waterfront, making buses a convenient way of getting to the city.\n\n* {{go\n| name=West coast bus station | alt=D.E.S. RODA bus station | url= | email=\n| address= | lat=36.44792 | long=28.22476 | directions=\n| phone= | tollfree=\n| hours= | price=\n| wikipedia= | wikidata=\n| lastedit=2019-04-16\n| content=Station for the buses going down the west side of the island, including airport. Operated by [https://desroda.gr Δ.Ε.Σ ΡΟΔΑ company].\n}}\n* {{go\n| name=KTEL bus station | alt= | url= | email=\n| address= | lat=36.44727 | long=28.22501 | directions=\n| phone= | tollfree=\n| hours= | price=\n| wikipedia= | wikidata=\n| lastedit=2019-04-16\n| content=Stations for the buses run by [https://ktelrodou.gr KTEL bus company].\n}}\n\n=== By ferry ===\nThere are regular ferries to Rhodes from [[Athens]], Fethiye and [[Marmaris]]. There are 4 daily ferries from the Marmaris and Fethiye with [https://feribotlines.com/yesil-marmaris-feribot-bileti/ Yeşil Marmaris],[https://www.ferryturk.com/en FerryTurk] and [https://www.e-ferry.gr e-Ferry.gr].\n\n{{go\n| name=Blue Star Ferries Dock | alt= | url= | email=\n| address= | lat= 36.4441| long=28.2379 | directions=\n| phone= | tollfree=\n| hours= | price=\n| wikipedia= | wikidata=\n| lastedit=2019-04-16\n| content=\n}}\n\n==Get around==\nIn the Old Town, the primary method of travel is your '''feet'''.\n\nThere are several '''bus routes''' within Rhodes city, operated by [https://desroda.gr Δ.Ε.Σ ΡΟΔΑ bus company]{{Dead link|date=January 2023 |bot=InternetArchiveBot }}.\n\n===By taxi===\nTaxi fares: €5-6 inside the city, Kalithea €15, Faliraki €20.\n\n{{go\n| name=Taxi stand | alt= | url= | email=\n| address= | lat=36.44722 | long= 28.22623| directions=\n| phone= | tollfree=\n| hours= | price=\n| wikipedia= | wikidata=\n| lastedit=2019-04-16\n| content=The main taxi stand close to the old city.\n}}\n\n==See==\n[[File:Windmills Rhodes harbour.jpg|thumb|upright|Ancient windmills in Rhodes]]\n===Old Town===\n'''Rhodes Old Town''' is surely the main attraction here, a [[UNESCO World Heritage Site]]. It is one of the best preserved and most extensive medieval towns in Europe. As you wander from the bus station, and over the outer wall and moat, it's like stepping back in time and reliving all your childhood dreams of being a knight and attacking exotic castles in distant lands. It is also the location of many monuments and several museums: make sure to get a good map. If you want to see it all, plan for at least a day, and two will not be amiss if you want to see all the museums.\n* {{see\n| name=Palace of the Grand Master of the Knights of Rhodes | alt= | url= | email=\n| address= | lat=36.44578 | long=28.22406 | directions=\n| phone= | tollfree=\n| hours= | price=\n| wikidata=Q931371\n| lastedit=2016-02-16\n| content=can be split into outside, courtyard, outside wall, first floor and second floor. Open in season till 20:00, entry is €6. A combined ticket at €10 includes the Archeological museum, The Decorative Arts Collection and Our Lady of the Castle church with orthodox art and a few frescoes. The outside wall surrounding the old town is a separate ticket at an additional €3. The ticket line may take 30 minutes so get all your tickets at once. The city wall is only open from 12:00 to 15:00.The first floor (photos prohibited) contains some artifacts of Ancient Rhodes but is closed. In its absence, the entrance fee is entirely not worth it. The Archaeological Museum offers more selection and allows photos. Second floor has a variety of later \"artifacts\" such as mosaics from Kos and other odd bits and bobs, but it has almost no descriptions (probably to force people to wait for a tour guide). The Palace of the Grand Masters was demolished by a gunpowder explosion in 1856 and reconstructed by the Italians as a summer residence for Mussolini in 1940. This knowledge (that this isn't actually an authentic swords and knights castle and is instead basically a souped up country mansion) somewhat lessens the excitement. Take your photos outside, and come back to look inside when the ground floor exhibitions on Rhodes are open.\n}}\n* {{see\n| name=Archbishops Palace | alt= | url= | email=\n| address=Evrèon Martyron Square | lat=36.44275 | long=28.22956 | directions=\n| phone= | tollfree= | fax=\n| hours= | price=\n| lastedit=2016-02-16\n| content=\n}}\n* {{see\n| name=Suleymaniye Mosque | alt= | url= | email=\n| address= | lat=36.444444 | long=28.224167 | directions=\n| phone= | tollfree=\n| hours= | price=\n| wikidata=Q2381941\n| lastedit=2016-02-16\n| content=\n}}\n* {{see\n| name=Rhodes Archaeological Museum | alt= | url=http://odysseus.culture.gr/h/1/eh155.jsp?obj_id=3312 | email=rotocol@kbepka.culture.gr\n| address=Megalou Alexandrou Square | lat=36.44483 | long=28.22706 | directions=\n| phone=+30 2241 075674, +30 2241 034719 | tollfree= | fax=+30 2241 031048\n| hours=Open in season till 20:00 | price=€3\n| wikidata=Q4785432\n|lastedit=2024-10-07| content=It has two floors, and most of the exhibits are on the second, past the big stairs. There are also gardens with statues and mosaic. Hard to find at the end of the garden is a several floor Ottoman home under reconstruction that is partially open. The museum operates a '''tour of the city walls''' Tuesdays and Saturdays at 08:00 leaving from the Palace of the Grand Masters. Visitors are simply allowed up on the walls to walk along the top of them at their own pace. This walk offers views of the town not otherwise available and is the best way to get an idea of the size of the town and the variety of its architecture.It is not ''guided''.\n}}\n\n* {{see\n| name=Museum of Modern Greek Art | alt= | url=https://www.mgamuseum.gr/index.php | email=\n| address= | lat=36.44605 | long=28.226955 | directions=\n| phone= | tollfree=\n| hours= | price=\n| wikidata=Q66058061\n| lastedit=2019-04-16\n| content=\n}}\n* {{see\n| name=Folk Museum | alt=Museum of Decorative Art | url= | email=\n| address= | lat=36.4453 | long=28.22707 | directions=\n| phone= | tollfree=\n| hours= | price=\n| wikipedia= | wikidata=\n| lastedit=2019-04-16\n| content=Very small museum with only one room.\n}}\n\n[[File:Temple Apollon Rhodes.jpg|thumb|Temple of Apollo]]\n\n===Acropolis of Rhodes===\nAcropolis of Rhodes is located on the highest part of the city. The monuments were built on stepped terraces, with substantial retaining walls. Free admission.\n* {{see\n| name=Temple of Athena Polias and Zeus Polieus | alt= | url= | email=\n| address= | lat=36.43990 | long=28.21041 | directions=\n| phone= | tollfree=\n| hours= | price=\n| wikipedia= | wikidata=Q3557443|image=Temple Apollon Rhodes.jpg\n| lastedit=2019-04-16\n| content=\n}}\n\n* {{see\n| name=Nymphaeums | alt= | url= | email=\n| address= | lat=36.43946 | long=28.21080 | directions=southeast of the Temple of Athena Polias and Zeus Polieus\n| phone= | tollfree=\n| hours= | price=\n| wikipedia= | wikidata=\n| lastedit=2019-04-16\n| content=Four subterranean \"structures\" cut into the rock, featuring entrance steps, passages, a large opening in the central roof, along with water cisterns, foliage and interior niches for statuettes. These \"caves\" were used for worship and recreational purposes.\n}}\n\n* {{see\n| name=Temple of Pythian Apollo | alt= | url= | email=\n| address= | lat= | long= | directions=on the southern end, just west of a large rectangular terrace\n| phone= | tollfree=\n| hours= | price=\n| wikipedia= | wikidata=\n| lastedit=2019-04-16\n| content=Part of the northeast side of this porous peripteral temple has been restored.\n}}\n[[File:Rhodes Acropolis1 tango7174.jpg|thumb|Odeon]]\n* {{see\n| name=Odeon | alt= | url= | email=\n| address= | lat=36.44013 | long=28.21174 | directions=northwest of the Stadium\n| phone= | tollfree=\n| hours= | price=\n| image=Rhodes Acropolis1 tango7174.jpg | wikidata=Q30503698\n| lastedit=2019-04-16\n| content=Small marble theatre which held approximately 800 spectators. It was used for musical performances and rhetoric lessons of prominent Rhodians.\n}}\n\n* {{see\n| name=Stoa building | alt= | url= | email=\n| address= | lat= | long= | directions=\n| phone= | tollfree=\n| hours= | price=\n| wikipedia= | wikidata=\n| lastedit=2019-04-16\n| content=The impressive façade was visible from even the harbor. Today just one foundation wall remains.\n}}\n\n* {{see\n| name=Artemision | alt= | url= | email=\n| address= | lat=36.44019 | long=28.21090 | directions=\n| phone= | tollfree=\n| hours= | price=\n| wikipedia= | wikidata=\n| lastedit=2019-04-16\n| content=The Artemis cult's place of worship is situated on the northeast side of the hill, amidst the ruins of other structures of similar function.\n}}\n\n[[File:Rhodes Acropolis2 tango7174.jpg|thumb|Stadium]]\n* {{see\n| name=Ancient Stadium | alt= | url= | email=\n| address= | lat=36.439 | long=28.21195 | directions=\n| phone= | tollfree=\n| hours= | price=\n| image=Rhodes Acropolis2 tango7174.jpg | wikidata=Q30503700\n| lastedit=2019-04-16\n| content=210-metre north-south stadium, restored by the Italians.\n}}\n\n===New Town===\n* {{see\n| name=Central Post Office | alt= | url= | email=\n| address= | lat=36.45034 | long=28.22448 | directions=\n| phone= | tollfree=\n| hours= | price=\n| wikidata=Q108731202\n| lastedit=2019-04-16\n| content=\n}}\n*'''Town hall, Theatre and Government House''' - Italian architecture.\n* {{see\n| name=Aquarium | alt=Institute of Marine Biology | url=http://rhodes-aquarium.hcmr.gr/ | email=\n| address= | lat=36.45698 | long=28.2207 | directions=\n| phone= | tollfree=\n| hours= | price=\n| wikidata=Q31833\n| lastedit=2016-02-16\n| content=\n}}\n* {{see\n| name=Annunciation church | alt= | url= | email=\n| address= | lat=36.45076 | long=28.22495 | directions=\n| phone= | tollfree= | fax=\n| hours= | price=\n| lastedit=2016-02-16\n| content=\n}}\n\n===Elsewhere===\n* {{see\n| name=Rodini Park | alt= | url= | email=\n| address= | lat=36.42718 | long=28.21961 | directions=\n| phone= | tollfree=\n| hours= | price=Free admission\n| wikipedia= | wikidata=\n| lastedit=2019-04-16\n| content=Historical park featuring Roman water supply system of the ancient city of Rhodes. It runs along a creek gorge and has a lot of birds, including peacocks.\n}}\n\n==Do==\n\n*'''Walk''' throughout this medieval city and its many streets and lanes by foot.\n*'''New Market'''\n\n==Buy==\n\n{{cautionbox| Colorful ''sea shells'' offered for sale - mostly in the harbour area - are often actually imported from [[Asia]] or the [[Caribbean]]. Not only do they provide a non-authentic Rhodes souvenir, ''many species for sale are also protected''. Bringing them back home may get you into considerable difficulty.}}\n* Many brand name products such as t-shirts, towels, hand bags and similar items for sale in the tourist shops may be fakes and/or unlicensed.\n*{{buy\n| name=Labyrinthos Arts & Crafts | url= | email=\n| address=Theofiliskou 1 | lat= | long= | directions=Near Roloi clocktower\n| phone= | tollfree= | fax=\n| hours= | price=\n| content=Original arts and creations by local artists, also the only place in the Old Town to sell historically accurate coat of arms of the Knights, medieval style heraldry and illuminated manuscripts.\n}}\n\n==Eat==\n\n* {{eat\n| name=Hatzikeli - Sea Food Taverna | url=https://hatzikelistavern.com/ | email=\n| address=Solomou Alchadef 9 | lat= | long= | directions=\n| phone=+30 2241 027215 | tollfree= | fax=\n| hours= | price=\n| content=One of the best tavernas, serving innovations on traditional Greek dishes. The stuffed, roasted eggplant is notable.\n}}\n* {{eat\n| name=Laganis | url= | email=\n| address=Solomou Alhadef 16 | lat= | long= | directions=\n| phone= | tollfree= | fax=\n| hours= | price=\n| content=A more traditional taverna with good mezedes.\n}}\n* {{eat\n| name=Mikes | alt=pronounced ''MEE-kehs'' | url= | email=\n| address=in a tiny lane by 17 Socratous Street, Old Town | lat=36.44376 | long=28.22767 | directions=\n| phone= | tollfree=\n| hours= | price=A decent sized meal with drinks will cost around €15 per person\n| content=A hole-in-the-wall place with outdoor seating in a cosy backstreet, tucked away from the tourist masses. Serves fish, salad, and wine, and not much else. Mikes is a very simple place to eat, but it is very pleasant, and the seafood, whilst being simple, is fresh, well prepared and tasty. The dorado is particularly tasty, and at €10 is good value.\n}}\n* {{eat\n| name=Pizanias | alt=The Sea Star | url= | email=\n| address=Sofokleos 24 | lat=36.44212 | long=28.22722 | directions=\n| phone= | tollfree= | fax=\n| hours= | price=A reasonable meal for two will cost about €30, with drinks on top\n| content=A decent sea food taverna with outdoor seating on the square. Fish is caught locally, then cooked on a grill built into the wall which means the smell of grilled sea food wafts over the local square! (Great publicity!) Because it's at the end of Sofokleos, you won't find quite as many people that come all the way down here, but it is worth giving the rest a miss and holding out for. The homemade tzatziki is very good, as is the grilled octopus.\n}}\n\n==Drink==\n\n* {{drink\n| name=Mevlana Turkish Coffee and Shisha Bar | alt= | url=https://turkish-coffee-rhodes.business.site/ | email=\n| address=76 Sokratous | lat= | long= | directions=\n| phone=+30 694 221 0846 | tollfree=\n| hours=Not open on Sundays | price=\n| content=A rare, wonderfully atmospheric survival of Ottoman old Rhodes in the middle of the tourist hordes. Run by a charming couple, it serves excellent coffee and a small range of other drinks. Not much food except for a few snacks.\n}}\n* {{drink\n| name=Avalon Cafe | url= | email=\n| address= | lat= | long= | directions=In the courtyard of the Avalon hotel on the backstreet behind the Spanish Tongue Auberge on Ippoton St\n| phone= | tollfree= | fax=\n| hours= | price=\n| content=Set in the quiet courtyard of an imposing 14th century town mansion, the Avalon cafe serves great drinks in a corner of Rhodes Old Town that most people don't even know exists. The courtyard is an oasis away from the bustle of Socratous St; make sure you head there when the cruise crowds get too much! Drinks are homemade, and the coffees are great, if a little expensive.\n}}\n* {{drink\n| name=Socrates Garden | url= | email=\n| address=Socratous 124 | lat= | long= | directions=\n| phone= | tollfree= | fax=\n| hours= | price=Coffees about €3-4, beer about €4.50\n| content=Coffee shop snack bar with a nice atmosphere in a fake Greek kind of way, but it's not ''too'' fake. A good, shaded place to grab a cold drink and rest from the sun and the busyness and tourist rat race that is Socratous St (so much so that you'll even find Greeks in there.)\n}}\n* {{drink\n| name=Colorado Nightclub | alt= | url=http://colorado.com.gr/ | email=\n| address=53, Orfanidou St | lat=36.4515 | long=28.21692 | directions=\n| phone=+30 2241 075120 | tollfree=\n| hours= | price=\n| lastedit=2016-03-03\n| content=Not good if your epilepsy is prone to photosensitivity.\n}}\n* {{drink\n| name=Elli Disco Club | alt= | url= | email=\n| address=Kontourioti sq | lat=36.45290 | long=28.22470 | directions=Mandraki Harbour\n| phone= | tollfree= | fax=\n| hours= | price=\n| lastedit=2016-03-03\n| content=\n}}\n\n==Sleep==\n\n===Budget===\n\n* {{sleep\n| name=Alia Studios | alt= | url= | email=paulelenis@gmil.com\n| address=Haraki Beach | lat=36.167251 | long=28.093758 | directions=\n| phone=+30 2244 051269 | tollfree= | fax=\n| checkin=12:00 | checkout=12:00 | price=€35 incl. breakfast\n| content=\n}}\n* {{sleep\n| name=Apollo Guesthouse | alt= | url= | email=\n| address=Omirou 28-C, Rhodes | lat=36.4411 | long=28.22695 | directions=about a 10-min walk south of the St John's gate in Old Town\n| phone=+30 2241 032003 | tollfree=\n| checkin=Afternoon | checkout=12:00 | price=US$35-60 per person\n| content=\n}}\n* {{sleep\n| name=Carina Hotel | url=http://www.carinahotel.gr/ | email=info@carinahotel.gr\n| address=56, Griva Street (Rhodes Town) Rhodes | lat=36.452422653145284 | long=28.219193816184998 | directions=\n| phone=+30 2241 022381 | tollfree= | fax=+30 2241 036541\n| hours= | price=Prices from €25\n| checkin=14:00 | checkout=12:00\n| content=Surrounded by shops, bars and restaurants, this hotel is a 3-minute walk from the beach, with easy access to old Rhodes city and the roads to ancient Lindos and Kalithea.\n}}\n* {{sleep\n| name=Mango Rooms | url=http://www.mangorooms.gr/ | email=\n| address=Sq. Dorieos 3, Rhodes | lat=36.44187| long=28.22641 | directions=in Old Town square, behind San Fanourios church\n| phone= | tollfree= | fax=\n| hours= | price=US$25-50 per person for a double room, depending on season. Nice man Dimitrius and his family -un this hotel in the middle of the walled town.\n| checkin=13:00 | checkout=12:00\n| content=\n}}\n*{{sleep\n| name=Rhodes Youth Hostel | alt= | url=https://rhodesyouthhostel.com/ | email=info@rhodesyouthhostel.com\n| address=Ergeiou 12, Rhodes Old Town | lat=36.443193 | long=28.225768 | directions=In Rhodes Old Town\n| phone=+30 2241 030491 | tollfree=\n| checkin= | checkout= | price=\n| lastedit=2026-06-07\n| content=Adults-only hostel in Rhodes Old Town with dormitory and private rooms, free Wi-Fi and air conditioning.\n}}\n* {{sleep\n| name=Spot Hotel | url= | email=spothot@otenet.gr\n| address=Perikleus Street 21, Rhodes Old Town, | lat=36.44204| long=28.22986 | directions=\n| phone=+30 2241 034737 | tollfree= | fax=\n| hours= | price=\n| checkin= | checkout=\n| content=Simple, well run hotel with good prices and location\n}}\n\n===Mid-range===\n\n* {{sleep\n| name=Europa Hotel | url= | email=\n| address=94, 28th October St. | lat= | long= | directions=Psaropoula area, 1.5 km from harbor\n| phone= | tollfree= | fax=\n| hours= | price=US$50-100 per person\n| checkin=12:00 | checkout=12:00\n| content=\n}}\n* {{sleep\n| name=Rhodes4vacation | alt=Rhodes holiday villas vacation rentals | url=http://www.rhodes4vacation.com | email=info@rhodes4vacation.com\n| address=Tlipolemou | lat=36.4411 | long=28.2306 | directions=old town\n| phone=+30 6976009383 | tollfree= | fax=\n| checkin=15:00 | checkout=12:00 | price=€25 - 1200\n| lastedit=2016-12-26\n| content=portfolio of vacation villas holiday rentals on Rhodes Island Greece\n}}\n\n===Splurge===\n\n* {{sleep\n| name=Camelot Hotel | alt= | url=https://camelothotel.gr/ | email=info@camelothotel.gr\n| address=Rhodes Old Town | lat= | long= | directions=\n| phone=+30 2241 026649 | tollfree= | fax=+30 2241 026549\n| checkin=24/7 | checkout= | price=\n| content=\n}}\n* {{sleep\n| name=Elysium Resort & Spa | url=http://www.elysium.gr/ | email=reserv@elysium.gr\n| address=Kallithea Ave | lat=36.372541 | long=28.224263 | directions=\n| phone=+30 2241 045700 | tollfree= | fax=+30 2241 087060\n| hours= | price=Prices from €115\n| checkin=14:00 | checkout=12:00\n| content=Beachfront location. Modern and chic with minimalist design. Public areas and spacious rooms overlook the beach. 5-star, high standard hotel.\n}}\n* {{sleep\n| name=Nikos Takis Fashion Hotel | url=https://nikostakishotel.com/ | email=info@nikostakishotel.com\n| address=Panaitiou 26 | lat= | long= | directions=\n| phone=+30 2241 070773 | tollfree= | fax=\n| hours= | price=€90-312\n| checkin= | checkout=\n| content=Boutique hotel dedicated to fashion. Medieval and traditional oriental design influences and beds with silk bedspreads.\n}}\n* {{sleep\n| name=Rodos Palladium Leisure & Wellness | url=http://www.rodospalladium.gr/ | email=rdm@rodospalladium.gr\n| address=Kallithea Avenue | lat=36.369224 | long=28.220873 | directions=\n| phone=+30 2241 057300 | tollfree= | fax=+30 2241 086424\n| hours= | price=From €142\n| checkin=14:00 | checkout=12:00\n| content=18 awards since its opening, accommodation with first class services. Right on the beach of Kallithea, 9 km away from Rhodes Town and 15 km away from the airport.\n}}\n\n==Connect==\n\n==Stay safe==\n\n==Go next==\n* [[Faliraki]]\n* [[Lindos]]\n\n\n{{IsPartOf|Rhodes}}\n{{usablecity}}\n{{Geo|36.44|28.22|zoom=13}}"
+                    }
+                  }
+                }
+              ],
+              "contentmodel": "wikitext",
+              "pagelanguage": "en",
+              "pagelanguagehtmlcode": "en",
+              "pagelanguagedir": "ltr",
+              "touched": "2026-07-28T05:38:46Z",
+              "lastrevid": 5289050,
+              "length": 31594,
+              "fullurl": "https://en.wikivoyage.org/wiki/Rhodes_(city)",
+              "editurl": "https://en.wikivoyage.org/w/index.php?title=Rhodes_(city)&action=edit",
+              "canonicalurl": "https://en.wikivoyage.org/wiki/Rhodes_(city)"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "wikipedia_geosearch",
+      "endpoint": "https://en.wikipedia.org/w/api.php",
+      "params": {
+        "action": "query",
+        "format": "json",
+        "formatversion": "2",
+        "list": "geosearch",
+        "gscoord": "36.4455|28.2240",
+        "gsradius": "1000",
+        "gslimit": "20"
+      },
+      "http_status": 200,
+      "response": {
+        "batchcomplete": true,
+        "query": {
+          "geosearch": [
+            {
+              "pageid": 77648968,
+              "ns": 0,
+              "title": "Church of St John of the Collachium",
+              "lat": 36.4448,
+              "lon": 28.2243,
+              "dist": 82.3,
+              "primary": true
+            },
+            {
+              "pageid": 72174376,
+              "ns": 0,
+              "title": "Holy Trinity Church, Rhodes",
+              "lat": 36.44499999999999,
+              "lon": 28.225555555555555,
+              "dist": 149.8,
+              "primary": true
+            },
+            {
+              "pageid": 40798033,
+              "ns": 0,
+              "title": "Hafiz Ahmed Agha Library",
+              "lat": 36.4437,
+              "lon": 28.2239,
+              "dist": 200.4,
+              "primary": true
+            },
+            {
+              "pageid": 72355130,
+              "ns": 0,
+              "title": "Mehmet Agha Mosque",
+              "lat": 36.44361111111111,
+              "lon": 28.22611111111111,
+              "dist": 282.4,
+              "primary": true
+            },
+            {
+              "pageid": 75276679,
+              "ns": 0,
+              "title": "Hamza Bey Mosque (Rhodes)",
+              "lat": 36.44305555555555,
+              "lon": 28.223055555555554,
+              "dist": 284.6,
+              "primary": true
+            },
+            {
+              "pageid": 22988652,
+              "ns": 0,
+              "title": "Archaeological Museum of Rhodes",
+              "lat": 36.4448,
+              "lon": 28.2271,
+              "dist": 288,
+              "primary": true
+            },
+            {
+              "pageid": 72074923,
+              "ns": 0,
+              "title": "Panagia tou Kastrou",
+              "lat": 36.44499999999999,
+              "lon": 28.2275,
+              "dist": 318,
+              "primary": true
+            },
+            {
+              "pageid": 75166310,
+              "ns": 0,
+              "title": "Mustafa Pasha Mosque (Rhodes)",
+              "lat": 36.44277777777778,
+              "lon": 28.225277777777777,
+              "dist": 323.6,
+              "primary": true
+            },
+            {
+              "pageid": 15842370,
+              "ns": 0,
+              "title": "Archdiocese of Rhodes",
+              "lat": 36.4437,
+              "lon": 28.227,
+              "dist": 334.8,
+              "primary": true
+            },
+            {
+              "pageid": 72482294,
+              "ns": 0,
+              "title": "Hagios Spyridon, Rhodes",
+              "lat": 36.44277777777778,
+              "lon": 28.22611111111111,
+              "dist": 356.8,
+              "primary": true
+            },
+            {
+              "pageid": 7037100,
+              "ns": 0,
+              "title": "Siege of Rhodes (1522)",
+              "lat": 36.4423,
+              "lon": 28.227,
+              "dist": 445.7,
+              "primary": true
+            },
+            {
+              "pageid": 8426266,
+              "ns": 0,
+              "title": "Siege of Rhodes (1480)",
+              "lat": 36.4423,
+              "lon": 28.227,
+              "dist": 445.7,
+              "primary": true
+            },
+            {
+              "pageid": 71995748,
+              "ns": 0,
+              "title": "Ibrahim Pasha Mosque, Rhodes",
+              "lat": 36.44277777777778,
+              "lon": 28.228055555555553,
+              "dist": 472.5,
+              "primary": true
+            },
+            {
+              "pageid": 72031855,
+              "ns": 0,
+              "title": "Recep Pasha Mosque",
+              "lat": 36.44166666666666,
+              "lon": 28.226388888888888,
+              "dist": 476.8,
+              "primary": true
+            },
+            {
+              "pageid": 34708984,
+              "ns": 0,
+              "title": "Fortifications of Rhodes",
+              "lat": 36.44385254463199,
+              "lon": 28.229161022192063,
+              "dist": 496.7,
+              "primary": true
+            },
+            {
+              "pageid": 12244510,
+              "ns": 0,
+              "title": "La Juderia",
+              "lat": 36.442,
+              "lon": 28.23,
+              "dist": 663,
+              "primary": true
+            },
+            {
+              "pageid": 11414660,
+              "ns": 0,
+              "title": "Kahal Shalom Synagogue",
+              "lat": 36.4422,
+              "lon": 28.2304,
+              "dist": 680,
+              "primary": true
+            },
+            {
+              "pageid": 26678676,
+              "ns": 0,
+              "title": "Jewish Museum of Rhodes",
+              "lat": 36.442197,
+              "lon": 28.230401,
+              "dist": 680.2,
+              "primary": true
+            },
+            {
+              "pageid": 51502915,
+              "ns": 0,
+              "title": "St. Francis of Assisi Cathedral, Rhodes",
+              "lat": 36.4393,
+              "lon": 28.225,
+              "dist": 695.2,
+              "primary": true
+            },
+            {
+              "pageid": 67143,
+              "ns": 0,
+              "title": "Colossus of Rhodes",
+              "lat": 36.45111111111111,
+              "lon": 28.227777777777778,
+              "dist": 709.6,
+              "primary": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "wikipedia_extracts_batch",
+      "endpoint": "https://en.wikipedia.org/w/api.php",
+      "params": {
+        "action": "query",
+        "format": "json",
+        "formatversion": "2",
+        "prop": "extracts|info|revisions|coordinates",
+        "exintro": "1",
+        "explaintext": "1",
+        "exlimit": "max",
+        "rvprop": "ids|timestamp",
+        "rvslots": "main",
+        "inprop": "url",
+        "titles": "Archaeological Museum of Rhodes|Panagia tou Kastrou|Church of St John of the Collachium|Fortifications of Rhodes|Gate of the Arsenal|Πύλη Ταρσανά"
+      },
+      "http_status": 200,
+      "response": {
+        "batchcomplete": true,
+        "query": {
+          "pages": [
+            {
+              "ns": 0,
+              "title": "Πύλη Ταρσανά",
+              "missing": true,
+              "contentmodel": "wikitext",
+              "pagelanguage": "en",
+              "pagelanguagehtmlcode": "en",
+              "pagelanguagedir": "ltr",
+              "fullurl": "https://en.wikipedia.org/wiki/%CE%A0%CF%8D%CE%BB%CE%B7_%CE%A4%CE%B1%CF%81%CF%83%CE%B1%CE%BD%CE%AC",
+              "editurl": "https://en.wikipedia.org/w/index.php?title=%CE%A0%CF%8D%CE%BB%CE%B7_%CE%A4%CE%B1%CF%81%CF%83%CE%B1%CE%BD%CE%AC&action=edit",
+              "canonicalurl": "https://en.wikipedia.org/wiki/%CE%A0%CF%8D%CE%BB%CE%B7_%CE%A4%CE%B1%CF%81%CF%83%CE%B1%CE%BD%CE%AC"
+            },
+            {
+              "ns": 0,
+              "title": "Gate of the Arsenal",
+              "missing": true,
+              "contentmodel": "wikitext",
+              "pagelanguage": "en",
+              "pagelanguagehtmlcode": "en",
+              "pagelanguagedir": "ltr",
+              "fullurl": "https://en.wikipedia.org/wiki/Gate_of_the_Arsenal",
+              "editurl": "https://en.wikipedia.org/w/index.php?title=Gate_of_the_Arsenal&action=edit",
+              "canonicalurl": "https://en.wikipedia.org/wiki/Gate_of_the_Arsenal"
+            },
+            {
+              "pageid": 22988652,
+              "ns": 0,
+              "title": "Archaeological Museum of Rhodes",
+              "extract": "The Archaeological Museum of Rhodes (Greek: Αρχαιολογικό Μουσείο Ρόδου) is located in the Medieval City of Rhodes. The museum is housed in the monumental edifice that was the hospital of the Knights of Saint John. Construction was begun in 1440 and brought to completion in the time of the Grand Master d'Aubusson (1476-1503). The Museum contains various collections of archaeological artifacts from various parts of Rhodes and the neighbouring islands, including the Statue of the Crouching Aphrodite (1st century BC), which was inspired by a famous prototype work created by the sculptor Doidalsas in the 3rd century BC, and the Pyxis of the Fikellura type (mid-6th century BC).\n\nThe museum also holds the Head of Helios, which was featured in 2011 on the album cover of Floral Shoppe by Macintosh Plus, and subsequently became famous for its association with the Vaporwave movement.",
+              "contentmodel": "wikitext",
+              "pagelanguage": "en",
+              "pagelanguagehtmlcode": "en",
+              "pagelanguagedir": "ltr",
+              "touched": "2026-08-07T10:41:21Z",
+              "lastrevid": 1358744643,
+              "length": 2645,
+              "fullurl": "https://en.wikipedia.org/wiki/Archaeological_Museum_of_Rhodes",
+              "editurl": "https://en.wikipedia.org/w/index.php?title=Archaeological_Museum_of_Rhodes&action=edit",
+              "canonicalurl": "https://en.wikipedia.org/wiki/Archaeological_Museum_of_Rhodes",
+              "revisions": [
+                {
+                  "revid": 1358744643,
+                  "parentid": 1319104159,
+                  "timestamp": "2026-06-10T17:40:17Z"
+                }
+              ],
+              "coordinates": [
+                {
+                  "lat": 36.4448,
+                  "lon": 28.2271,
+                  "primary": true,
+                  "globe": "earth"
+                }
+              ]
+            },
+            {
+              "pageid": 34708984,
+              "ns": 0,
+              "title": "Fortifications of Rhodes",
+              "extract": "The fortifications of the town of Rhodes are shaped like a defensive crescent around the medieval town and consist mostly of a fortification composed of a huge wall made of an embankment encased in stone, equipped with scarp, bastions, moat, counterscarp and glacis. The portion of fortifications facing the harbour is instead composed of a crenellated wall. On the moles, towers and defensive forts are found.\nThey were built by the Knights Hospitaller of Saint John by enhancing the existing Byzantine walls starting from 1309, the year in which they took possession of the island after a three-year struggle.\nLike most of the defensive walls, they were built with a technique called rubble masonry which allows for a great mass capable of withstanding gunshots with smooth external stone faces to prevent climbing.\nThe defence of different portions of fortifications was assigned to different Langue (tongues) of Knights. The North face was under the rule of the Grand Master, then moving West and South the posts were held by the Langue of France and Alvernia, the Langue of Spain (Spanish and Portuguese), the Langue of Germany (English and German), and the Langue of Italy.  Bastions and terrepleins still hold the name of the langue involved (e.g. Bastion of Italy, terreplein of Spain).",
+              "contentmodel": "wikitext",
+              "pagelanguage": "en",
+              "pagelanguagehtmlcode": "en",
+              "pagelanguagedir": "ltr",
+              "touched": "2026-08-08T15:49:57Z",
+              "lastrevid": 1365028683,
+              "length": 23622,
+              "fullurl": "https://en.wikipedia.org/wiki/Fortifications_of_Rhodes",
+              "editurl": "https://en.wikipedia.org/w/index.php?title=Fortifications_of_Rhodes&action=edit",
+              "canonicalurl": "https://en.wikipedia.org/wiki/Fortifications_of_Rhodes",
+              "revisions": [
+                {
+                  "revid": 1365028683,
+                  "parentid": 1338346796,
+                  "timestamp": "2026-07-19T21:30:37Z"
+                }
+              ],
+              "coordinates": [
+                {
+                  "lat": 36.44385254,
+                  "lon": 28.22916102,
+                  "primary": true,
+                  "globe": "earth"
+                }
+              ]
+            },
+            {
+              "pageid": 72074923,
+              "ns": 0,
+              "title": "Panagia tou Kastrou",
+              "extract": "Panagia tou Kastrou (Greek: Παναγία του Κάστρου, romanized: Panagía tou Kástrou, lit. 'Panagia of the Castle'), also known as Our Lady of the Castle is a medieval Greek Orthodox church in the medieval town of Rhodes, on the island of Rhodes, in the South Aegean region of Greece. It is located inside the old walled city, and it is the largest surviving Byzantine church on the island. It has historically served as a Roman Catholic church and a Muslim mosque throughout its history as Rhodes was conquered by various states and empires.",
+              "contentmodel": "wikitext",
+              "pagelanguage": "en",
+              "pagelanguagehtmlcode": "en",
+              "pagelanguagedir": "ltr",
+              "touched": "2026-08-07T10:42:46Z",
+              "lastrevid": 1363813071,
+              "length": 10930,
+              "fullurl": "https://en.wikipedia.org/wiki/Panagia_tou_Kastrou",
+              "editurl": "https://en.wikipedia.org/w/index.php?title=Panagia_tou_Kastrou&action=edit",
+              "canonicalurl": "https://en.wikipedia.org/wiki/Panagia_tou_Kastrou",
+              "revisions": [
+                {
+                  "revid": 1363813071,
+                  "parentid": 1358989398,
+                  "timestamp": "2026-07-12T16:25:11Z"
+                }
+              ],
+              "coordinates": [
+                {
+                  "lat": 36.445,
+                  "lon": 28.2275,
+                  "primary": true,
+                  "globe": "earth"
+                }
+              ]
+            },
+            {
+              "pageid": 77648968,
+              "ns": 0,
+              "title": "Church of St John of the Collachium",
+              "extract": "The Church of St John of the Collachium was a medieval church built by the Knights Hospitaller in Rhodes, capital of the island of the same name. It was built in the first half of the fourteenth century and dedicated to the order's patron, John the Baptist. It was the conventual church of the Hospitallers, immediately adjacent to the Palace of the Grand Master, and presided over by the order's most senior religious official. It was used for religious services and processions, meetings of the order's chapter general, and for the elections and funerals of its grand masters. \nArchitecturally, the church was in the Gothic style, 48–50 metres (157–164 ft) long and 15–18 m (49–59 ft) wide. It was expanded in several phases, adding underground areas and a total of eight annexes, including several chapels. At least six Hospitaller grand masters were buried in the church, including Fabrizio del Carretto, whose elaborate funerary slab was placed in its central part. The church became famous for its collection of relics, which included objects associated with John the Baptist, Jesus, the Virgin Mary, and various other saints.  \nAfter the Ottoman conquest of Rhodes in 1522, the church became the town's main mosque. The building was damaged by two earthquakes in the nineteenth century, and destroyed on 6 November 1856 by a lightning strike which ignited gunpowder stored in its cellars, killing at least 200 people. In modern times, only small parts of the northern and eastern foundations remain, and the site has been built over with a school. Archaeological investigations of the site took place in 1932 and 1934 under Pietro Lojacono, in 1988, and under Anna-Maria Kasdagli in 1995.",
+              "contentmodel": "wikitext",
+              "pagelanguage": "en",
+              "pagelanguagehtmlcode": "en",
+              "pagelanguagedir": "ltr",
+              "touched": "2026-08-07T10:42:54Z",
+              "lastrevid": 1363750529,
+              "length": 34641,
+              "fullurl": "https://en.wikipedia.org/wiki/Church_of_St_John_of_the_Collachium",
+              "editurl": "https://en.wikipedia.org/w/index.php?title=Church_of_St_John_of_the_Collachium&action=edit",
+              "canonicalurl": "https://en.wikipedia.org/wiki/Church_of_St_John_of_the_Collachium",
+              "revisions": [
+                {
+                  "revid": 1363750529,
+                  "parentid": 1358907840,
+                  "timestamp": "2026-07-12T04:53:01Z"
+                }
+              ],
+              "coordinates": [
+                {
+                  "lat": 36.4448,
+                  "lon": 28.2243,
+                  "primary": true,
+                  "globe": "earth"
+                }
+              ]
+            }
+          ]
+        },
+        "limits": {
+          "extracts": 20
+        }
+      }
+    },
+    {
+      "name": "wikivoyage_no_article",
+      "endpoint": "https://en.wikivoyage.org/w/api.php",
+      "params": {
+        "action": "query",
+        "format": "json",
+        "formatversion": "2",
+        "prop": "extracts|info|revisions",
+        "exintro": "1",
+        "explaintext": "1",
+        "exlimit": "max",
+        "rvprop": "ids|timestamp",
+        "rvslots": "main",
+        "inprop": "url",
+        "titles": "Gate of the Arsenal|Πύλη Ταρσανά"
+      },
+      "http_status": 200,
+      "response": {
+        "batchcomplete": true,
+        "query": {
+          "pages": [
+            {
+              "ns": 0,
+              "title": "Πύλη Ταρσανά",
+              "missing": true,
+              "contentmodel": "wikitext",
+              "pagelanguage": "en",
+              "pagelanguagehtmlcode": "en",
+              "pagelanguagedir": "ltr",
+              "fullurl": "https://en.wikivoyage.org/wiki/%CE%A0%CF%8D%CE%BB%CE%B7_%CE%A4%CE%B1%CF%81%CF%83%CE%B1%CE%BD%CE%AC",
+              "editurl": "https://en.wikivoyage.org/w/index.php?title=%CE%A0%CF%8D%CE%BB%CE%B7_%CE%A4%CE%B1%CF%81%CF%83%CE%B1%CE%BD%CE%AC&action=edit",
+              "canonicalurl": "https://en.wikivoyage.org/wiki/%CE%A0%CF%8D%CE%BB%CE%B7_%CE%A4%CE%B1%CF%81%CF%83%CE%B1%CE%BD%CE%AC"
+            },
+            {
+              "ns": 0,
+              "title": "Gate of the Arsenal",
+              "missing": true,
+              "contentmodel": "wikitext",
+              "pagelanguage": "en",
+              "pagelanguagehtmlcode": "en",
+              "pagelanguagedir": "ltr",
+              "fullurl": "https://en.wikivoyage.org/wiki/Gate_of_the_Arsenal",
+              "editurl": "https://en.wikivoyage.org/w/index.php?title=Gate_of_the_Arsenal&action=edit",
+              "canonicalurl": "https://en.wikivoyage.org/wiki/Gate_of_the_Arsenal"
+            }
+          ]
+        },
+        "limits": {
+          "extracts": 20
+        }
+      }
+    }
+  ]
+}
