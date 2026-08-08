@@ -1,8 +1,8 @@
 # 0029 — Offline country resolution (Natural Earth) and a holiday coverage oracle (`holidays`)
 
-- Status: proposed
+- Status: accepted
 - Decision Maker(s): Ben
-- drafted-by: claude-code · approved-by: _pending_ · Date: 2026-08-08
+- drafted-by: claude-code · approved-by: Ben · Date: 2026-08-08 · accepted: 2026-08-08
 
 ## Context and Problem Statement
 
