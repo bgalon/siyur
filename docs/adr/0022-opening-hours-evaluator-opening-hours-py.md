@@ -48,6 +48,12 @@ Chosen: **`opening-hours-py`**, wrapped behind a narrow `commons/opening_hours.p
 
 **Version discipline:** 2.1.4 (2026-07-07) is what was verified; the exact pin is **resolved-then-pinned at implementation** (ADR-0007), at which point two things are checked against the installed wheel — whether any embedded **school-holiday** dataset exists (none was found), and **wheel coverage on the CI runner architecture** (PyPI advertises cp310–cp314 across manylinux / macOS-arm64; a source build would drag Rust into CI).
 
+### Amendments (2026-08-07, verified by execution after the ADR was drafted)
+
+- **A1 — `SH` does not raise, so "reject loudly" cannot be a `try/except`.** `OpeningHours("SH off")` constructs cleanly and `.state()` returns `CLOSED`; only genuinely malformed input raises `ParserError`. A `try/except ParserError` wrapper would evaluate `SH` rules as ordinary ones — wrong answers, no exception — while passing every row of its own rejection table. The wrapper must **detect the `SH` token itself**. `OpeningHours(...).warnings` is an attribute (not a method) and is **empty** for `SH`, so it is not an alternative.
+- **A2 — a missing country degrades to "open", which is the dangerous direction.** `Mo-Fr 09:00-17:00; PH off` on Greek Independence Day (Wed 2026-03-25) returns **`open` without a country** and `closed` with `country="GR"`. The fail-closed posture therefore has to cover the *input* as well as the expression: **a `PH`-bearing expression with no `country_code` yields `hours_unknown`, never a verdict.** This also promotes `area.country_code` from a completeness gap to a **correctness blocker** — `timezonefinder` resolves no country, so until one is wired every `PH` rule in the commons would evaluate wrongly.
+- **A3 — `.state()` takes a `datetime`, not a string.** A string raises `TypeError`, which reads like a parse failure and would be swallowed by a broad `except`. (This one cost me a wrong verification: my first check passed strings and concluded `SH` *did* raise, from all four expressions including the valid ones.)
+
 ### Consequences
 
 - Good: the opening-window half of feasibility is deterministic, offline, permissively licensed, and runs in Tier 1 with no sidecar; `DATA-LICENSES.md` loses an LGPL row rather than gaining an obligation.
