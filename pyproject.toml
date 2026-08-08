@@ -43,12 +43,34 @@ dependencies = [
     #   1. It answers for a POINT. The normative rule in docs/data/area.md is
     #      largest-intersecting-area, so this covers the permitted single-zone
     #      optimization only. `get_geometry(tz_name=...)` exposes zone polygons if the
-    #      full rule is needed.
+    #      full rule is needed — and `commons/frame.py` needs it, so that is the API it
+    #      uses; the point lookups on this class are never called by Siyur.
     #   2. It does NOT resolve `country_code` — there is no country API on it at all.
-    #      `area.country_code` is a required M1 field and `opening-hours-py` needs it for
-    #      `PH` resolution, so **T008 still lacks a country source**. Not solved by this
-    #      dependency; do not write T008 assuming otherwise.
+    #      That half is answered by the committed Natural Earth 1:10m admin-0 file
+    #      (`data/ne_10m_admin_0_countries.zip`, public domain), read through the already
+    #      pinned geopandas/shapely — **ADR-0029**, which is why no country package is
+    #      pinned here.
     "timezonefinder~=8.2",
+    # Public-holiday COVERAGE ORACLE — not a second evaluator (ADR-0029 Q2, option I).
+    # `opening-hours-py` stays the one engine that reads an `opening_hours` grammar; this
+    # answers the different question "does a holiday calendar for this country exist at
+    # all, and is this date on it?", which the evaluator cannot be asked without also
+    # being trusted. Two uses: the T018 coverage gate (a PH/SH-bearing expression in a
+    # country the evaluator has no calendar for is `hours_unknown`, never an answer), and
+    # the subdivision-aware cross-check that closes ADR-0022 A2. `commons/frame.py`
+    # exposes the coverage half; the gate itself is T018's.
+    #
+    # Publisher checked against the PyPI JSON before locking, per Constitution Article V
+    # (and per ADR-0029: read the JSON fields, never WebFetch — it has twice reported a
+    # version that contradicted `info.version` in its own response): `holidays` is
+    # vacanza/holidays, `license_expression` MIT, first released 2014-08-28, 129 releases,
+    # 0.102 uploaded 2026-08-03, one runtime dependency (python-dateutil).
+    #
+    # `~=0.102` admits 0.103+ by PEP 440 (it is `>=0.102, ==0.*`), and that is deliberate
+    # here where `rfc8785~=0.1.4` is not: this package ships new countries and new years
+    # roughly monthly, ADR-0029's update mechanism *wants* those bumps, and none of them
+    # changes an artifact hash. `uv.lock` is what pins the exact build.
+    "holidays~=0.102",
     # Wikivoyage/Wikipedia wikitext → narration (ADR-0024). The listing templates are the
     # structured prize; parsing them beats scraping rendered HTML.
     "mwparserfromhell~=0.7",
@@ -137,6 +159,16 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 # Python packages of the monorepo. `web/` is a JS/Vite app, not a Python package.
 packages = ["commons", "planner", "compiler", "api"]
+
+# `data/` is not inside any of those packages, so without this it is simply absent from a
+# built wheel — measured on 2026-08-08: the wheel had 43 entries and none of them was the
+# boundary file. `commons/frame.py` resolves it as `<commons/..>/data/…`, which is the repo
+# root under the editable install dev and CI use, and site-packages under a real wheel
+# install; mapping `data` → `data` here makes the same expression true in both, so an area
+# resolve does not start raising FileNotFoundError the first time Siyur is packaged rather
+# than run from a checkout. The path stays the one ADR-0029 fixed.
+[tool.hatch.build.targets.wheel.force-include]
+"data" = "data"
 
 [tool.ruff]
 target-version = "py312"

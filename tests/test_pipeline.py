@@ -35,8 +35,12 @@ from tests.test_planner_research import (
     overture,
 )
 
-#: Somewhere the fixtures say nothing about — the SC-006 "empty area" case.
-NOWHERE = box(0.0, 0.0, 0.001, 0.001)
+#: Somewhere the fixtures say nothing about — the SC-006 "empty area" case. It used to be
+#: Null Island (0, 0), and T008 moved it onto land: an area over open water now has no
+#: country and therefore no holiday calendar, so ``resolve_area`` refuses it outright
+#: (`commons/frame.py`). "No sites here" and "this is not a place you can plan a day in"
+#: are different answers, and this test is about the first one.
+NOWHERE = box(0.0, 15.0, 0.001, 15.001)
 
 
 def request_for(area: BaseGeometry) -> AreaRequest:

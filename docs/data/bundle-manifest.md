@@ -170,7 +170,6 @@ upload to GCS → client downloads whole archive to OPFS.
     "narrations": "content/narrations.json", "narrations_sha256": "…",
     "itinerary": "content/itinerary.json", "itinerary_sha256": "…" },
   "attribution": { "path": "ATTRIBUTION.md", "sha256": "…" },
-  "attribution": { "path": "ATTRIBUTION.md", "sha256": "…" },
   "textLicense": "CC-BY-SA-4.0",
   "integrity": { "manifest_sha256": "…" },
   "schematic": { "style_json": "schematic/style.json", "sha256": "…" }

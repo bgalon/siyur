@@ -53,7 +53,14 @@ FIXTURES = Path(__file__).parent / "fixtures"
 AREA = box(28.216, 36.440, 28.232, 36.451)
 BBOX = (28.216, 36.440, 28.232, 36.451)
 #: Somewhere the fixtures say nothing about — the "empty area" control (SC-006).
-NOWHERE_BBOX = (0.0, 0.0, 0.001, 0.001)
+# Sahara, ~15°N 0°E — genuinely empty of POIs, which is what this fixture is *for*,
+# but on LAND. It was Null Island (0,0) until 2026-08-08, when T008 made area resolution
+# derive `timezone`/`country_code` from the polygon and refuse an unresolvable frame.
+# Null Island is open ocean in the Gulf of Guinea, so every test delimiting it began
+# answering 422. The derivation changed, not the test's intent: "nothing here" still
+# holds, and now the frame resolves. A deliberately-fictional coordinate must now also
+# be a *possible* one.
+NOWHERE_BBOX = (0.0, 15.0, 0.001, 15.001)
 OBSERVED = date(2026, 8, 1)
 
 _SESSION_SECRET = "test-session-secret-not-a-real-key"  # noqa: S105 (test fixture)

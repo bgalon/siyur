@@ -20,6 +20,13 @@ Three properties this module exists to hold:
    is read, not typed from memory), the OSM element behind a Nominatim hit with ODbL and
    its required attribution, or ``kind="user"`` for a geometry the user drew — which is the
    user's own data, not commons data, and is therefore not bundleable.
+4. **The local frame is derived here, exactly once** (ADR-0025 ruling 2, ADR-0029). Every
+   resolved area carries a ``timezone`` and a ``country_code`` computed from its polygon by
+   :func:`~commons.frame.resolve_frame` — the clock every downstream wall-clock time is read
+   in, and the calendar ``PH`` resolves against. It is derived at *resolve* time and then
+   stored, so a plan stays readable in the frame it was planned in even after the boundary
+   data changes; a polygon with no frame is **refused**, never defaulted (see
+   :class:`AreaFrameUnresolved`).
 
 **Precedence** is explicit-geometry-first: ``polygon`` → ``bbox`` → ``name``. A user who
 drew a ring means that ring; a name is the only input that needs guessing.
@@ -59,6 +66,7 @@ from shapely import MultiPolygon, Polygon, box, from_wkb
 from shapely.errors import ShapelyError
 from shapely.geometry.base import BaseGeometry
 
+from commons.frame import FrameUnresolved, LocalFrame, resolve_frame
 from commons.geo import CRS, GeometryError, validate_lat, validate_lon
 from commons.licenses import SourceKind, normalize_license
 from commons.models import SourceRef
@@ -79,6 +87,7 @@ __all__ = [
     "USER_LICENSE",
     "AreaAmbiguous",
     "AreaCandidate",
+    "AreaFrameUnresolved",
     "AreaInvalid",
     "AreaLookupTimeout",
     "AreaNotResolved",
@@ -402,10 +411,16 @@ class AreaCandidate:
 
 @dataclass(frozen=True, slots=True)
 class ResolvedArea:
-    """The node's output: one polygon, stamped."""
+    """The node's output: one polygon, stamped, in a named local frame."""
 
     polygon: BaseGeometry
     source: SourceRef
+    #: IANA timezone id (``Europe/Athens``) derived from :attr:`polygon` — see
+    #: :func:`~commons.frame.resolve_frame`. Never asked of the user, never model-supplied.
+    timezone: str
+    #: ISO 3166-1 alpha-2 (``GR``) derived from :attr:`polygon` by the same rule. What
+    #: ``PH`` in an OSM ``opening_hours`` expression resolves against.
+    country_code: str
     #: Everything considered when a *name* was resolved (winner included), so a caller can
     #: still offer "did you mean…". Empty for a user-supplied geometry: nothing was guessed.
     candidates: tuple[AreaCandidate, ...] = ()
@@ -429,6 +444,18 @@ class AreaUnresolvable(AreaNotResolved):
 
 class AreaInvalid(ValueError):
     """No input at all, or a geometry that is not a usable area — the contract's ``422``."""
+
+
+class AreaFrameUnresolved(AreaInvalid):
+    """The polygon is a fine area and has **no local frame** — open ocean, in practice.
+
+    A subclass of :class:`AreaInvalid` so it lands on the contract's ``422`` without
+    `api/areas.py` learning a new branch, and a *named* subclass so a caller that wants to
+    say "that is open water" rather than "that is not an area" can. It is deliberately not
+    an :class:`AreaNotResolved`: nothing was ambiguous and nothing failed to match — the
+    request is simply unprocessable, because a day tour with no country has no public
+    holiday calendar and no plan over it could be checked (`commons/frame.py`).
+    """
 
 
 class AreaLookupTimeout(TimeoutError):
@@ -566,11 +593,32 @@ def _polygon_from_bbox(bbox: Sequence[float]) -> BaseGeometry:
     return _validate_area(box(min_lon, min_lat, max_lon, max_lat))
 
 
+def _frame_of(polygon: BaseGeometry) -> LocalFrame:
+    """Derive the area's clock and calendar, or refuse the area.
+
+    The whole derivation is one call because `commons/frame.py` owns the rule; this function
+    exists only to translate its refusal into the node's own error vocabulary, so the API
+    keeps mapping one exception family and an unresolvable frame does not surface as a
+    ``500``. Nothing here supplies a fallback — that is the point of the refusal.
+    """
+    try:
+        return resolve_frame(polygon)
+    except FrameUnresolved as error:
+        raise AreaFrameUnresolved(str(error)) from error
+
+
 def _user_area(polygon: BaseGeometry, source_id: str) -> ResolvedArea:
-    """Stamp a geometry the user delimited themselves. ``kind="user"`` ⇒ not bundleable."""
+    """Stamp a geometry the user delimited themselves. ``kind="user"`` ⇒ not bundleable.
+
+    The frame is derived from the ring even though the user drew it: a delimitation says
+    *where*, never *which clock* — `docs/data/area.md` example 3 is explicit about it.
+    """
+    frame = _frame_of(polygon)
     return ResolvedArea(
         polygon=polygon,
         source=SourceRef(kind="user", id=source_id, license=USER_LICENSE),
+        timezone=frame.timezone,
+        country_code=frame.country_code,
     )
 
 
@@ -581,8 +629,16 @@ def _choose(name: str, candidates: Sequence[AreaCandidate]) -> ResolvedArea:
     shortlist = strong or plausible
     if len(shortlist) == 1:
         winner = shortlist[0]
+        # The frame comes from the winning *polygon*, never from the name that found it: a
+        # division called "Foo" says nothing about which clock Foo keeps, and a name that
+        # implied one would be the model guessing geography by another route.
+        frame = _frame_of(winner.polygon)
         return ResolvedArea(
-            polygon=winner.polygon, source=winner.source, candidates=tuple(candidates)
+            polygon=winner.polygon,
+            source=winner.source,
+            timezone=frame.timezone,
+            country_code=frame.country_code,
+            candidates=tuple(candidates),
         )
     if shortlist:
         raise AreaAmbiguous(
@@ -604,6 +660,8 @@ def resolve_area(
 
     Raises:
         AreaInvalid: nothing was supplied, or the supplied geometry is not a usable area.
+        AreaFrameUnresolved: a usable area with no local frame (open ocean) — a subclass of
+            ``AreaInvalid``, so an existing ``422`` mapping already covers it.
         AreaAmbiguous: the name has several plausible readings (carries ``candidates``).
         AreaUnresolvable: the name matched nothing.
     """
