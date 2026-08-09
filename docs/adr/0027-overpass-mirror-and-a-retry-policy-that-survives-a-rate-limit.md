@@ -1,8 +1,8 @@
 # 0027 — The Overpass mirror, and a retry policy that can survive a rate limit
 
-- Status: proposed
+- Status: accepted
 - Decision Maker(s): Ben
-- drafted-by: claude-code (Opus 5) · approved-by: _pending_ · Date: 2026-08-07
+- drafted-by: claude-code (Opus 5) · approved-by: Ben · Date: 2026-08-07 · accepted: 2026-08-08
 - Amends: **ADR-0009** (which chose Overpass as the OSM ingestion mechanism; the *service instance* and the retry policy were never decided)
 
 ## Context and Problem Statement
