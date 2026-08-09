@@ -27,6 +27,13 @@ guesswork, for the field shape.*
   (`<engine>:<costing>`), which is where a produced work records the machinery without claiming to be a source. This
   stamp is precisely what makes a leg bundleable: `commons/licenses.py::bundleable("osm", "ODbL-1.0")` is `True`,
   **derived, never author-set**. A leg with any other `kind`/`license` pair is a defect, not a variation.
+  **`id` names the engine that actually ran, and only `kind`/`license`/`attribution` are fixed.**
+  `valhalla:pedestrian` is the M1 *production* stamp because Valhalla is the M1 engine (ADR-0020);
+  a leg produced by the sanctioned OpenRouteService dev fallback is stamped
+  `openrouteservice:foot-walking`, because stamping it `valhalla:pedestrian` would be a
+  **false provenance claim about machinery that never ran** — and provenance that lies is worse
+  than provenance that varies. Both route over OSM, so `kind="osm"`, ODbL and the ODbL
+  attribution are identical either way, and `bundleable` derives the same.
   **`RouteLegV1` has no `bundleable` field to read** — like `Story` ([`poi-site.md`](./poi-site.md)), `ResolvedArea` and
   `AreaCandidate` ([`area.md`](./area.md)), it carries a bare `SourceRef`. The quarantine filter must therefore derive
   structurally — *only a `SourcedValue` carries a `bundleable` field* — not special-case `Story`. A filter that reads
