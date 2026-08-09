@@ -25,9 +25,9 @@
  */
 
 import { layers, namedFlavor } from '@protomaps/basemaps'
-import maplibregl, { type StyleSpecification } from 'maplibre-gl'
-import { Protocol } from 'pmtiles'
+import { type StyleSpecification } from 'maplibre-gl'
 
+import { resetPmtilesProtocol, sharedPmtilesProtocol } from '../bundle/protocol'
 import { ODBL_ATTRIBUTION } from './attribution'
 
 /** Style-internal id of the vector source. Referenced by every Protomaps layer. */
@@ -88,31 +88,25 @@ export interface BasemapStyleOptions {
 }
 
 /**
- * MapLibre resolves `pmtiles://` URLs through a registered protocol handler, and
- * registration is global to the module rather than per-map. Registering twice throws,
- * so this is idempotent — `basemapStyle` may be called once per map, or in a test
- * that builds several.
- */
-let protocol: Protocol | null = null
-
-/**
  * Teach MapLibre to read `pmtiles://` URLs. Safe to call repeatedly.
  *
  * Exported because the protocol must be registered **before** a map with a PMTiles
  * source is constructed; {@link basemapStyle} does it for you, and a caller building
  * a style by hand can do it explicitly.
+ *
+ * **The registry moved to `bundle/protocol.ts` at DU-06 and this now delegates.**
+ * `maplibregl.addProtocol` throws on a duplicate scheme, and DU-06 gave the app a
+ * second `pmtiles://` consumer — the offline bundle read from OPFS. Two module-global
+ * `Protocol` instances would mean whichever registered first won and the other threw;
+ * one shared instance multiplexes by archive key, which is what `Protocol` is for.
  */
 export function registerPmtilesProtocol(): void {
-  if (protocol) return
-  protocol = new Protocol()
-  maplibregl.addProtocol('pmtiles', protocol.tile)
+  sharedPmtilesProtocol()
 }
 
 /** Drop the protocol registration — for tests that need a clean module state. */
 export function unregisterPmtilesProtocol(): void {
-  if (!protocol) return
-  maplibregl.removeProtocol('pmtiles')
-  protocol = null
+  resetPmtilesProtocol()
 }
 
 /**
