@@ -135,8 +135,16 @@ def test_geojson_multipolygon_is_accepted() -> None:
 
 
 def test_a_transposed_bbox_is_caught_by_the_axis_assertion() -> None:
-    """[minLon, minLat, ...] given lat-first: 122 is a fine longitude and no latitude."""
-    honest = (122.0, 24.0, 122.5, 24.5)
+    """[minLon, minLat, ...] given lat-first: 121 is a fine longitude and no latitude.
+
+    The honest bbox moved one degree west at T008 and the reason is worth recording: it used
+    to sit at 122°E/24°N, which is **open sea**, and an area over open sea now has no local
+    frame and is refused (`commons/frame.py`). The arbitrary-coordinate ethos of this module
+    survives — no place is named and nothing branches on where this is — but a coordinate
+    pair that resolves an area has to fall on land now, because a country code is derived
+    from it. That is the derivation working, not the test being made to pass.
+    """
+    honest = (121.0, 24.0, 121.5, 24.5)
     assert resolve_area(AreaRequest(bbox=honest)).polygon.bounds == honest
     transposed = (honest[1], honest[0], honest[3], honest[2])
     with pytest.raises(AreaInvalid, match="latitude"):

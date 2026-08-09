@@ -148,6 +148,27 @@ class Area(Base):
     This column also makes the table load-bearing for a **read**, which it was not before, so
     ``polygon`` now carries a GiST index. ADR-0015's per-user scoping is unchanged: coverage
     unions only the *caller's* researched areas.
+
+    **``timezone`` / ``country_code`` are the area's local frame** (ADR-0025 ruling 2,
+    ADR-0029) — columns rather than a derivation at read time, because a plan must stay
+    readable in the frame it was planned in even after the boundary data or the derivation
+    rule changes. They are written from :func:`~commons.frame.resolve_frame` at resolve time
+    and never recomputed on a read.
+
+    **They are nullable, and `docs/data/area.md` sketches them as ``NOT NULL``.** The card is
+    describing the end state; this is the shape the transition has to pass through. Rows
+    predate the columns — 8 of them in the live database — so the migration (T009) adds the
+    columns nullable, backfills each row from its own ``polygon`` by the same derivation, and
+    only then could tighten. Until then ``None`` means **unresolved**, and unresolved must
+    reach the traveller as ``hours_unknown`` (`commons/opening_hours.py` refuses a
+    ``PH``-bearing expression with no country): a wrong country is invisible, so the honest
+    absence has to outrank any default that would make the row *look* complete.
+
+    Worth adding in T009 and deliberately not declared here: a
+    ``CHECK (country_code ~ '^[A-Z]{2}$')``. It is the cheap database-level catch for the one
+    corruption ADR-0029 names by hand — Natural Earth's ``-99`` sentinel reaching a row. It is
+    left to the migration rather than to ``__table_args__`` so the model cannot claim a
+    constraint the database has not been told about.
     """
 
     __tablename__ = "area"
@@ -170,6 +191,15 @@ class Area(Base):
     researched_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, default=None
     )
+    #: IANA timezone id (``Europe/Athens``) — the wall clock every planned time on this area
+    #: is read in. Derived from ``polygon`` at resolve time by
+    #: :func:`~commons.frame.resolve_frame` and **stored**, so a plan stays readable in the
+    #: frame it was planned in even after the boundary data or the rule changes.
+    timezone: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    #: ISO 3166-1 alpha-2 (``GR``) — the public-holiday calendar ``PH`` resolves against
+    #: (`commons/opening_hours.py`). Derived from ``polygon`` by the same rule, never
+    #: model-supplied and never asked of the user.
+    country_code: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
 
     __table_args__ = (Index("ix_area_polygon", "polygon", postgresql_using="gist"),)
 
