@@ -6,7 +6,8 @@
 contracts need — coverage (`contracts/areas.md`) and the bbox/polygon site read
 (`contracts/sites.md`).
 
-Four properties this module exists to guarantee:
+Five properties this module exists to guarantee — the first four about the commons, the
+fifth about the personal table that shares this module's transaction discipline:
 
 **1. Upsert, never re-insert (FR-006 / T054).** An incoming record is joined to the row it
 already belongs to — ``gers_id`` when both sides carry one, otherwise the *existing* fuzzy
@@ -46,6 +47,27 @@ CRS discipline: geometry crosses this boundary as EPSG:4326 **(lon, lat)**, vali
 `commons/geo.py` on both sides. Spatial predicates run in PostGIS; ε is measured on the
 WGS84 spheroid (``geography``), the same metric ``merge.distance_m`` uses, so the SQL
 pre-filter and the Python join rule agree on 25 m.
+
+**5. The HITL gate (T022, ADR-0023) — the second half of this module, and a different
+table.** ``user_plan`` is *not* commons data: an itinerary is personal, row-scoped to the
+auth subject, and nothing here writes to ``site``/``site_source``/``site_conflict``. The
+lifecycle ``proposing → proposed → approved | superseded`` (plus ``compiling → compiled |
+failed``) lives as **row state**, so the pause is a row rather than a suspended coroutine
+and there is nothing in memory for a restart to lose. Three properties follow, and each is
+a database predicate rather than an application check:
+
+- :func:`approve_plan` is a **compare-and-set** on ``(id, user_id, status='proposed',
+  itinerary_hash)``. Two racing approvals produce one update and one zero-row update; the
+  loser reads the row back and replays the existing approval.
+- :func:`claim_plan_for_compile` flips ``approved → compiling`` in the transaction that
+  consumes it. A ``proposed`` plan is not refused by an ``if`` — it is *unclaimable*, so a
+  future code path that forgets to check simply claims zero rows.
+- :func:`supersede_plan` writes a **new row** at ``revision+1`` and clears **nothing**: the
+  prior row keeps ``approved_at``/``approved_by`` as history and gains ``superseded_by``.
+
+Every read here filters on ``user_id``. That is the PRD §13 #4 privacy boundary and it is
+why none of these take an unscoped overload: another subject's plan must be *indistinguishable
+from a missing one*, and an unscoped read is one refactor away from a ``403``-shaped answer.
 """
 
 from __future__ import annotations
@@ -53,27 +75,30 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
-from datetime import date
-from typing import Any, Final
+from datetime import UTC, date, datetime
+from typing import Any, Final, Literal
 from uuid import UUID, uuid4
 
 from geoalchemy2 import Geography
 from pydantic import ValidationError
 from shapely.geometry.base import BaseGeometry
-from sqlalchemy import ColumnElement, Select, func, select
+from sqlalchemy import ColumnElement, Row, Select, func, insert, select, update
 from sqlalchemy import cast as sql_cast
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.roles import DDLConstraintColumnRole
 
 from commons.db import (
+    POST_APPROVAL_STATUSES,
     SITE_CONFLICT_NATURAL_KEY,
     SITE_SOURCE_NATURAL_KEY,
     SRID,
     Area,
+    PlanStatus,
     Site,
     SiteConflict,
     SiteSource,
+    UserPlan,
     to_db_point,
 )
 from commons.geo import validate_lat, validate_lon
@@ -86,18 +111,31 @@ from commons.merge import (
     merge_cluster,
     source_refs,
 )
-from commons.models import SiteRecordV1, SourceRef
+from commons.models import ItineraryV1, SiteRecordV1, SourceRef
 
 __all__ = [
     "COVERED_FRACTION",
+    "EDITABLE_STATUSES",
+    "ApprovalOutcome",
     "Coverage",
     "CommonsWriteRefused",
+    "PlanApproved",
+    "PlanRecord",
+    "PlanRefused",
+    "RefusalReason",
     "UpsertReport",
+    "approve_plan",
     "attribution_for",
+    "claim_plan_for_compile",
     "coverage",
+    "create_plan",
+    "finish_compile",
+    "load_plan",
     "load_site",
+    "record_feasibility",
     "sites_in_bbox",
     "sites_within",
+    "supersede_plan",
     "upsert_sites",
 ]
 
@@ -518,3 +556,397 @@ def attribution_for(sites: Iterable[SiteRecordV1]) -> tuple[str, ...]:
     return tuple(
         sorted({ref.attribution for site in sites for ref in source_refs(site) if ref.attribution})
     )
+
+
+# ── the HITL gate (T022 · ADR-0023 · data-model §6) ────────────────────────────────
+#
+# A different table and a different posture from everything above: `user_plan` is personal
+# data, so every function below takes the auth subject as a *required keyword* and puts it
+# in the WHERE clause. There is deliberately no unscoped variant to reach for.
+
+#: The states an edit may supersede. ``superseded`` is excluded so a chain cannot be
+#: re-pointed and silently lose the successor it already names; ``compiling``/``compiled``/
+#: ``failed`` are excluded because a plan that has been handed to the compiler is no longer
+#: a draft — editing it would move the ground under a bundle that is being built from it.
+#: This tuple is the UPDATE's predicate, not an ``if`` — an uneditable row matches zero rows.
+EDITABLE_STATUSES: Final[tuple[PlanStatus, ...]] = ("proposing", "proposed", "approved")
+
+#: Why an approval was refused. These are the wire ``error`` codes of
+#: `contracts/plans.md` **verbatim** (except ``not_found``, which is a ``404`` with no
+#: body), so `api/plans.py` maps status codes and nothing translates vocabulary.
+RefusalReason = Literal[
+    "not_found", "infeasible", "plan_superseded", "plan_stale", "plan_not_approvable"
+]
+
+_PLAN_COLUMNS: Final[tuple[Any, ...]] = (
+    UserPlan.id,
+    UserPlan.user_id,
+    UserPlan.area_id,
+    UserPlan.itinerary,
+    UserPlan.status,
+    UserPlan.revision,
+    UserPlan.superseded_by,
+    UserPlan.approved_at,
+    UserPlan.approved_by,
+    UserPlan.itinerary_hash,
+    UserPlan.feasible,
+    UserPlan.violations,
+    UserPlan.feasibility_checked_at,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class PlanRecord:
+    """One ``user_plan`` row, read back — the server half of ``GET /plans/{plan_id}``.
+
+    Deliberately built from **column values, never a mapped entity**: every write below is
+    a conditional ``UPDATE`` the ORM does not see, and an entity left in the identity map
+    would keep reporting the state the row had before the database decided otherwise.
+    """
+
+    id: UUID
+    user_id: str
+    area_id: UUID
+    itinerary: ItineraryV1
+    status: PlanStatus
+    revision: int
+    superseded_by: UUID | None
+    approved_at: datetime | None
+    approved_by: str | None
+    #: The digest **as stored** at the last write of :attr:`itinerary`.
+    itinerary_hash: str
+    feasible: bool
+    violations: tuple[str, ...]
+    feasibility_checked_at: datetime | None
+
+    @property
+    def content_hash(self) -> str:
+        """The RFC 8785 digest **recomputed** from :attr:`itinerary` right now.
+
+        Equal to :attr:`itinerary_hash` unless something mutated the ``itinerary`` column
+        in place without restating the digest — which is the one thing the revision counter
+        cannot see, and therefore exactly what :func:`approve_plan`'s hash predicate is for
+        (ADR-0023: a safety net, not the primary discriminator).
+        """
+        return self.itinerary.canonical_sha256()
+
+
+@dataclass(frozen=True, slots=True)
+class PlanApproved:
+    """The plan is approved. ``newly_approved`` distinguishes the transition from a replay."""
+
+    plan: PlanRecord
+    #: ``False`` when this call found the approval already made — a double-click, a retried
+    #: request, a second tab, or the loser of a race. The caller still answers ``200``:
+    #: nothing failed, and re-reporting the *same* ``approved_at`` is the point.
+    newly_approved: bool
+
+
+@dataclass(frozen=True, slots=True)
+class PlanRefused:
+    """Approval did not happen. ``plan`` is the row as it actually is (``None`` = absent)."""
+
+    reason: RefusalReason
+    plan: PlanRecord | None
+
+
+#: What :func:`approve_plan` returns. A tagged result rather than an exception, because a
+#: superseded or infeasible plan is ordinary control flow the contract has a body for.
+ApprovalOutcome = PlanApproved | PlanRefused
+
+
+def _utc(value: datetime | None) -> datetime | None:
+    """Normalise a ``timestamptz`` read back into UTC, so callers never compare offsets."""
+    return None if value is None else value.astimezone(UTC)
+
+
+def _plan_of(row: Row[Any]) -> PlanRecord:
+    """Build a :class:`PlanRecord`; raises ``ValidationError`` on a non-itinerary blob.
+
+    Write paths call this directly — they have just round-tripped a validated model, so a
+    failure here is a real defect and must not be swallowed. :func:`load_plan` is the one
+    place that catches, mirroring :func:`_record_of`'s never-a-half-record rule.
+    """
+    return PlanRecord(
+        id=row.id,
+        user_id=row.user_id,
+        area_id=row.area_id,
+        itinerary=ItineraryV1.model_validate(row.itinerary),
+        status=row.status,
+        revision=row.revision,
+        superseded_by=row.superseded_by,
+        approved_at=_utc(row.approved_at),
+        approved_by=row.approved_by,
+        itinerary_hash=row.itinerary_hash,
+        feasible=row.feasible,
+        violations=tuple(row.violations),
+        feasibility_checked_at=_utc(row.feasibility_checked_at),
+    )
+
+
+def _update_plan(
+    session: Session,
+    plan_id: UUID,
+    user_id: str,
+    *,
+    where: Sequence[ColumnElement[bool]],
+    values: dict[str, Any],
+) -> PlanRecord | None:
+    """One conditional ``UPDATE … RETURNING``; ``None`` when it matched **zero rows**.
+
+    Every transition in this module goes through here, so the ``user_id`` scope and the
+    ``updated_at`` touch cannot be forgotten on a new code path. ``synchronize_session`` is
+    off because nothing here holds mapped entities (:class:`PlanRecord`).
+    """
+    statement = (
+        update(UserPlan)
+        .where(UserPlan.id == plan_id, UserPlan.user_id == user_id, *where)
+        .values(**values, updated_at=datetime.now(UTC))
+        .returning(*_PLAN_COLUMNS)
+        .execution_options(synchronize_session=False)
+    )
+    row = session.execute(statement).first()
+    return None if row is None else _plan_of(row)
+
+
+def load_plan(session: Session, plan_id: UUID, *, user_id: str) -> PlanRecord | None:
+    """One plan by id, **scoped to its owner**; ``None`` when absent, foreign, or corrupt.
+
+    The three cases collapse into one answer on purpose: `contracts/plans.md` requires
+    another subject's plan to be a ``404`` and never a ``403``, so "exists but not yours"
+    must be *indistinguishable* from "does not exist" at this boundary rather than at the
+    handler's. A blob that no longer validates as an ``ItineraryV1`` is logged and joins
+    them — a half-plan is never returned (FR-003's rule, applied to personal data).
+    """
+    row = session.execute(
+        select(*_PLAN_COLUMNS).where(UserPlan.id == plan_id, UserPlan.user_id == user_id)
+    ).first()
+    if row is None:
+        return None
+    try:
+        return _plan_of(row)
+    except ValidationError as error:
+        _log.warning(
+            "plan read dropped an invalid itinerary: table=user_plan plan_id=%s reason=%s",
+            plan_id,
+            error,
+        )
+        return None
+
+
+def create_plan(session: Session, itinerary: ItineraryV1, *, revision: int = 1) -> PlanRecord:
+    """Insert a plan at ``proposing`` — the row the proposal stream is written against.
+
+    ``user_id``/``area_id`` are taken from the itinerary rather than passed alongside it, so
+    the row's privacy scope and the document's cannot disagree. The row **id is the
+    itinerary's id**: the plan row is the approval state *of that document*, and an edit
+    produces a new document (hence a new row, `contracts/plans.md`: "the superseding plan
+    must be approved on its own id"). Re-inserting the same itinerary is therefore a primary
+    key violation, which is the correct answer to writing one plan twice.
+
+    Starts ``feasible=False`` with no ``feasibility_checked_at``: nothing has checked yet,
+    and the post-approval `CHECK` means an unchecked plan is unapprovable in the database
+    until :func:`record_feasibility` says otherwise. The ``INSERT`` executes immediately
+    (autoflushing any pending ORM state ahead of it, which is how the ``area`` FK target is
+    already there); the caller still owns the commit.
+    """
+    payload = itinerary.model_dump(mode="json")
+    row = session.execute(
+        insert(UserPlan)
+        .values(
+            id=itinerary.id,
+            user_id=itinerary.user_id,
+            area_id=itinerary.area_id,
+            itinerary=payload,
+            status="proposing",
+            revision=revision,
+            itinerary_hash=itinerary.canonical_sha256(),
+            feasible=False,
+            violations=[],
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+        .returning(*_PLAN_COLUMNS)
+    ).one()
+    return _plan_of(row)
+
+
+def record_feasibility(
+    session: Session,
+    plan_id: UUID,
+    *,
+    user_id: str,
+    feasible: bool,
+    violations: Sequence[str],
+    checked_at: datetime | None = None,
+) -> PlanRecord | None:
+    """Record the deterministic verdict and advance ``proposing → proposed``.
+
+    Only a ``proposing``/``proposed`` row is touched, and that is a real guard rather than
+    tidiness: re-running feasibility over an ``approved`` row could flip ``feasible`` to
+    false, which the post-approval `CHECK` would reject — aborting the caller's whole
+    transaction instead of declining one statement. A verdict that changes after approval is
+    an **edit** (:func:`supersede_plan`), which is why the successor row starts unapproved
+    and re-runs feasibility before approval is offered again.
+
+    ``feasibility_checked_at`` is set here and nowhere else, so ``feasibility.checked_at``
+    always names a moment the check actually ran — never ``updated_at``, which bumps on
+    every write.
+    """
+    return _update_plan(
+        session,
+        plan_id,
+        user_id,
+        where=[UserPlan.status.in_(("proposing", "proposed"))],
+        values={
+            "status": "proposed",
+            "feasible": feasible,
+            "violations": list(violations),
+            "feasibility_checked_at": checked_at or datetime.now(UTC),
+        },
+    )
+
+
+def approve_plan(
+    session: Session, plan_id: UUID, *, user_id: str, approved_by: str
+) -> ApprovalOutcome:
+    """The HITL gate — a **compare-and-set**, idempotent, and never two approvals.
+
+    The transition is a single conditional ``UPDATE`` over ``(id, user_id,
+    status='proposed', itinerary_hash, feasible)``. Two concurrent approvals therefore
+    produce one row updated and one row *not* updated: Postgres serialises on the row lock,
+    the loser re-evaluates its predicate against the winner's committed version, matches
+    nothing, and replays the existing approval. One ``approved_at``, one compilable plan.
+
+    ``feasible`` is in the predicate so an infeasible plan gets a **refusal** rather than a
+    `CHECK` violation that would roll the caller's transaction back. The `CHECK` is still
+    what makes it *impossible* (FR-005 is enforced in the database); the predicate is what
+    makes it *answerable*.
+
+    **The hash compared is recomputed from the stored itinerary**, not supplied by the
+    caller — ``POST /plans/{id}/approve`` has an empty body, and there is nothing for a
+    client to send. Equal digests mean the stored document is the one the stored digest was
+    taken over; unequal means someone mutated ``itinerary`` in place, which no revision
+    counter would notice.
+
+    **After a zero-row update the row is read and branched on its actual state.** Do *not*
+    infer the reason from which predicate failed: because an edit writes a **new** row
+    rather than mutating this one, a superseded row's hash still matches and it is the
+    *status* predicate that fails. Inferring would return an idempotent ``200`` for every
+    real stale approve — the mistake ADR-0023 shipped once and corrected.
+    """
+    current = load_plan(session, plan_id, user_id=user_id)
+    if current is None:
+        return PlanRefused("not_found", None)
+
+    now = datetime.now(UTC)
+    approved = _update_plan(
+        session,
+        plan_id,
+        user_id,
+        where=[
+            UserPlan.status == "proposed",
+            UserPlan.itinerary_hash == current.content_hash,
+            UserPlan.feasible.is_(True),
+        ],
+        values={"status": "approved", "approved_at": now, "approved_by": approved_by},
+    )
+    if approved is not None:
+        return PlanApproved(plan=approved, newly_approved=True)
+
+    after = load_plan(session, plan_id, user_id=user_id)
+    if after is None:
+        return PlanRefused("not_found", None)
+    if after.itinerary_hash != after.content_hash:
+        # Mutated in place — the row's own digest no longer describes its own content.
+        return PlanRefused("plan_stale", after)
+    if after.status in POST_APPROVAL_STATUSES:
+        # Approval already happened, and possibly was already acted on. Nothing failed.
+        # Read from `commons/db.py` rather than restated, so this branch and the two
+        # `CHECK`s written over the same set cannot come to disagree about its members.
+        return PlanApproved(plan=after, newly_approved=False)
+    if after.status == "superseded":
+        return PlanRefused("plan_superseded", after)
+    if after.status == "proposed" and not after.feasible:
+        return PlanRefused("infeasible", after)
+    # `proposing` (the proposal has not finished) or `failed` (approved once, its compile
+    # failed; re-approving does not un-fail it). Refused truthfully rather than explained
+    # away as one of the cases above.
+    return PlanRefused("plan_not_approvable", after)
+
+
+def claim_plan_for_compile(session: Session, plan_id: UUID, *, user_id: str) -> PlanRecord | None:
+    """Claim an approved plan for compilation — ``approved → compiling``, or ``None``.
+
+    The compiler does **not** read the status and then start work. It calls this inside the
+    transaction that will do the work and proceeds only if it got a row back. A ``proposed``
+    plan is not refused by an ``if``; it is unclaimable, so a future code path that forgets
+    to check the gate simply claims nothing. Two compilers racing on one approved plan
+    produce one claim and one bundle.
+    """
+    return _update_plan(
+        session,
+        plan_id,
+        user_id,
+        where=[UserPlan.status == "approved"],
+        values={"status": "compiling"},
+    )
+
+
+def finish_compile(
+    session: Session, plan_id: UUID, *, user_id: str, outcome: Literal["compiled", "failed"]
+) -> PlanRecord | None:
+    """Release a claim: ``compiling → compiled | failed``. ``None`` if it was not claimed.
+
+    ``approved_at``/``approved_by`` are untouched by either outcome — a failed compile does
+    not un-approve the day, and ``failed`` is outside the post-approval `CHECK` set precisely
+    so a plan can carry both its approval and its failure.
+    """
+    return _update_plan(
+        session,
+        plan_id,
+        user_id,
+        where=[UserPlan.status == "compiling"],
+        values={"status": outcome},
+    )
+
+
+def supersede_plan(
+    session: Session, plan_id: UUID, *, user_id: str, itinerary: ItineraryV1
+) -> PlanRecord | None:
+    """An edit: write the successor at ``revision+1`` and mark the prior row superseded.
+
+    **An edit clears nothing.** The prior row keeps ``approved_at``/``approved_by`` as
+    history and gains ``superseded_by``; the successor starts at ``proposing`` with both
+    ``NULL`` and no feasibility verdict, so it must be re-checked before it can be approved.
+    Clearing the timestamp instead would destroy the audit trail *and* violate the
+    ``(approved_at IS NULL) = (approved_by IS NULL)`` pairing on the way.
+
+    Returns the **successor**, or ``None`` when the prior row is absent, another subject's,
+    or in a state :data:`EDITABLE_STATUSES` excludes. The caller distinguishes those with
+    :func:`load_plan` — the same read-the-row discipline :func:`approve_plan` uses.
+
+    Ordering is forced by the schema: ``superseded_by`` is a FK *and* one half of
+    ``(status='superseded') = (superseded_by IS NOT NULL)``, so the successor must exist
+    before the prior row can name it. The pair runs inside a **savepoint**, so a prior row
+    that turns out to be unsupersedable (a concurrent edit won the race) does not leave an
+    orphan successor behind, and the caller's transaction stays usable either way.
+    """
+    prior = load_plan(session, plan_id, user_id=user_id)
+    if prior is None:
+        return None
+
+    savepoint = session.begin_nested()
+    successor = create_plan(session, itinerary, revision=prior.revision + 1)
+    superseded = _update_plan(
+        session,
+        plan_id,
+        user_id,
+        where=[UserPlan.status.in_(EDITABLE_STATUSES)],
+        values={"status": "superseded", "superseded_by": successor.id},
+    )
+    if superseded is None:
+        savepoint.rollback()
+        return None
+    savepoint.commit()
+    return successor
