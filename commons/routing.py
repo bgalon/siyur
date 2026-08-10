@@ -123,11 +123,41 @@ _NO_ROUTE_CODES: Final[frozenset[int]] = frozenset({170, 171, 442})
 #: ``tests/`` is deliberate and confined to this one default: a fixture provider is a test
 #: double, and putting the path anywhere else would make it look production-shaped.
 DEFAULT_FIXTURE_DIR: Final = Path(__file__).resolve().parents[1] / "tests" / "fixtures"
-FIXTURE_ROUTE_FILE: Final = "valhalla_rhodes_route.json"
-FIXTURE_MATRIX_FILE: Final = "valhalla_rhodes_matrix.json"
+
+#: Captures are **discovered by shape, never named**. An earlier version hardcoded
+#: ``valhalla_rhodes_route.json``, which `evals/test_genericity.py` correctly rejected as a
+#: place literal in product code — and it was right for a reason beyond the rule: naming one
+#: area's capture means a capture from a *second* area cannot be replayed without editing
+#: this module, which is precisely the coupling SC-009 exists to prevent. Globbing makes
+#: adding an area a `tests/fixtures/` change and nothing else.
+FIXTURE_ROUTE_GLOB: Final = "valhalla_*_route.json"
+FIXTURE_MATRIX_GLOB: Final = "valhalla_*_matrix.json"
 #: The pace the committed capture was recorded at (fixtures/README.md: 0.328 km / 262.437 s
 #: = 4.499 km/h, i.e. the requested 4.5 and not the 5.1 default).
 FIXTURE_COSTING_KMH: Final = 4.5
+
+
+def _sole_capture(directory: Path, pattern: str) -> str:
+    """Read the one capture matching ``pattern``, refusing ambiguity in either direction.
+
+    Zero matches and two matches are both errors, and both are *named*. A silent fallback
+    would be the worse failure here: :class:`FixtureProvider` exists so Tier 1 can trust a
+    recording, and a recording chosen arbitrarily from several is not a recording anyone can
+    reason about — it would replay one area's geometry for a test believing it read another's.
+    """
+    matches = sorted(directory.glob(pattern))
+    if not matches:
+        raise FileNotFoundError(
+            f"no routing capture matching {pattern!r} in {directory} — record one "
+            "(tests/fixtures/README.md) or point SIYUR_ROUTING_FIXTURE_DIR elsewhere"
+        )
+    if len(matches) > 1:
+        raise RoutingError(
+            f"{len(matches)} captures match {pattern!r} in {directory} "
+            f"({', '.join(m.name for m in matches)}); FixtureProvider replays exactly one, "
+            "so pass the directory holding the capture you mean"
+        )
+    return matches[0].read_text(encoding="utf-8")
 
 
 class RoutingError(RuntimeError):
@@ -617,8 +647,8 @@ class FixtureProvider:
     def from_dir(cls, directory: Path | str = DEFAULT_FIXTURE_DIR) -> FixtureProvider:
         base = Path(directory)
         return cls(
-            route_response=json.loads((base / FIXTURE_ROUTE_FILE).read_text(encoding="utf-8")),
-            matrix_response=json.loads((base / FIXTURE_MATRIX_FILE).read_text(encoding="utf-8")),
+            route_response=json.loads(_sole_capture(base, FIXTURE_ROUTE_GLOB)),
+            matrix_response=json.loads(_sole_capture(base, FIXTURE_MATRIX_GLOB)),
         )
 
     def route(
