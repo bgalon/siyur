@@ -32,6 +32,18 @@ every budget it breached. The calendar day matters twice over — the second day
 ``opening_hours`` rules (a different weekday, possibly a different ``PH``) are what a stop
 after midnight must be checked against.
 
+**A verdict carries no commons-derived text** (ADR-0030 A1). :attr:`Violation.message` is
+*server-computed prose about a plan*, not a rendering of data — so it names positions
+(``stop 2``) and never an ``opening_hours`` expression, a place name or an address. Those are
+ODbL values, and the funnel that renders them attaches their attribution chip; a verdict
+string reaches the DOM through a different path, where the same fragment would arrive with no
+chip in frame. The stop's *own* ``opening_hours`` value already travels beside the verdict and
+already carries its credit, so nothing is lost by the verdict staying quiet about it. The
+casualty is :attr:`~commons.opening_hours.HoursEvaluation.detail`, which is our own text for
+every reason except ``unparseable`` — where it is the parser's caret diagram with the raw
+expression embedded in it. One reason leaking is the whole rule failing, so the field is
+dropped from the message entirely rather than filtered per reason.
+
 **``hours_unknown`` blocks.** It is a first-class third outcome, not "probably open"
 (:mod:`commons.opening_hours`), and it is named as a violation exactly like a budget
 breach. The evaluator fails closed for a reason — a ``PH``-bearing expression with no
@@ -48,7 +60,7 @@ of ``holidays`` — :func:`commons.frame.holiday_countries` covers every code th
 produce, so wired as a gate it would pass everything, and a second oracle inside the checker
 would be re-opening ADR-0022.
 
-## One hazard this module cannot close on its own
+## Two hazards this module cannot close on its own
 
 **A plan with no stops walks zero metres in zero hours and is therefore ``ok``.** That is
 arithmetically right and operationally dangerous, because an empty day would then pass the
@@ -56,6 +68,18 @@ approval gate. Nothing here can tell "the area held nothing" from "the proposal 
 :mod:`planner.nodes.propose_itinerary` is where that distinction is kept: it raises rather
 than returning an empty day. A caller that builds an ``ItineraryV1`` by some other route owes
 the same check before it trusts a green verdict.
+
+**The schedule is never checked against the legs it was laid over.** A stop may begin before
+the previous stop's dwell plus the routed walk could possibly have delivered the traveller
+there, and this module still calls the day ``ok`` — it measures the times it is given, it does
+not ask whether they are reachable. Unreachable today, because
+:func:`planner.nodes.propose_itinerary._schedule` builds every plan by walking that arithmetic
+forwards, so the only starts that exist are ones the legs support. It becomes reachable the
+moment a user edits a time, and the check belongs with that slice: ``docs/data/itinerary.md``
+scopes T018 to the two budgets and the opening windows, and inventing a fourth violation code
+here would ship an API contract (`contracts/plans.md`) ahead of the feature that needs it.
+:func:`_local_starts` uses the leg durations for the one thing that is not this check —
+deciding which *calendar day* a stop falls on — and is careful to say why below.
 """
 
 from __future__ import annotations
@@ -102,6 +126,9 @@ class Violation:
 
     code: ViolationCode
     #: The sentence persisted into ``user_plan.violations`` and streamed to the client.
+    #: **Server-computed prose only** (ADR-0030 A1): no ``opening_hours`` expression, name,
+    #: address or other commons-derived fragment may appear here, because this string reaches
+    #: the DOM outside the attribution funnel that would credit one.
     message: str
     #: The :attr:`~commons.models.Stop.order` this concerns; ``None`` for a whole-day budget.
     #: Positions, never a site UUID — the same addressing the timeline and the legs use.
@@ -141,15 +168,59 @@ def _local_starts(itinerary: ItineraryV1) -> tuple[datetime, ...]:
     "Timezone" note); the only thing that has to be *decided* is what a start earlier than
     its predecessor means, and the answer is "the next day" — an ordered day is not
     required to be an ascending one.
+
+    **Two rollover rules, because one of them under-counts in the dangerous direction.**
+
+    The wall clock alone only reveals a wrap that leaves it *descending*: 22:00 → 01:00 is
+    visibly the next day. A wrap of a whole multiple of 24 hours leaves the clock ascending
+    and is invisible — 10:00 then 11:00 reads as one hour whether the second stop is an hour
+    later or twenty-five, and the short reading is the one that fits inside a budget. Missing
+    it under-counts the day by exactly 24 hours per missed wrap, which is a green tick on a
+    day nobody could walk.
+
+    So the day is also caught up against the earliest instant the traveller could *be* at each
+    stop — the previous stop's dwell plus the routed leg into this one — and the catch-up is
+    taken in **whole days only** (floor division, never a rounding up). That is the line that
+    keeps this from becoming the schedule-vs-legs check the module docstring says is out of
+    scope: a stop scheduled five minutes earlier than the walk allows is left exactly where it
+    is, unremarked, because rolling it a whole day forward would answer a small scheduling
+    error with a 24-hour lie. Only a deficit that is *itself* a whole day or more is a wrap,
+    and a wrap is the only thing being recovered here.
+
+    A missing leg contributes zero, which degrades to the wall-clock rule alone — the honest
+    behaviour, since a plan with no legs offers no lower bound to catch up against.
+
+    **What this deliberately does not recover.** A wrap the legs do not *prove* stays hidden.
+    Two stops an hour apart on the clock with a nine-hour walk between them are unreachable as
+    scheduled, but the deficit is under a day, so nothing here rolls them: the plan is read as
+    the 1.75 hours it says. That is not the wrap rule falling short — it is the schedule-vs-legs
+    gap the module docstring names, wearing a different hat, and closing it means a violation
+    for "this stop cannot be reached", which is the next slice's check and the next slice's
+    ``ViolationCode``. Guessing a 24-hour wrap to stand in for it would report a five-minute
+    scheduling error as a day and a quarter.
     """
+    #: Legs address stops by position, so the leg *into* stop ``n`` is the one ending there.
+    leg_into = {leg.to_stop: leg for leg in itinerary.legs}
     starts: list[datetime] = []
     day_offset = 0
+    previous_end: datetime | None = None
+
     for index, stop in enumerate(itinerary.stops):
         if index and stop.planned_start < itinerary.stops[index - 1].planned_start:
             day_offset += 1
-        starts.append(
-            datetime.combine(itinerary.date, stop.planned_start) + timedelta(days=day_offset)
-        )
+        start = datetime.combine(itinerary.date, stop.planned_start) + timedelta(days=day_offset)
+
+        if previous_end is not None:
+            leg = leg_into.get(stop.order)
+            earliest = previous_end + timedelta(seconds=leg.duration_s if leg is not None else 0)
+            missed_wraps = (earliest - start) // timedelta(days=1)
+            if missed_wraps > 0:
+                day_offset += missed_wraps
+                start += timedelta(days=missed_wraps)
+
+        starts.append(start)
+        previous_end = start + timedelta(minutes=stop.dwell_min)
+
     return tuple(starts)
 
 
@@ -174,11 +245,22 @@ def _check_hours(
     and sends the traveller to a closed door in the middle of their visit. Minute granularity
     is exhaustive rather than a sample, because both the schema (``HH:MM`` starts,
     ``dwell_min`` integers) and OSM's ``opening_hours`` grammar are minute-granular. Measured
-    cost: ~8 µs per evaluation, so a two-hour dwell is about a millisecond.
+    cost is **~10 µs per minute evaluated, end to end through**
+    :func:`commons.opening_hours.evaluate`
+    (2,000 iterations of ``Mo-Su 09:00-12:00,13:00-17:00``, Python 3.12 / darwin), so a
+    two-hour dwell is about 1.2 ms. Almost all of it is construction, not evaluation:
+    ``OpeningHours.state()`` alone measures ~0.6 µs, and ``evaluate`` builds a fresh
+    ``OpeningHours`` per call, so a 45-minute dwell re-parses one expression 45 times. Caching
+    that parse would buy roughly 17× here and is deliberately not done — the seam that would
+    hold the cache is :mod:`commons.opening_hours`, not this module, and a millisecond a day
+    is not yet worth a cache with an invalidation question attached to it.
 
     The interval is **half-open**. A stop of 09:00 + 60 min at a place open ``09:00-10:00``
     fits exactly; evaluating the closing instant itself would report every perfectly-fitted
     stop as a violation. A zero-minute dwell still evaluates its single arrival instant.
+
+    **No message here quotes the expression it evaluated** — see the module docstring's
+    ADR-0030 A1 note. The reason code is ours; the tag is the commons'.
     """
     violations: list[Violation] = []
     for stop, start in zip(itinerary.stops, starts, strict=True):
@@ -236,7 +318,7 @@ def _check_hours(
                     Violation(
                         code="outside_opening_window",
                         message=(
-                            f"stop {stop.order} outside opening window {expression} — closed "
+                            f"stop {stop.order} is outside its opening window — closed "
                             f"at {when:%H:%M} on {when:%Y-%m-%d} (area-local)"
                         ),
                         stop_order=stop.order,
@@ -247,8 +329,8 @@ def _check_hours(
                     Violation(
                         code="hours_unknown",
                         message=(
-                            f"stop {stop.order} hours cannot be evaluated ({result.reason}) "
-                            f"from {expression!r}: {result.detail}"
+                            f"stop {stop.order} hours cannot be evaluated ({result.reason}), "
+                            "so this day cannot be approved over them"
                         ),
                         stop_order=stop.order,
                     )

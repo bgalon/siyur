@@ -35,6 +35,7 @@ import pytest
 
 from planner.nodes.curate import RANKING_SYSTEM_PROMPT
 from planner.nodes.narrate import NARRATION_SYSTEM_PROMPT
+from planner.nodes.propose_itinerary import PROPOSAL_SYSTEM_PROMPT
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -58,6 +59,11 @@ REGISTRY: list[tuple[str, Path, str]] = [
         "planner/nodes/narrate.py::NARRATION_SYSTEM_PROMPT",
         REPO_ROOT / "prompts/narration.md",
         NARRATION_SYSTEM_PROMPT,
+    ),
+    (
+        "planner/nodes/propose_itinerary.py::PROPOSAL_SYSTEM_PROMPT",
+        REPO_ROOT / "prompts/planner.md",
+        PROPOSAL_SYSTEM_PROMPT,
     ),
 ]
 

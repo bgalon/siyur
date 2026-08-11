@@ -9,8 +9,12 @@ date, linked eval score) and move to `production` by label, independently of app
 | File | Covers | Version | Status |
 |---|---|---|---|
 | [`research.md`](research.md) | slice 001 `research` (no prompt — deterministic) + `curate` ranking | 1 | `production` |
+| [`narration.md`](narration.md) | spec 002 T032 `narrate` — adapted CC BY-SA prose | 2 | `candidate` |
+| [`planner.md`](planner.md) | spec 002 T020 `propose_itinerary` — the day's stops and their order | 1 | `production` |
 
-`prompts/planner.md` arrives with DU-04 (`docs/design/delivery-plan.md`).
+**`narration.md` is `candidate`, not `production`:** `planner/nodes/narrate.py` does not exist
+yet, so nothing calls it. **`planner.md` is `production`** because
+`planner/nodes/propose_itinerary.py` calls it on the live plan path.
 
 ## Conventions
 

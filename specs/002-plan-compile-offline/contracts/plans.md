@@ -29,7 +29,7 @@ event: status       data: {"phase":"propose_itinerary","tier":"opus","stops":5}
 event: status       data: {"phase":"route","provider":"valhalla","legs":4,"excluded":[{"site_id":"…","reason":"unroutable"}]}
 event: itinerary    data: { /* the proposed ItineraryV1 — stops, legs, timeline, budgets */ }
 event: feasibility  data: {"ok":false,"violations":["walking_m 4200 > budget 3000",
-                                                    "stop 2 outside opening window Tu 09:00-14:00"]}
+                                                    "stop 2 is outside its opening window"]}
 event: done         data: {"plan_id":"7be2…-uuid","state":"proposed"}
 ```
 
@@ -38,6 +38,7 @@ event: done         data: {"plan_id":"7be2…-uuid","state":"proposed"}
 - **Every value shown on a stop is the commons record's own `SourcedValue`**, inherited unchanged with its `source` + `license` + `bundleable` stamp. The planner **introduces no unstamped value**; an unstamped value is refused at the boundary, not rendered (FR-008 / SC-004, continuous with slice 001 FR-003).
 - **Legs carry their own provenance**: `RouteLegV1.source` is derived-from-OSM (`ODbL-1.0`, "© OpenStreetMap contributors") — routing over OSM is a Produced Work, so ODbL attribution renders wherever a leg does.
 - **Feasibility is deterministic and always emitted**, `ok` true or false. `violations[]` names the specific budget or opening window breached (FR-005). A day with too little in it yields a **shorter honest plan** or `candidates: 0` with an explicit "not enough here" — **never padding** (edge case).
+- **A violation never embeds commons-derived text** (ADR-0030 A1). It names the breach and the **stop order** — `"stop 2 is outside its opening window"`, never `"… outside opening window Tu 09:00-14:00"`. The `opening_hours` expression is ODbL-licensed commons text; quoting it inside a server-composed sentence puts it on a surface with no attribution stamp in frame. The client joins the verdict to the stop by `order` and renders the stop's own `opening_hours` through the attribution funnel, where it carries its chip. An earlier draft of A1 permitted the quotation *conditionally* on that chip being rendered — withdrawn, because the condition fails in exactly the branch where the itinerary is unreadable and the verdict is all that renders.
 - **The plan is persisted `proposed` and stops there.** No compile, no downstream work, no bundle (FR-006). The pause is a durable `user_plan` row, so it survives process restart (SC-003).
 - **Itineraries are private.** Written to `user_plan` scoped to `user.sub`, **never** into the shared commons (FR-007).
 
@@ -69,7 +70,11 @@ Empty body. Transitions `proposed → approved`, the only transition that unlock
 - **Idempotent.** A second approve of an already-`approved` plan returns `200` with the **same `approved_at`** — the transition is applied once, so a double-approve (or a raced pair) can never produce two divergent bundles (edge case / SC-003).
 - **`409` when infeasible** — approval is **BLOCKED** until the violations are resolved: `{"error":"infeasible","violations":[…]}`. This is the mechanical form of FR-005; nothing downstream can be reached around it.
 - **`409` when superseded** — approving a plan a newer proposal replaced returns `{"error":"plan_superseded","superseded_by":"9af0…-uuid"}` and **does not approve it**. The superseding plan must be approved on its own id.
+- **`409` when stale** — the plan changed between the client reading it and approving it, so the `itinerary_hash` the compare-and-set was made against no longer matches: `{"error":"plan_stale"}`. The client must re-read the plan and approve what it now says. This is what makes approval an approval **of a specific day** rather than of a plan id — without it, an edit racing an approve would silently approve the version the user never saw.
+- **`409` when not approvable** — the plan is in a state from which approval is not defined at all (`compiling`, `compiled`, `failed`, or already `superseded` without a successor to name): `{"error":"plan_not_approvable","state":"failed"}`.
 - **Errors**: `401` unauthenticated · `404` unknown `plan_id` or another user's plan · `409` as above.
+
+**The four `error` codes above — `infeasible`, `plan_superseded`, `plan_stale`, `plan_not_approvable` — are the complete closed set**, and they are spelled identically to `commons.repository.RefusalReason`'s members. That identity is deliberate: `api/plans.py` maps a refusal to a status code and **translates no vocabulary**, so a new refusal reason cannot reach the wire under an invented third spelling. Adding a member to either side without the other is a contract break.
 
 ## Contract tests (T1 unit + T2 component)
 

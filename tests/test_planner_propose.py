@@ -12,6 +12,11 @@ still look true:
 * an unusable reply degrading into an empty day, which walks zero metres in zero hours and
   is therefore *feasible* — a failure with a green tick on it.
 
+The last section covers the two ways a **caller** can put a wrong day into the machinery: an
+offset-bearing ``day_start``, which every layer downstream silently discards rather than
+refuses, and a ``max_stops`` below 1, which would otherwise surface as "the model selected no
+usable place". Both are refused before a token is spent.
+
 The routing double implements :class:`~commons.routing.RoutingProvider` directly: the
 Protocol is the contract, and the committed capture replays one three-waypoint walk which
 is not the shape this node asks for (it routes consecutive **pairs**, so that it can name
@@ -23,7 +28,7 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import date, time
+from datetime import UTC, date, time, timedelta, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -171,19 +176,18 @@ def propose(
     routing: RoutingProvider,
     **overrides: Any,
 ) -> Proposal:
-    return propose_itinerary(
-        candidates,
-        router=router,
-        routing=routing,
-        costing=PACE,
-        user_id="test-subject",
-        area_id=uuid4(),
-        day=DAY,
-        day_start=DAY_START,
-        budgets=BUDGETS,
-        dwell_min=DWELL_MIN,
-        **overrides,
-    )
+    # Defaults in a mapping rather than as keywords, so a test may override `day_start` or
+    # `max_stops` without colliding with the value this helper would otherwise pass.
+    arguments: dict[str, Any] = {
+        "costing": PACE,
+        "user_id": "test-subject",
+        "area_id": uuid4(),
+        "day": DAY,
+        "day_start": DAY_START,
+        "budgets": BUDGETS,
+        "dwell_min": DWELL_MIN,
+    }
+    return propose_itinerary(candidates, router=router, routing=routing, **arguments | overrides)
 
 
 def reply_of(*records: SiteRecordV1) -> str:
@@ -409,3 +413,58 @@ def test_an_area_with_no_candidates_is_an_honest_empty_plan_never_a_model_call()
 def test_the_double_satisfies_the_routing_protocol() -> None:
     """The double is checked against the seam, so the tests cannot drift from the contract."""
     assert isinstance(StubRouting(), RoutingProvider)
+
+
+# ── caller bugs are refused as caller bugs, before the model is called ──────────────
+
+
+@pytest.mark.parametrize(
+    "day_start",
+    [
+        pytest.param(time(10, 0, tzinfo=UTC), id="tzinfo-UTC"),
+        pytest.param(time(10, 0, tzinfo=timezone(timedelta(hours=3))), id="tzinfo-plus-three"),
+    ],
+)
+def test_a_day_start_carrying_an_offset_is_refused_and_never_reinterpreted(
+    candidates: tuple[SiteRecordV1, ...], day_start: time
+) -> None:
+    """The failure is silent everywhere downstream, which is why it is caught here.
+
+    ``datetime.combine(day, day_start)`` adopts ``day_start.tzinfo`` when no ``tzinfo`` is
+    passed, and ``datetime.time()`` hands back a **naive** time — so the offset is discarded
+    between them and ``Stop``'s own naive-time validator never sees one to refuse. The digits
+    survive: ``"10:00Z"`` for an area in Europe/Athens anchors the day at 10:00 Athens rather
+    than 13:00, and every ``planned_start``, ``TimelineEntry.start`` and opening-window check
+    runs three hours early before freezing into a bundle that never re-checks it.
+
+    It must **raise**, not coerce: converting needs the area's timezone, which this node is
+    never given, and assuming one is the guess the two-clocks discipline exists to prevent.
+    """
+    router = FakeRouter(reply=reply_of(candidates[0]))
+
+    with pytest.raises(ValueError, match="naive area-local wall-clock time"):
+        propose(candidates, router=router, routing=StubRouting(), day_start=day_start)
+
+    assert router.calls == [], "a caller bug costs no tokens"
+
+
+def test_a_day_start_offset_is_refused_even_when_there_is_nothing_to_plan() -> None:
+    """The empty-area path returns early, so the guard has to sit above it, not inside it."""
+    with pytest.raises(ValueError, match="naive area-local wall-clock time"):
+        propose((), router=FakeRouter(), routing=StubRouting(), day_start=time(10, 0, tzinfo=UTC))
+
+
+@pytest.mark.parametrize("max_stops", [0, -1])
+def test_a_cap_below_one_is_a_caller_bug_not_a_model_failure(
+    candidates: tuple[SiteRecordV1, ...], max_stops: int
+) -> None:
+    """``max_stops=0`` makes ``_select`` refuse every element, and the node then raises
+    ``ProposalRefused("the model selected no usable place…")`` — blaming the model for the
+    caller's arithmetic. Two different failures, two different representations.
+    """
+    router = FakeRouter(reply=reply_of(*candidates))
+
+    with pytest.raises(ValueError, match="max_stops must be at least 1"):
+        propose(candidates, router=router, routing=StubRouting(), max_stops=max_stops)
+
+    assert router.calls == []

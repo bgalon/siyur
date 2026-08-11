@@ -190,6 +190,38 @@ PROPOSAL_SYSTEM_PROMPT = (
 )
 
 
+def _require_naive_day_start(day_start: time) -> time:
+    """``day_start`` anchors the whole day, so it must be a **naive area-local** wall clock.
+
+    The mirror of ``commons.models._require_naive_local``, and needed *here* because nothing
+    downstream can catch it: :func:`_schedule` calls ``datetime.combine(day, day_start)``,
+    which adopts ``day_start.tzinfo`` when none is passed, and ``datetime.time()`` returns a
+    **naive** time (unlike ``.timetz()``). So an offset-bearing ``day_start`` has its digits
+    copied onto every ``planned_start`` and its offset silently discarded — the ``Stop``
+    validator that exists for exactly this never sees a ``tzinfo`` to refuse.
+
+    It arrives from a request field (`contracts/plans.md`), and pydantic accepts ``"10:00Z"``,
+    ``"10:00+00:00"`` and a bare ``36000``, coercing the last into ``time(10, 0, tzinfo=UTC)``.
+    A ``day_start`` of ``"10:00Z"`` for an area in Europe/Athens then anchors the day at 10:00
+    Athens rather than 13:00: every ``planned_start``, every ``TimelineEntry.start`` and every
+    opening-window evaluation runs three hours early, and then freezes into a bundle where
+    nothing re-checks it.
+
+    **Raised, never coerced.** Converting to the area's frame would need the area's timezone,
+    which this node is not given; assuming one would be the guess the whole two-clocks
+    discipline exists to prevent. The caller stated a time in a frame this node cannot read,
+    and that is a caller bug.
+    """
+    if day_start.tzinfo is not None:
+        raise ValueError(
+            f"day_start must be a naive area-local wall-clock time carrying no UTC offset, "
+            f"got tzinfo={day_start.tzinfo!r}. The local frame comes from the plan's date plus "
+            "the area row's timezone; UTC belongs on audit timestamps only "
+            "(docs/data/itinerary.md 'Timezone')"
+        )
+    return day_start
+
+
 class ProposalRefused(RuntimeError):
     """The model produced no usable ordering, so there is no plan to return.
 
@@ -364,6 +396,10 @@ def _schedule(
     rounding a 61-second walk down schedules the traveller to arrive before they could have
     got there. A day that runs past midnight simply wraps — ``ItineraryV1`` carries one
     ``date`` and :mod:`planner.feasibility` is what reads the wrap forwards.
+
+    ``day_start`` is naive by the time it gets here (:func:`_require_naive_day_start`), which
+    ``datetime.combine`` below depends on: it would otherwise adopt the offset and ``.time()``
+    would drop it again, leaving nothing for ``Stop``'s validator to refuse.
     """
     clock = datetime.combine(day, day_start)
     stops: list[Stop] = []
@@ -415,15 +451,26 @@ def propose_itinerary(
     :param day: populates ``ItineraryV1.date`` — the calendar day in the *area's* frame.
         Named ``day`` because ``date`` is the type it is annotated with.
     :param day_start: the area-local wall clock the day begins at, a request-only input
-        (`contracts/plans.md`); ``budgets.hours`` is a duration and cannot anchor a day.
+        (`contracts/plans.md`); ``budgets.hours`` is a duration and cannot anchor a day. Must
+        be **naive** — see :func:`_require_naive_day_start` for why an offset here is silent.
 
     Raises:
+        ValueError: ``day_start`` carries a UTC offset, or ``max_stops`` is below 1. Both are
+            caller bugs and both are refused *before* the model is called, so neither can be
+            reported as a model failure.
         ProposalRefused: the model failed to produce a usable ordering (see the module
             docstring for why this is not an empty plan).
         RoutingError / RoutingUnavailable: the engine itself failed. Only
             :class:`~commons.routing.NoRouteFound` is handled here, because "no path to this
             place" is a fact about the plan and "the engine is down" is not.
     """
+    _require_naive_day_start(day_start)
+    if max_stops < 1:
+        # A cap of zero makes `_select` refuse every element, and the node then raises
+        # ProposalRefused — reporting a caller's arithmetic as "the model selected no usable
+        # place". Two different failures must not share a representation here either.
+        raise ValueError(f"max_stops must be at least 1 for a day to hold a stop, got {max_stops}")
+
     if not candidates:
         # "Not enough here" is a finding about the area, and the honest answer is a short
         # plan — never padding, and never a model call to dress up an empty list.

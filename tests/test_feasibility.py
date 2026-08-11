@@ -10,7 +10,15 @@ would otherwise get quietly wrong:
 * **the closing instant**, because treating ``[start, start+dwell]`` as closed-ended turns
   every perfectly-fitted stop into a violation;
 * **a day that crosses midnight**, because subtracting wall-clock times backwards reports a
-  four-hour day as minus twenty, which passes every budget it broke.
+  four-hour day as minus twenty, which passes every budget it broke;
+* **a day that crosses midnight *invisibly***, because a wrap of a whole 24 hours leaves the
+  wall clocks ascending and under-counts the day by exactly a day.
+
+Two of the assertions here were once satisfied by something other than the behaviour they
+name, and both are now written against the guard itself:
+:func:`~planner.feasibility._exceeds` is called directly rather than through a plan whose
+arithmetic is bit-identical either way, and the first-shut-minute test asserts the phrase
+``closed at 12:00`` rather than a ``12:00`` the echoed expression used to supply for free.
 
 No instant is ever read from the system clock: the frame is a fixed ``DAY`` plus each stop's
 own ``planned_start``, so a verdict here is the same verdict for ever.
@@ -36,7 +44,7 @@ from commons.models import (
     Stop,
 )
 from commons.routing import routing_source
-from planner.feasibility import FeasibilityVerdict, check_feasibility
+from planner.feasibility import FeasibilityVerdict, _exceeds, check_feasibility
 
 #: A Friday — so ``Tu …`` is closed and ``Mo-Su …`` is open, with no reliance on "today".
 DAY = date(2026, 8, 14)
@@ -65,14 +73,14 @@ def site(*, hours: str | None = "Mo-Su 00:00-24:00") -> SiteRecordV1:
     )
 
 
-def leg(index: int, distance_m: float) -> RouteLegV1:
+def leg(index: int, distance_m: float, duration_s: int = 300) -> RouteLegV1:
     return RouteLegV1(
         id=f"leg-{index}",
         from_stop=index,
         to_stop=index + 1,
         geometry=GEOMETRY,
         distance_m=distance_m,
-        duration_s=300,
+        duration_s=duration_s,
         source=routing_source(),
     )
 
@@ -83,8 +91,15 @@ def plan(
     walking_m: float = 4000.0,
     hours: float = 6.0,
     distances: list[float] | None = None,
+    durations: list[int] | None = None,
 ) -> ItineraryV1:
-    """An itinerary from ``(site_id, planned_start, dwell_min)`` triples plus leg lengths."""
+    """An itinerary from ``(site_id, planned_start, dwell_min)`` triples plus leg lengths.
+
+    ``durations`` overrides the per-leg walking seconds, which matters only for the missed-wrap
+    guard: everywhere else the legs are 5-minute walks and the clock is checkable by hand.
+    """
+    metres = distances or []
+    seconds = durations or [300] * len(metres)
     return ItineraryV1(
         user_id="test-subject",
         area_id=uuid4(),
@@ -94,7 +109,10 @@ def plan(
             Stop(site_id=site_id, order=order, planned_start=start, dwell_min=dwell)
             for order, (site_id, start, dwell) in enumerate(schedule)
         ),
-        legs=tuple(leg(index, metres) for index, metres in enumerate(distances or [])),
+        legs=tuple(
+            leg(index, distance, duration)
+            for index, (distance, duration) in enumerate(zip(metres, seconds, strict=True))
+        ),
         budgets=Budgets(walking_m=walking_m, hours=hours),
     )
 
@@ -181,8 +199,35 @@ def test_the_time_budget_is_breached_on_its_own_and_named() -> None:
     assert result.elapsed_hours == pytest.approx(5.5)
 
 
-def test_a_budget_met_exactly_is_met_and_not_a_float_artefact() -> None:
-    """Three legs of 1000.1 m sum to 3000.3 with representation error; the budget holds."""
+@pytest.mark.parametrize(
+    ("total", "budget", "exceeded", "what"),
+    [
+        (4000.000000000001, 4000.0, False, "a representation artefact is absorbed"),
+        (4000.0, 4000.0, False, "a budget met exactly is met"),
+        (3999.0, 4000.0, False, "under budget is under budget"),
+        (4001.0, 4000.0, True, "1 m over budget is still 1 m over budget"),
+        (4000.001, 4000.0, True, "a millimetre past the tolerance is a breach"),
+        (0.0, 0.0, False, "a zero budget met by a zero total (rel_tol on 0 is exact)"),
+    ],
+)
+def test_a_budget_is_compared_with_a_float_artefact_guard_not_a_grace_margin(
+    total: float, budget: float, exceeded: bool, what: str
+) -> None:
+    """The tolerance is asserted **on** :func:`_exceeds`, because a plan cannot reach it.
+
+    The previous version of this test built a day of three 1000.1 m legs against a budget of
+    ``1000.1 * 3`` and asserted the verdict was ``ok``. It could not fail: ``math.fsum`` returns
+    the correctly-rounded sum of the exact reals and IEEE-754 multiplication returns the
+    correctly-rounded exact product, so the two are **bit-identical** and ``total > budget`` is
+    already ``False`` before the tolerance is consulted. Deleting the ``math.isclose`` clause
+    from ``_exceeds`` left the whole suite green — the guard was untested for as long as it was
+    only ever reached through a plan.
+    """
+    assert _exceeds(total, budget) is exceeded, what
+
+
+def test_a_day_whose_legs_sum_to_its_budget_is_feasible() -> None:
+    """The end-to-end half: three legs of 1000.1 m against a budget of ``1000.1 * 3`` hold."""
     open_site = site()
     itinerary = plan(
         [
@@ -212,8 +257,9 @@ def test_a_stop_outside_its_opening_window_is_a_named_violation() -> None:
     assert not result.ok
     assert codes(result) == ["outside_opening_window"]
     assert result.violations[0].stop_order == 0
-    assert "stop 0 outside opening window Tu 09:00-14:00" in result.messages[0]
-    assert "10:00" in result.messages[0], "the offending instant is named, not just the rule"
+    assert "stop 0 is outside its opening window" in result.messages[0]
+    assert "closed at 10:00" in result.messages[0], "the offending instant is named"
+    assert "2026-08-14" in result.messages[0], "and the day it falls on, since a day can wrap"
 
 
 def test_a_closure_inside_the_dwell_is_caught_not_only_the_endpoints() -> None:
@@ -228,7 +274,9 @@ def test_a_closure_inside_the_dwell_is_caught_not_only_the_endpoints() -> None:
     result = verdict(itinerary, {lunchtime.id: lunchtime})
 
     assert codes(result) == ["outside_opening_window"]
-    assert "12:00" in result.messages[0], "the first shut minute is the one reported"
+    # `closed at`, not a bare `12:00`: the message used to echo the expression, which already
+    # contains `12:00`, so this assertion held even when the LAST shut minute was reported.
+    assert "closed at 12:00" in result.messages[0], "the first shut minute is the one reported"
 
 
 def test_a_day_that_crosses_midnight_is_measured_forwards() -> None:
@@ -250,6 +298,57 @@ def test_a_day_that_crosses_midnight_is_measured_forwards() -> None:
     assert result.elapsed_hours == pytest.approx(4.0)
     assert codes(result) == ["time_budget"]
     assert result.messages == ("hours 4.00 > budget 2.00",)
+
+
+def test_a_wrap_the_legs_prove_is_caught_although_the_wall_clocks_still_ascend() -> None:
+    """10:00 then 11:00, with a twenty-five-hour walk between them: 1.75 hours, or 25.75?
+
+    The descending-wall-clock rule sees nothing here — 11:00 is after 10:00 — so the naive
+    reading is 1.75 hours against a 6-hour budget: feasible, approved, compiled, and wrong by
+    exactly 24 hours in the one direction that puts a green tick on a day nobody could walk.
+    The routed leg is what settles it: the traveller cannot be at the second stop before
+    10:45 + 25 h, so an 11:00 start is at least the *next* day's 11:00.
+
+    ``walking_m`` is set high enough that the distance budget stays out of the way — this is a
+    test about the clock, and a second violation would let it pass on the wrong one.
+    """
+    always = site()
+    itinerary = plan(
+        [(always.id, time(10, 0), 45), (always.id, time(11, 0), 45)],
+        walking_m=200_000.0,
+        hours=6.0,
+        distances=[100_000.0],
+        durations=[25 * 3600],
+    )
+
+    result = verdict(itinerary, {always.id: always})
+
+    assert result.elapsed_hours == pytest.approx(25.75), "10:00 day one to 11:45 day two"
+    assert codes(result) == ["time_budget"]
+    assert result.messages == ("hours 25.75 > budget 6.00",)
+
+
+def test_a_stop_a_few_minutes_earlier_than_the_walk_allows_is_not_rolled_a_whole_day() -> None:
+    """The catch-up takes whole days only, so a small scheduling error stays small.
+
+    A stop that starts before the previous dwell plus the routed walk could deliver the
+    traveller is the schedule-vs-legs gap the module docstring names, and it is out of T018
+    scope. What must **not** happen is answering a five-minute error with a 24-hour jump: the
+    day would be reported as 25.58 hours over a 6-hour budget, which is a loudly wrong number
+    standing in for a quietly missing check.
+    """
+    always = site()
+    itinerary = plan(
+        [(always.id, time(10, 0), 45), (always.id, time(10, 50), 45)],
+        hours=6.0,
+        distances=[900.0],
+        durations=[600],  # ten minutes' walk from a 10:45 departure ⇒ 10:55, not 10:50
+    )
+
+    result = verdict(itinerary, {always.id: always})
+
+    assert result.elapsed_hours == pytest.approx(1.5833333, rel=1e-6), "10:00 to 11:35"
+    assert result.ok, "the un-walkable five minutes are the next slice's check, not a wrap"
 
 
 # ── hours_unknown blocks; it is never "probably open" ───────────────────────────────
@@ -296,6 +395,48 @@ def test_hours_that_cannot_be_evaluated_block_rather_than_pass_silently(
     assert not result.ok, "hours_unknown is not 'probably open'"
     assert codes(result) == ["hours_unknown"]
     assert reason in result.messages[0], "the machine-readable reason reaches the traveller"
+    if hours is not None:
+        assert hours not in result.messages[0], "the tag itself is ODbL and stays out (ADR-0030)"
+
+
+# ── a verdict is server prose, never a rendering of commons data ────────────────────
+
+
+@pytest.mark.parametrize(
+    ("hours", "country_code"),
+    [
+        pytest.param("Tu 09:00-14:00", COUNTRY, id="closed-on-the-day"),
+        pytest.param("Mo-Su 09:00-12:00,13:00-17:00", COUNTRY, id="shut-inside-the-dwell"),
+        pytest.param("nonsense((", COUNTRY, id="unparseable-so-the-detail-quotes-it"),
+        pytest.param("Mo-Su 09:00-17:00; PH off", None, id="PH-with-no-country"),
+    ],
+)
+def test_no_violation_message_carries_the_opening_hours_expression(
+    hours: str, country_code: str | None
+) -> None:
+    """ADR-0030 A1: a server-computed verdict embeds no commons-derived text.
+
+    The expression is an ODbL value. Rendered through the attribution funnel it arrives with
+    its chip; embedded in a verdict string it reaches the DOM by a path that credits nothing,
+    which is an attribution failure that reads like a helpful message. The stop's own
+    ``opening_hours`` travels beside the verdict and already carries the credit, so the
+    verdict says *which stop* and stays quiet about the tag.
+
+    ``unparseable`` is the case that makes this a test rather than a convention: the evaluator's
+    ``detail`` there is the parser's own diagnostic, which quotes the raw expression — so
+    forwarding ``detail`` would leak it through a field documented as "our own text".
+    """
+    tagged = site(hours=hours)
+    itinerary = plan([(tagged.id, time(11, 30), 120)], hours=6.0)
+
+    result = verdict(itinerary, {tagged.id: tagged}, country_code=country_code)
+
+    assert not result.ok, "the fixture is meant to produce a violation to inspect"
+    for message in result.messages:
+        assert hours not in message
+        for fragment in ("09:00-14:00", "13:00-17:00", "nonsense", "PH off"):
+            assert fragment not in message, f"{fragment!r} is source text, not server prose"
+        assert message.startswith(f"stop {result.violations[0].stop_order} ")
 
 
 def test_an_area_with_no_local_frame_yields_hours_unknown_never_a_default_clock() -> None:
