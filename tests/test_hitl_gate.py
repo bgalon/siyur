@@ -23,7 +23,21 @@ the defect deliberately reintroduced:
   ``approved_by`` loses the history silently (the assertion catches it), while clearing
   ``approved_at`` alone — ADR-0023's literal earlier wording — raises
   ``CheckViolation: ck_user_plan_approver`` and rolls the transaction back, because those
-  two columns move together by biconditional.
+  two columns move together by biconditional;
+- widen :func:`~commons.repository.record_feasibility`'s ``where`` to ``[]`` and
+  ``test_a_post_approval_plan_refuses_a_second_feasibility_verdict`` fails — silently
+  reverting an approved plan to ``proposed`` rather than raising, because the same statement
+  writes a status the ``CHECK`` does not cover;
+- add any compile state to :data:`~commons.repository.EDITABLE_STATUSES` and
+  ``test_a_plan_handed_to_the_compiler_is_no_longer_editable`` fails;
+- drop the ``except`` that unwinds :func:`~commons.repository.supersede_plan`'s savepoint and
+  ``test_a_replayed_edit_raises_without_poisoning_the_callers_transaction`` fails.
+
+**Tier-2 tests here are labelled per test, and the label is asserted.** A missing
+``@pytest.mark.integration`` is invisible in both CI lanes — deselected by ``-m integration``
+in job 3, skipped for want of a database in job 2 — so
+``test_every_database_backed_test_here_carries_the_integration_marker`` checks it in Tier 1,
+where neither escape exists.
 
 The Tier-1 half is two things a database cannot tell us: that a stored itinerary rehashes
 to the digest stored beside it (if it did not, **every** approve would return
@@ -34,15 +48,17 @@ code, because a ``404`` can be produced by code that read another subject's row 
 
 from __future__ import annotations
 
+import inspect
 import os
 import subprocess
 import sys
 import threading
+import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Final
 from uuid import UUID, uuid4
 
 import pytest
@@ -75,6 +91,14 @@ OTHER = "google-sub-b"
 _PG_DIALECT: Any = postgresql.dialect()  # type: ignore[no-untyped-call]
 #: A generic 1 km box — no place literal, and `user_plan` never touches its geometry.
 AREA_POLYGON = box(28.216, 36.440, 28.232, 36.451)
+
+#: What makes a test in this file Tier 2: it reaches, directly or through a local fixture,
+#: for a live PostGIS. ``area``/``feasible_plan`` are here because a test may request only
+#: those and still need the database — the fixture graph is what decides the tier, not the
+#: heading a test happens to be written under.
+DB_FIXTURES: Final[frozenset[str]] = frozenset(
+    {"postgis_url", "db_engine", "db_session", "area", "feasible_plan"}
+)
 
 
 def _itinerary(area_id: UUID, *, user_id: str = SUBJECT, walking_m: float = 4000.0) -> ItineraryV1:
@@ -260,9 +284,40 @@ def test_a_zero_row_update_branches_on_the_row_state_not_the_failed_predicate() 
             assert not outcome.newly_approved, "a zero-row update approved nothing"
 
 
-# ── Tier 2 — the guarantees are the transaction's ──────────────────────────────────
+def test_every_database_backed_test_here_carries_the_integration_marker() -> None:
+    """The tier label is a *selector*, and an unlabelled Tier-2 test runs in neither lane.
 
-pytestmark_integration = pytest.mark.integration
+    This file once carried ``pytestmark_integration = pytest.mark.integration`` under the
+    Tier-2 heading. pytest's magic name is ``pytestmark``; that one was an ordinary module
+    attribute nothing read, and it was harmless only because every test below it also
+    carried its own decorator. The next one added under that heading would have been
+    **deselected** in CI job 3 (``-m integration`` does not match it) and **skipped** in job
+    2 (``postgis_url`` skips when ``SIYUR_DATABASE_URL`` is unset) — green in both lanes,
+    executed in neither.
+
+    Promoting it to a real ``pytestmark`` is the wrong repair: a module-level mark applies
+    to the whole file, so the five Tier-1 tests above would be labelled ``integration`` too
+    and would start claiming to need a database they do not touch. So the marker stays
+    per-test and this asserts it, in Tier 1, where it is checked with no database present.
+
+    Mutation: delete any ``@pytest.mark.integration`` below and this goes red — in **job
+    2**, which is the lane the missing marker would otherwise hide in.
+    """
+    unmarked = sorted(
+        name
+        for name, function in globals().items()
+        if name.startswith("test_")
+        and callable(function)
+        and DB_FIXTURES & set(inspect.signature(function).parameters)
+        and not any(mark.name == "integration" for mark in getattr(function, "pytestmark", ()))
+    )
+    assert not unmarked, f"Tier-2 tests missing @pytest.mark.integration: {unmarked}"
+
+
+# ── Tier 2 — the guarantees are the transaction's ──────────────────────────────────
+#
+# Every test below MUST carry `@pytest.mark.integration` — asserted, not asked for, by
+# `test_every_database_backed_test_here_carries_the_integration_marker` above.
 
 
 @pytest.fixture
@@ -283,38 +338,96 @@ def feasible_plan(db_session: Session, area: Area) -> PlanRecord:
     return checked
 
 
+#: Backends waiting on a lock **this** session holds. ``pg_blocking_pids`` resolves a
+#: row-level wait to the transaction actually holding the row (Postgres reports the wait as
+#: a ``transactionid`` lock; the function untangles that), so a non-zero count is the
+#: database's own statement that the other session is stuck behind us — not an inference
+#: from how long it has taken to answer.
+_BLOCKED_BY_US: Final = text(
+    "SELECT count(*) FROM pg_stat_activity WHERE pg_backend_pid() = ANY (pg_blocking_pids(pid))"
+)
+
+#: **``pg_stat_activity`` is cached for the life of a transaction**, and the poller below is
+#: *inside* one — it is the session holding the row. Without this the first read is the only
+#: read: every later poll re-returns a snapshot taken before the worker's backend existed,
+#: the loop times out, and the whole mechanism is dead. Measured against PostGIS 16-3.4: the
+#: worker appears one poll after the clear, ``wait_event_type='Lock'``,
+#: ``wait_event='transactionid'``, ``pg_blocking_pids`` naming the holder; without the clear
+#: it never appears at all. (``stats_fetch_consistency`` defaults to ``cache`` in PG 15+.)
+_CLEAR_STAT_SNAPSHOT: Final = text("SELECT pg_stat_clear_snapshot()")
+
+
+def _await_contention(holder: Session, thread: threading.Thread, timeout: float = 60.0) -> None:
+    """Block until the database says a backend is waiting on a lock ``holder`` holds.
+
+    **Why not a wall clock.** The predecessor of this function set an event and then asserted
+    ``thread.is_alive()`` after a 2 s join. That assertion is satisfied by a worker still
+    inside ``Session(db_engine)`` — pool checkout, TCP connect, TLS, the ``psycopg`` startup
+    packet — before it has issued a single statement. On a loaded runner or a cold
+    testcontainer the whole 2 s can go there, and then the holder commits, the worker's
+    ``SELECT`` finally runs against the *committed* row, reads ``compiling`` and declines,
+    and a read-then-write implementation passes. The mutation would survive intermittently,
+    which is worse than surviving outright: the file's own docstring would be false and the
+    suite would keep saying otherwise. Asking ``pg_stat_activity`` removes the clock from the
+    predicate — nothing here is timed except the give-up.
+
+    That the old assertion *passed* is not evidence it was watching anything: whether the
+    worker had reached its ``UPDATE`` by the 2 s mark was luck, and so was whether it had
+    even connected. Both are now observed rather than assumed.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        holder.execute(_CLEAR_STAT_SNAPSHOT)
+        if holder.execute(_BLOCKED_BY_US).scalar_one():
+            return
+        assert thread.is_alive(), (
+            "the second session finished without ever waiting on the row lock — it never "
+            "contended, so this test is not observing the conditional UPDATE at all"
+        )
+        assert time.monotonic() < deadline, (
+            f"no backend blocked on this session's row lock within {timeout}s"
+        )
+        time.sleep(0.01)
+
+
 def _contend[T](db_engine: Engine, holder: Session, work: Callable[[Session], T]) -> T:
     """Run ``work`` in a second session while ``holder`` still holds an uncommitted write.
 
     **The interleave is forced, not hoped for.** Two threads released from a barrier almost
     always run to completion one after the other, and a sequential pair cannot tell a
-    conditional ``UPDATE`` apart from a read-then-write — both refuse the second call. So
-    the second session is asserted to be genuinely *blocked* on the row lock before the
-    first is committed; only then does its statement re-evaluate against the winner's
-    committed version, which is the moment the compare-and-set either holds or does not.
+    conditional ``UPDATE`` apart from a read-then-write — both refuse the second call. So the
+    second session is asserted to be genuinely *blocked* on the row lock, by
+    :func:`_await_contention` asking the database, before the first is committed; only then
+    does its statement re-evaluate against the winner's committed version, which is the
+    moment the compare-and-set either holds or does not.
 
-    Returns what the second session got once it unblocked.
+    Returns what the second session got once it unblocked. An exception raised inside the
+    worker is re-raised **here**: left in the thread it would surface as a dead thread, i.e.
+    as "it never contended", which is the wrong diagnosis attached to the wrong line.
     """
     result: dict[str, T] = {}
-    entered = threading.Event()
+    failure: list[BaseException] = []
 
     def run() -> None:
-        with Session(db_engine) as other:
-            entered.set()
-            result["value"] = work(other)
-            other.commit()
+        try:
+            with Session(db_engine) as other:
+                result["value"] = work(other)
+                other.commit()
+        except Exception as error:  # re-raised in the parent, below
+            failure.append(error)
 
     thread = threading.Thread(target=run)
     thread.start()
-    assert entered.wait(timeout=30)
-    thread.join(timeout=2.0)
-    assert thread.is_alive(), (
-        "the second call returned while the first still held the row lock — it never "
-        "contended, so this test is not observing the conditional UPDATE at all"
-    )
-    holder.commit()
-    thread.join(timeout=60)
+    try:
+        _await_contention(holder, thread)
+    finally:
+        # Release the row whatever happened: a failed assertion above must not leave the
+        # worker blocked forever, which would hang the suite instead of reporting.
+        holder.commit()
+        thread.join(timeout=60)
     assert not thread.is_alive()
+    if failure:
+        raise failure[0]
     return result["value"]
 
 
@@ -474,6 +587,145 @@ def test_editing_an_approved_plan_supersedes_it_and_keeps_its_history(
         supersede_plan(db_session, feasible_plan.id, user_id=SUBJECT, itinerary=_itinerary(area.id))
         is None
     )
+
+
+@pytest.mark.integration
+def test_a_post_approval_plan_refuses_a_second_feasibility_verdict(
+    db_session: Session, feasible_plan: PlanRecord
+) -> None:
+    """``record_feasibility``'s status fence, which is a guard and not tidiness.
+
+    A re-check over an already-approved plan is ordinary: a retried request, a background
+    revalidation after the commons refreshed under the day, a pipeline node replaying. The
+    fence must make that a **no-op**, not a write.
+
+    Mutation: widen ``where`` to ``[]`` and this goes red on the first iteration. What
+    actually happens then is worse than the ``CHECK`` violation it looks like — the same
+    statement writes ``status='proposed'``, which is *outside*
+    :data:`~commons.db.POST_APPROVAL_STATUSES`, so ``ck_user_plan_feasible`` never fires and
+    nothing raises. The approval is silently reverted instead, with ``approved_at`` still on
+    the row. Hence the assertions are on the row's state, not on an exception.
+    """
+    plan_id = feasible_plan.id
+    assert isinstance(
+        approve_plan(db_session, plan_id, user_id=SUBJECT, approved_by=SUBJECT), PlanApproved
+    )
+    before = load_plan(db_session, plan_id, user_id=SUBJECT)
+    assert before is not None
+
+    # The whole post-approval set, reached the only way it can legitimately be reached.
+    advances: list[tuple[str, Callable[[], PlanRecord | None] | None]] = [
+        ("approved", None),
+        ("compiling", lambda: claim_plan_for_compile(db_session, plan_id, user_id=SUBJECT)),
+        (
+            "compiled",
+            lambda: finish_compile(db_session, plan_id, user_id=SUBJECT, outcome="compiled"),
+        ),
+    ]
+    for status, advance in advances:
+        if advance is not None:
+            assert advance() is not None
+        assert _status(db_session, plan_id) == status
+
+        declined = record_feasibility(
+            db_session, plan_id, user_id=SUBJECT, feasible=False, violations=["a later re-check"]
+        )
+        assert declined is None, f"a {status} plan accepted a new feasibility verdict"
+
+        after = load_plan(db_session, plan_id, user_id=SUBJECT)
+        assert after is not None
+        assert (after.status, after.feasible, after.violations) == (status, True, ())
+        assert after.approved_at == before.approved_at
+        assert after.feasibility_checked_at == before.feasibility_checked_at
+
+
+def _plan_count(session: Session) -> int:
+    return len(session.execute(select(UserPlan.id)).all())
+
+
+@pytest.mark.integration
+def test_a_plan_handed_to_the_compiler_is_no_longer_editable(
+    db_session: Session, area: Area, feasible_plan: PlanRecord
+) -> None:
+    """:data:`~commons.repository.EDITABLE_STATUSES` excludes the three compile states, and
+    the ``compiling`` exclusion is the one with teeth.
+
+    The interleave it prevents: the compiler holds a **committed** claim and is doing long
+    work; the user hits edit; ``supersede_plan`` flips the row to ``superseded`` and points
+    it at a fresh ``proposing`` successor; the compiler finishes and calls
+    ``finish_compile``, whose ``WHERE status='compiling'`` now matches nothing and returns
+    ``None`` — which reads to the compiler as "I never held a claim". End state: a bundle in
+    object storage that no plan row references, and an approved day whose successor is
+    unapproved. ``compiled``/``failed`` are excluded for the milder reason that a bundle
+    already exists for that exact document.
+
+    Mutation: add any of the three to ``EDITABLE_STATUSES`` and this goes red. Only
+    ``superseded`` was covered before, by the last assertion of
+    ``test_editing_an_approved_plan_supersedes_it_and_keeps_its_history``.
+    """
+    approve_plan(db_session, feasible_plan.id, user_id=SUBJECT, approved_by=SUBJECT)
+    assert claim_plan_for_compile(db_session, feasible_plan.id, user_id=SUBJECT) is not None
+    db_session.commit()
+
+    # A second plan, taken to `failed` — the outcome that keeps its approval and its failure.
+    other = create_plan(db_session, _itinerary(area.id))
+    record_feasibility(db_session, other.id, user_id=SUBJECT, feasible=True, violations=[])
+    approve_plan(db_session, other.id, user_id=SUBJECT, approved_by=SUBJECT)
+    claim_plan_for_compile(db_session, other.id, user_id=SUBJECT)
+    assert finish_compile(db_session, other.id, user_id=SUBJECT, outcome="failed") is not None
+    db_session.commit()
+
+    for plan_id, status in ((feasible_plan.id, "compiling"), (other.id, "failed")):
+        assert _status(db_session, plan_id) == status
+        rows = _plan_count(db_session)
+        assert (
+            supersede_plan(db_session, plan_id, user_id=SUBJECT, itinerary=_itinerary(area.id))
+            is None
+        ), f"a {status} plan was edited out from under its compile"
+        # The savepoint unwound: a refused edit leaves no orphan successor behind either.
+        assert _plan_count(db_session) == rows
+        assert _status(db_session, plan_id) == status
+
+    # And `compiled`, reached from the claim the first plan still holds.
+    assert finish_compile(db_session, feasible_plan.id, user_id=SUBJECT, outcome="compiled")
+    rows = _plan_count(db_session)
+    assert (
+        supersede_plan(db_session, feasible_plan.id, user_id=SUBJECT, itinerary=_itinerary(area.id))
+        is None
+    )
+    assert _plan_count(db_session) == rows
+    assert _status(db_session, feasible_plan.id) == "compiled"
+
+
+@pytest.mark.integration
+def test_a_replayed_edit_raises_without_poisoning_the_callers_transaction(
+    db_session: Session, area: Area, feasible_plan: PlanRecord
+) -> None:
+    """``supersede_plan``'s *other* savepoint exit: the ``INSERT`` raising, not the ``UPDATE``
+    matching zero rows.
+
+    The plan row id **is** the itinerary id, so re-submitting an itinerary that has already
+    been written is a primary key violation — reachable on any retried edit. The docstring
+    promises the caller's transaction stays usable "either way"; an aborted savepoint that is
+    never unwound poisons the enclosing transaction exactly as thoroughly as no savepoint at
+    all. The error still propagates, because a duplicate edit is the caller's to answer.
+
+    Mutation: drop the ``except`` clause from ``supersede_plan`` and the reads after the
+    ``raises`` block fail with ``PendingRollbackError`` instead of returning rows.
+    """
+    edit = _itinerary(area.id)
+    successor = supersede_plan(db_session, feasible_plan.id, user_id=SUBJECT, itinerary=edit)
+    assert successor is not None and successor.id == edit.id
+    db_session.commit()
+
+    with pytest.raises(exc.IntegrityError):
+        supersede_plan(db_session, successor.id, user_id=SUBJECT, itinerary=edit)
+
+    # Same session, same transaction: still usable, and nothing was half-written.
+    survivor = load_plan(db_session, successor.id, user_id=SUBJECT)
+    assert survivor is not None
+    assert (survivor.status, survivor.superseded_by) == ("proposing", None)
+    assert _plan_count(db_session) == 2
 
 
 @pytest.mark.integration

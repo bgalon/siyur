@@ -571,9 +571,20 @@ def attribution_for(sites: Iterable[SiteRecordV1]) -> tuple[str, ...]:
 #: This tuple is the UPDATE's predicate, not an ``if`` — an uneditable row matches zero rows.
 EDITABLE_STATUSES: Final[tuple[PlanStatus, ...]] = ("proposing", "proposed", "approved")
 
-#: Why an approval was refused. These are the wire ``error`` codes of
-#: `contracts/plans.md` **verbatim** (except ``not_found``, which is a ``404`` with no
-#: body), so `api/plans.py` maps status codes and nothing translates vocabulary.
+#: Why an approval was refused — the spelling `api/plans.py` puts in the wire ``error``
+#: field **unchanged**, so status-code mapping is the handler's only job and no DB→API
+#: translation table exists to drift.
+#:
+#: ``not_found`` is not a wire code: it is a ``404`` with no body, because another subject's
+#: plan must be indistinguishable from a missing one.
+#:
+#: **Two of the remaining four are written down in `contracts/plans.md` today**
+#: (``infeasible``, ``plan_superseded``); ``plan_stale`` and ``plan_not_approvable`` are
+#: **defined here first** — they are the two branches ADR-0023's correction added, and the
+#: contract predates them. All four are refusals of a transition against the row's current
+#: state, so all four are ``409``; nothing here is a ``4xx`` about the *request*, which
+#: carries no body to get wrong. Until the contract is amended, this module is the
+#: definition — `api/plans.py` must copy these spellings rather than invent a third one.
 RefusalReason = Literal[
     "not_found", "infeasible", "plan_superseded", "plan_stale", "plan_not_approvable"
 ]
@@ -815,8 +826,13 @@ def approve_plan(
     The transition is a single conditional ``UPDATE`` over ``(id, user_id,
     status='proposed', itinerary_hash, feasible)``. Two concurrent approvals therefore
     produce one row updated and one row *not* updated: Postgres serialises on the row lock,
-    the loser re-evaluates its predicate against the winner's committed version, matches
-    nothing, and replays the existing approval. One ``approved_at``, one compilable plan.
+    and **under READ COMMITTED** — the default :func:`~commons.db.create_db_engine` leaves in
+    place — the loser re-evaluates its predicate against the winner's committed version,
+    matches nothing, and replays the existing approval. One ``approved_at``, one compilable
+    plan. Raise the isolation level to REPEATABLE READ and that last step changes shape: the
+    loser raises a serialization failure instead of returning ``newly_approved=False``, and
+    the caller would owe it a retry. Nothing sets ``isolation_level`` today, so the replay
+    holds — but it is a property of the isolation level, not of the statement.
 
     ``feasible`` is in the predicate so an infeasible plan gets a **refusal** rather than a
     `CHECK` violation that would roll the caller's transaction back. The `CHECK` is still
@@ -931,20 +947,31 @@ def supersede_plan(
     before the prior row can name it. The pair runs inside a **savepoint**, so a prior row
     that turns out to be unsupersedable (a concurrent edit won the race) does not leave an
     orphan successor behind, and the caller's transaction stays usable either way.
+
+    "Either way" covers **two** exits, and only one of them is the zero-row branch. The
+    ``INSERT`` can raise on its own — the row id *is* the itinerary id, so a retried edit
+    that re-submits an itinerary already written is a primary key violation — and an aborted
+    savepoint that is never unwound poisons the enclosing transaction just as thoroughly as
+    no savepoint at all. Hence the ``except``: the error still propagates (a duplicate edit
+    is the caller's to answer), but it propagates into a transaction that is still usable.
     """
     prior = load_plan(session, plan_id, user_id=user_id)
     if prior is None:
         return None
 
     savepoint = session.begin_nested()
-    successor = create_plan(session, itinerary, revision=prior.revision + 1)
-    superseded = _update_plan(
-        session,
-        plan_id,
-        user_id,
-        where=[UserPlan.status.in_(EDITABLE_STATUSES)],
-        values={"status": "superseded", "superseded_by": successor.id},
-    )
+    try:
+        successor = create_plan(session, itinerary, revision=prior.revision + 1)
+        superseded = _update_plan(
+            session,
+            plan_id,
+            user_id,
+            where=[UserPlan.status.in_(EDITABLE_STATUSES)],
+            values={"status": "superseded", "superseded_by": successor.id},
+        )
+    except Exception:
+        savepoint.rollback()
+        raise
     if superseded is None:
         savepoint.rollback()
         return None
