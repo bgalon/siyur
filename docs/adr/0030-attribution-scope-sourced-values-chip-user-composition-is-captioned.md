@@ -92,20 +92,34 @@ Left unstated, the third case would resolve itself by whichever example a future
 
 **Ruling: a server-computed verdict is captioned, not chipped, and its caption names it as a verdict rather than folding it into the user-composition credit.** Fabricating an ODbL chip for a sentence our own server composed would be a provenance lie in the direction the funnel exists to stop: it would assert an external licensor stands behind our arithmetic. FR-005 requires violations be **named**, so they are rendered verbatim; dropping them was never available.
 
-**The genuinely arguable case, and the rule that resolves it.** Some violation messages **quote an OSM `opening_hours` expression verbatim** — `Mo-Fr 09:00-13:00` is commons-derived text, ODbL-licensed, appearing inside a server-composed sentence that carries no chip. That is a real co-presence question and not a pedantic one.
+**Where the caption goes is part of the ruling, not a rendering detail.** A verdict's caption is emitted **inside the section that renders the verdict**, so it travels with it in every branch. It is explicitly *not* folded into the user-composition credit, for two independent reasons — and the second was found by review, in code that had already shipped the mistake:
 
-It resolves without a new idiom, because ADR-0019's unit is **the value, co-present in the same frame** — and the stop's `opening_hours` *is* rendered on this same surface, through the funnel, with its ODbL chip, as part of that stop's card. The expression inside the verdict is a **quotation of a value already attributed in frame**, not a second unattributed appearance of it.
+- *Semantically:* "times, stop order and dwell are your own plan — your data, not sourced data" is a claim about **user composition**. A verdict is a server assertion **about** that composition. Filing it under the user-owned caption tells the reader our arithmetic is their data. Smaller than a fabricated chip, still a false provenance claim.
+- *Mechanically:* in `web/src/plan/render.ts` the structure credit was emitted only in the `itinerary` branch while the feasibility section rendered **always**. The one case where a reader most needs the caption — an unreadable itinerary frame with a verdict present — was exactly the case where it was absent. A caption that is not co-emitted with the thing it captions is not a caption.
 
-So the constraint is:
+**The genuinely arguable case: a verdict that quotes commons text.** Some violation messages embedded an OSM `opening_hours` expression verbatim — `Mo-Fr 09:00-13:00` is ODbL-licensed commons text sitting inside a server-composed sentence that carries no chip.
 
-> **A verdict may quote a commons-derived value only if that same value is also rendered on the same surface through `renderSourcedValue`.** Otherwise the verdict must reference it indirectly — by stop order or name — rather than inlining it.
+**A first draft of this amendment permitted it conditionally**, on the reasoning that ADR-0019's unit is *the value co-present in the same frame*, and the stop's `opening_hours` is already rendered through the funnel on that same surface — so the quotation was a second appearance of an already-attributed value. The rule read: *a verdict may quote a commons-derived value only if that value is also rendered on the same surface through `renderSourcedValue`.*
 
-This keeps the honest case (the hours are on screen, chipped, beside the sentence about them) and forbids the dishonest one (a verdict that is the *only* place an OSM string appears, with no stamp anywhere in frame). It is checkable rather than a matter of taste, which is the point.
+**That rule is withdrawn.** It is conditional on a co-presence the implementation does not guarantee: in the unreadable-itinerary branch above, the stop rows do not render at all, so the verdict becomes the **only** place the ODbL string appears, with no stamp anywhere in frame. A rule whose precondition silently fails in one branch is worse than no rule, because it reads as covered. It also pushes the obligation onto every future caller to check a global property of the surface before composing a sentence — which is precisely the review-discipline-instead-of-a-property failure this ADR family exists to eliminate.
 
-**Scope note.** This amendment does not widen to every server-computed string. It covers values the server *derives about user data* and returns without a `SourceRef`. A server-computed value that summarises **commons** data is a different question and is **not** decided here — if one appears, it needs its own ruling, because the honest answer there may well be a chip.
+The replacement removes the dependency instead of relying on it:
+
+> **A server-computed verdict must not embed commons-derived text.** It refers to the value indirectly — by stop order — and the stop's own chipped value carries the expression. "Stop 2 is outside its opening window", never "…outside opening window `Mo-Fr 09:00-13:00`".
+
+This is enforceable at the point of composition, in one place (`planner/feasibility.py`), with no knowledge of what any surface renders. FR-005 still requires the violation be **named**, and it is: the name is the violation code plus the stop it concerns, which is what a client needs to render an affordance anyway.
+
+**Cost, accepted:** a verdict read in isolation — an API response, a log line, a support ticket — no longer carries the expression that explains it. That is a real loss of diagnostic convenience, and it is the right trade: the alternative leaks unattributed ODbL text onto a surface, and the expression is one join away for anyone holding the plan.
+
+**Scope note.** This amendment does not widen to every server-computed string. It covers values the server *derives about user data* and returns without a `SourceRef`. A server-computed value that summarises **commons** data is a different question and is **not** decided here — if one appears it needs its own ruling, because the honest answer there may well be a chip.
 
 ### Confirmation (A1)
 
-- **`web/test/plan.test.ts`** — a rendered feasibility violation carries **no chip**, and appears under a caption that names it a server-computed verdict rather than under the user-composition credit. Mutation: caption the violations as user composition → red.
-- **The quotation rule is tested, not just written:** a violation message quoting an `opening_hours` expression renders only on a surface where that stop's `opening_hours` is itself rendered through the funnel. Mutation: render the violation while suppressing the stop's hours chip → red. **This is the load-bearing assertion of A1** — without it the rule is a paragraph, and the failure it guards against (an OSM string on screen with no stamp anywhere in frame) is exactly an FR-004 breach.
-- **Owed:** the three surfaces now demonstrating three idioms (chip / composition caption / verdict caption) make the AST guard in the parent Confirmation more urgent, not less. Still not discharged.
+- **`web/test/plan.test.ts`** — a rendered feasibility violation carries **no chip**, and appears under a caption naming it a server-computed verdict rather than under the user-composition credit. Mutation: caption the violations as user composition → red.
+- **The caption is co-emitted, not merely present.** A feasibility frame arriving with an **unreadable** itinerary frame still renders the verdict caption. Mutation: move the caption back into the itinerary branch → red. **This is the load-bearing assertion of A1**, because it is the exact branch the withdrawn rule failed in.
+- **`tests/test_feasibility.py`** — no `Violation.message` contains an `opening_hours` expression, a place name, an address, or any other commons-derived string. Asserted on the message text for every violation code, not on one example. Mutation: re-embed the expression → red. This is the server-side half, and it is where the invariant is cheapest to hold.
+- **Owed:** three surfaces now demonstrate three idioms (chip / composition caption / verdict caption), which makes the AST guard in the parent Confirmation more urgent, not less. Still not discharged.
+
+### A1 supersedes nothing in the parent decision
+
+The chip rule is untouched: a value renders with an inline chip **iff** it carries a `SourceRef`, and `null` still means *may not be displayed*. A1 adds a third disposition for data that carries no `SourceRef` and is not the user's own — it does not create an exception to the first two.
