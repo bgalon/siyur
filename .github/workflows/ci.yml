@@ -243,6 +243,18 @@ jobs:
           #                         155 lines, 123 of them comments). NOTE: env.py
           #                         and alembic/versions/** stay counted — those are
           #                         genuinely authored and migrations need real review.
+          #   - LICENSE / LICENSE-* — canonical licence texts, fetched verbatim from
+          #                         the GitHub licences API. Apache-2.0 is 202 lines
+          #                         and CC BY 4.0 is 396; nobody reviews either line
+          #                         by line, and nobody should — the review question
+          #                         is "which licence is this", answered by the file
+          #                         name and by LICENSING.md, which IS counted.
+          #                         Same category as a lockfile: machine-produced
+          #                         text whose correctness comes from its source,
+          #                         not from a reader. NOTE the glob is anchored and
+          #                         does not match LICENSING.md — the reasoning about
+          #                         *why* these licences were chosen is authored prose
+          #                         and must keep consuming budget.
           CHANGED=$(git diff --numstat "$BASE_SHA"...HEAD -- . \
             ':(exclude)uv.lock' \
             ':(exclude)**/pnpm-lock.yaml' \
@@ -251,6 +263,8 @@ jobs:
             ':(exclude)alembic.ini' \
             ':(exclude)alembic/script.py.mako' \
             ':(exclude)alembic/README' \
+            ':(exclude)LICENSE' \
+            ':(exclude)LICENSE-*' \
             | awk '{a+=$1; d+=$2} END {print a+d+0}')
           echo "Human-authored changed lines (excluding generated/captured files): $CHANGED"
           if [ "$CHANGED" -gt 500 ]; then
