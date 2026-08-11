@@ -72,3 +72,40 @@ The alternative repair — allowlisting `user-owned` — is worse still: the qua
 - **The AST guard, still owed and now more clearly owed:** nothing outside `web/src/map/attribution-chip.ts` may read `SourcedValue.value` for display. It is the one property this whole invariant rests on and it is review-enforced only. It belongs beside `evals/test_genericity.py`'s scan. **This ADR does not discharge it** — recorded here so it is not lost a third time.
 - **`tests/test_licenses.py`** already pins `user-owned` as **not** allowlisted; that assertion is now load-bearing for this decision, not merely descriptive, and should say so.
 - **TODO (DU-06):** the airplane-mode e2e (T056) should assert the caption is present offline, since a caption that only renders online would leave the offline surface at option C — precisely the case ADR-0019's trigger was about.
+
+## Amendments
+
+### A1 — A third category: server-computed verdicts (2026-08-10, drafted-by claude-code · approved-by _pending_)
+
+This ADR was written with two categories in view — **sourced values** (chipped) and **the user's own composition** (captioned). T027 (`web/src/plan/`) then rendered something on neither side, and flagged it rather than deciding it:
+
+```
+walking_m 4200 > budget 3000
+```
+
+A **feasibility violation** is a *server-computed verdict about the user's plan*. `contracts/plans.md` returns it with no `SourceRef`, and it is stored on the `user_plan` row rather than in the itinerary. So:
+
+- it is **not commons-derived** — there is no stamp to render, and `createAttributionChip` correctly returns `null`;
+- it is **not the user's composition** either — the user chose a budget and an ordering; they did not author the sentence saying the day breaches it. The caption "your own plan" is therefore *false* when applied to it.
+
+Left unstated, the third case would resolve itself by whichever example a future surface copied first — the exact failure this ADR was written to prevent, one category down.
+
+**Ruling: a server-computed verdict is captioned, not chipped, and its caption names it as a verdict rather than folding it into the user-composition credit.** Fabricating an ODbL chip for a sentence our own server composed would be a provenance lie in the direction the funnel exists to stop: it would assert an external licensor stands behind our arithmetic. FR-005 requires violations be **named**, so they are rendered verbatim; dropping them was never available.
+
+**The genuinely arguable case, and the rule that resolves it.** Some violation messages **quote an OSM `opening_hours` expression verbatim** — `Mo-Fr 09:00-13:00` is commons-derived text, ODbL-licensed, appearing inside a server-composed sentence that carries no chip. That is a real co-presence question and not a pedantic one.
+
+It resolves without a new idiom, because ADR-0019's unit is **the value, co-present in the same frame** — and the stop's `opening_hours` *is* rendered on this same surface, through the funnel, with its ODbL chip, as part of that stop's card. The expression inside the verdict is a **quotation of a value already attributed in frame**, not a second unattributed appearance of it.
+
+So the constraint is:
+
+> **A verdict may quote a commons-derived value only if that same value is also rendered on the same surface through `renderSourcedValue`.** Otherwise the verdict must reference it indirectly — by stop order or name — rather than inlining it.
+
+This keeps the honest case (the hours are on screen, chipped, beside the sentence about them) and forbids the dishonest one (a verdict that is the *only* place an OSM string appears, with no stamp anywhere in frame). It is checkable rather than a matter of taste, which is the point.
+
+**Scope note.** This amendment does not widen to every server-computed string. It covers values the server *derives about user data* and returns without a `SourceRef`. A server-computed value that summarises **commons** data is a different question and is **not** decided here — if one appears, it needs its own ruling, because the honest answer there may well be a chip.
+
+### Confirmation (A1)
+
+- **`web/test/plan.test.ts`** — a rendered feasibility violation carries **no chip**, and appears under a caption that names it a server-computed verdict rather than under the user-composition credit. Mutation: caption the violations as user composition → red.
+- **The quotation rule is tested, not just written:** a violation message quoting an `opening_hours` expression renders only on a surface where that stop's `opening_hours` is itself rendered through the funnel. Mutation: render the violation while suppressing the stop's hours chip → red. **This is the load-bearing assertion of A1** — without it the rule is a paragraph, and the failure it guards against (an OSM string on screen with no stamp anywhere in frame) is exactly an FR-004 breach.
+- **Owed:** the three surfaces now demonstrating three idioms (chip / composition caption / verdict caption) make the AST guard in the parent Confirmation more urgent, not less. Still not discharged.
