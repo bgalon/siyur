@@ -25,14 +25,17 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   EMPTY_PLAN_MODEL,
   PlanApprovalConflictError,
+  PlanRequestError,
   PlanReviewSurface,
   approvability,
   approvePlan,
   mountPlanForm,
   readItineraryFrame,
+  renderFeasibility,
   renderPlanPanel,
   sanitiseApproval,
   sanitiseFeasibility,
+  sanitisePlanDetail,
   streamPlan,
   validatePlanRequest,
   type Feasibility,
@@ -153,6 +156,9 @@ const INFEASIBLE: Feasibility = {
   readable: true,
 }
 
+/** Let every already-queued microtask (and the `setTimeout(0)` after them) run. */
+const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
+
 const model = (patch: Partial<PlanReviewModel> = {}): PlanReviewModel => ({
   ...EMPTY_PLAN_MODEL,
   planId: '7be2-uuid',
@@ -265,20 +271,38 @@ describe('the request form never defaults the date (contracts/plans.md § POST /
     // `toLocaleTimeString()` on a planned time, would land here even if it slipped past
     // every DOM assertion. Comments are stripped first — this file's own prose names the
     // very calls it forbids.
+    //
+    // `Intl.` and `Date.parse` are in the pattern because the surviving mutation was
+    // `new Intl.DateTimeFormat(undefined, { timeStyle: 'short' })
+    //    .format(Date.parse(checkedAt))`: every DOM assertion still passed while the
+    // panel printed a **device-timezone** time beside an area-local day — the exact
+    // confusion this rule exists to prevent, using neither `new Date` nor `toLocale*`.
+    // `Temporal.` is here before it ships, for the same reason.
     const { readdirSync, readFileSync } = await import('node:fs')
     const { join } = await import('node:path')
     const dir = join(process.cwd(), 'src', 'plan')
-    const files = readdirSync(dir).filter((name) => name.endsWith('.ts'))
+
+    // Recursive: a subdirectory was outside the old scan entirely, so the cheapest way
+    // past it was to put the offending module one level down.
+    const walk = (from: string): string[] =>
+      readdirSync(from, { withFileTypes: true }).flatMap((entry) => {
+        const full = join(from, entry.name)
+        if (entry.isDirectory()) return walk(full)
+        return entry.name.endsWith('.ts') ? [full] : []
+      })
+    const files = walk(dir)
     expect(files.length).toBeGreaterThan(3) // the walk found something, not nothing
 
-    const forbidden = /\bnew Date\b|\bDate\.now\b|toISOString|toLocale[A-Za-z]*|getTimezoneOffset/
+    const forbidden =
+      /\bnew Date\b|\bDate\.now\b|\bDate\.parse\b|\bDate\.UTC\b|\bIntl\.|\bTemporal\.|toISOString|toLocale[A-Za-z]*|getTimezoneOffset/
     const offenders: string[] = []
-    for (const name of files) {
-      const code = readFileSync(join(dir, name), 'utf8')
+    for (const file of files) {
+      const code = readFileSync(file, 'utf8')
         .replace(/\/\*[\s\S]*?\*\//g, '')
         .replace(/\/\/.*$/gm, '')
       // The strip must not have eaten the code: if it did, the scan passes vacuously.
-      if (name === 'render.ts') expect(code).toMatch(/renderSourcedValue/)
+      if (file.endsWith('render.ts')) expect(code).toMatch(/renderSourcedValue/)
+      const name = file.slice(dir.length + 1)
       for (const [index, line] of code.split('\n').entries()) {
         if (forbidden.test(line)) offenders.push(`${name}:${index + 1} ${line.trim()}`)
       }
@@ -348,13 +372,19 @@ describe('the itinerary panel renders the proposed day', () => {
 describe('ADR-0019 — every value carries its stamp, and an unstamped value carries nothing', () => {
   it('every rendered value element contains exactly one attribution chip', () => {
     // Structural rather than a list of the fields this fixture happens to carry: a field
-    // added to the stop row is covered by this test the day it is added.
+    // added to the stop row is covered by this test the day it is added. This catches a
+    // chip MOVED to a sibling element; the `textContent` assertion further down is what
+    // catches an unstamped value smuggled in with no chip at all. Both are load-bearing.
     const values = [...renderPlanPanel(model()).querySelectorAll('.siyur-value')]
     expect(values.length).toBeGreaterThan(0)
     for (const value of values) expect(value.querySelectorAll('.siyur-chip')).toHaveLength(1)
   })
 
-  it('MUTATION GUARD: a value rendered outside the chip funnel would be caught', () => {
+  it('the co-presence QUERY above detects an uncredited value element (guards the guard)', () => {
+    // What this covers, precisely: the SELECTOR, not production code — it builds the
+    // offending element itself. Kept because a `.siyur-value` query that silently
+    // stopped matching would make the test above pass on an empty set forever; the
+    // `expect(values.length).toBeGreaterThan(0)` there is the other half of that.
     const panel = renderPlanPanel(model())
     const smuggled = document.createElement('span')
     smuggled.className = 'siyur-value'
@@ -480,6 +510,315 @@ describe('feasibility violations are named, and approval is blocked until they a
     expect(approvability(model({ planId: null })).approvable).toBe(false)
     expect(approvability(model({ itinerary: { kind: 'unreadable' } })).approvable).toBe(false)
     expect(approvability(model({ itinerary: { kind: 'empty' } })).approvable).toBe(false)
+  })
+
+  it('never opens the gate on a verdict that says ok while naming violations', () => {
+    // A half-deployed checker emitting `{"ok":true,"violations":[…]}` contradicts
+    // itself. Believing `ok` would open the one irreversible gate in the product AND
+    // drop the sentence saying what to fix — and the server answers 409 regardless.
+    const contradiction = sanitiseFeasibility({ ok: true, violations: VIOLATIONS })
+    expect(contradiction.ok).toBe(false)
+    expect(contradiction.readable).toBe(true)
+    expect(contradiction.violations).toEqual(VIOLATIONS) // kept, never discarded
+    expect(approvability(model({ feasibility: contradiction })).approvable).toBe(false)
+
+    // …and again at the point of use, for a verdict assembled anywhere but the wire.
+    const handBuilt: Feasibility = {
+      ok: true,
+      violations: VIOLATIONS,
+      checked_at: CHECKED_AT,
+      readable: true,
+    }
+    expect(approvability(model({ feasibility: handBuilt })).approvable).toBe(false)
+    const section = renderFeasibility(handBuilt)
+    expect(section.dataset.ok).toBe('false')
+    // The reason is rendered, not swallowed by the reassurance line.
+    expect(section.textContent).not.toMatch(/fits your time and walking budgets/)
+    expect([...section.querySelectorAll('.siyur-plan-violation')].map((n) => n.textContent)).toEqual(
+      VIOLATIONS,
+    )
+    const panel = renderPlanPanel(model({ feasibility: handBuilt }))
+    expect(panel.querySelector<HTMLButtonElement>('.siyur-plan-approve__button')?.disabled).toBe(
+      true,
+    )
+  })
+
+  it('says whether feasibility was checked, separately from whether it passed', () => {
+    // `data-feasible="false"` alone conflated "checked, and it does not fit" with
+    // "never reported" — different facts, and only one of them is about the plan.
+    const feasible = renderPlanPanel(model())
+    expect(feasible.dataset.feasible).toBe('true')
+    expect(renderPlanPanel(model({ feasibility: INFEASIBLE })).dataset.feasible).toBe('false')
+    const unreported = renderPlanPanel(model({ feasibility: sanitiseFeasibility(undefined) }))
+    expect(unreported.dataset.feasible).toBe('unknown')
+  })
+})
+
+/* ------------------------------------------- a refused approval is visible --- */
+
+describe('a refused approval lands on the surface — it is not thrown into nothing', () => {
+  /** A mounted surface showing a feasible, `proposed` day, ready to approve. */
+  const mounted = (
+    onApprove: (planId: string) => Promise<void>,
+  ): { host: HTMLElement; surface: PlanReviewSurface } => {
+    const host = document.createElement('div')
+    const surface = new PlanReviewSurface(host, { sites: SITES, onApprove })
+    surface.update(model())
+    return { host, surface }
+  }
+
+  const button = (host: HTMLElement): HTMLButtonElement =>
+    host.querySelector<HTMLButtonElement>('.siyur-plan-approve__button')!
+
+  it('states a 409 plan_superseded and names the plan that CAN be approved', async () => {
+    // The scenario the `void onApprove(planId)` discard made invisible: the user
+    // re-planned this area in another tab, so the server has superseded the proposal on
+    // screen. Nothing about that plan looks wrong — the successor's id is the only thing
+    // that resolves it, and it arrives on the error.
+    const onApprove = vi.fn(async () => {
+      throw new PlanApprovalConflictError('plan_superseded', [], '9af0-uuid')
+    })
+    const { host, surface } = mounted(onApprove)
+    expect(host.querySelector('.siyur-plan-approve-failure')).toBeNull()
+
+    button(host).click()
+    await flush()
+
+    const failure = host.querySelector<HTMLElement>('.siyur-plan-approve-failure')
+    expect(failure).not.toBeNull()
+    expect(failure?.dataset.reason).toBe('plan_superseded')
+    expect(failure?.getAttribute('role')).toBe('alert')
+    // Says what did NOT happen — a user who cannot tell a refusal from a dead click
+    // simply clicks again.
+    expect(failure?.textContent).toMatch(/nothing was approved/i)
+    const successor = failure?.querySelector<HTMLElement>('[data-superseded-by]')
+    expect(successor?.dataset.supersededBy).toBe('9af0-uuid')
+    expect(successor?.textContent).toMatch(/9af0-uuid/)
+    expect(surface.current.failure?.supersededBy).toBe('9af0-uuid')
+    // The request is over: the button is usable again, and pending is cleared.
+    expect(surface.current.approving).toBe(false)
+    expect(button(host).dataset.pending).toBe('false')
+    expect(button(host).disabled).toBe(false)
+  })
+
+  it('names the server’s violations when approval is refused as infeasible', async () => {
+    const onApprove = vi.fn(async () => {
+      throw new PlanApprovalConflictError('infeasible', VIOLATIONS, null)
+    })
+    const { host } = mounted(onApprove)
+    button(host).click()
+    await flush()
+
+    const failure = host.querySelector<HTMLElement>('.siyur-plan-approve-failure')
+    expect(failure?.dataset.reason).toBe('infeasible')
+    const named = [...host.querySelectorAll('.siyur-plan-approve-failure__violation')].map(
+      (n) => n.textContent,
+    )
+    expect(named).toEqual(VIOLATIONS)
+    // The refusal's violations are queryable apart from the feasibility section's — the
+    // two can disagree, and that disagreement is the news.
+    expect(host.querySelectorAll('.siyur-plan-violation')).toHaveLength(0)
+  })
+
+  it('reports an expired session as a refusal, never as an approval', async () => {
+    const onApprove = vi.fn(async () => {
+      throw new PlanRequestError(401)
+    })
+    const { host } = mounted(onApprove)
+    button(host).click()
+    await flush()
+    const failure = host.querySelector<HTMLElement>('.siyur-plan-approve-failure')
+    expect(failure?.textContent).toMatch(/session has ended/i)
+    expect(failure?.textContent).toMatch(/nothing was approved/i)
+  })
+
+  it('reports a rejection it has no wording for, rather than showing nothing', async () => {
+    const onApprove = vi.fn(async () => {
+      throw new TypeError('network down')
+    })
+    const { host, surface } = mounted(onApprove)
+    button(host).click()
+    await flush()
+    expect(host.querySelector('.siyur-plan-approve-failure')?.textContent).toMatch(
+      /did not complete, so nothing was approved/i,
+    )
+    expect(surface.current.failure?.reason).toBeNull()
+  })
+
+  it('POSTs once while a request is in flight, however many times it is clicked', async () => {
+    // Approve is irreversible; server-side idempotency is the last line of defence, not
+    // the first. The in-flight button is disabled AND unbound, and the listener disarms
+    // itself the instant it fires — so even the click before the re-render cannot repeat.
+    let release: (() => void) | undefined
+    const onApprove = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve
+        }),
+    )
+    const { host, surface } = mounted(onApprove)
+    button(host).click()
+
+    expect(surface.current.approving).toBe(true)
+    const pendingButton = button(host)
+    expect(pendingButton.disabled).toBe(true)
+    expect(pendingButton.dataset.pending).toBe('true')
+    expect(pendingButton.getAttribute('aria-busy')).toBe('true')
+    expect(pendingButton.textContent).toMatch(/approving/i)
+
+    pendingButton.disabled = false // a devtools poke, or a stray re-enable
+    pendingButton.click()
+    pendingButton.click()
+    expect(onApprove).toHaveBeenCalledTimes(1)
+
+    release?.()
+    await flush()
+    expect(surface.current.approving).toBe(false)
+    expect(host.querySelector('.siyur-plan-approve-failure')).toBeNull()
+  })
+
+  it('hands a bare panel’s rejection to onApproveFailure instead of discarding it', async () => {
+    // Not everything mounts a surface. `renderPlanPanel` used directly must still route
+    // the rejection somewhere a caller can see it.
+    const error = new PlanApprovalConflictError('infeasible', VIOLATIONS, null)
+    const onApproveFailure = vi.fn()
+    const panel = renderPlanPanel(model(), {
+      onApprove: async () => {
+        throw error
+      },
+      onApproveFailure,
+    })
+    panel.querySelector<HTMLButtonElement>('.siyur-plan-approve__button')!.click()
+    await flush()
+    expect(onApproveFailure).toHaveBeenCalledWith(error)
+  })
+
+  it('clears a stale refusal when the plan is read back from the server', async () => {
+    const onApprove = vi.fn(async () => {
+      throw new PlanApprovalConflictError('plan_superseded', [], '9af0-uuid')
+    })
+    const { host, surface } = mounted(onApprove)
+    button(host).click()
+    await flush()
+    expect(host.querySelector('.siyur-plan-approve-failure')).not.toBeNull()
+
+    surface.applyDetail(
+      '9af0-uuid',
+      sanitisePlanDetail({
+        plan: ITINERARY,
+        feasibility: { ok: true, violations: [], checked_at: CHECKED_AT },
+        approval: { state: 'proposed', approved_at: null, superseded_by: null },
+        attribution: ['© OpenStreetMap contributors'],
+      }),
+    )
+    expect(host.querySelector('.siyur-plan-approve-failure')).toBeNull()
+    expect(surface.current.failure).toBeNull()
+  })
+})
+
+/* ----------------------------------------------------- the read-back path --- */
+
+describe('GET /plans/{id} tells the same story about a row as the stream did', () => {
+  const detail = (plan: unknown): ReturnType<typeof sanitisePlanDetail> =>
+    sanitisePlanDetail({
+      ...(plan === undefined ? {} : { plan }),
+      feasibility: { ok: false, violations: [] },
+      approval: { state: 'proposed', approved_at: null, superseded_by: null },
+      attribution: [],
+    })
+
+  it('reads an honest EMPTY day back as empty — not as "could not be read"', () => {
+    // A sparse area with zero candidates streams "there is not enough in the commons
+    // here". Reloading the page must not answer, about the same row, "the proposed day
+    // could not be read, so there is nothing to approve" — the second statement tells
+    // the user the app is broken when it is working exactly as specified.
+    expect(detail({ ...ITINERARY, stops: [] }).plan).toEqual({ kind: 'empty' })
+    const host = document.createElement('div')
+    const surface = new PlanReviewSurface(host, { sites: SITES })
+    surface.applyDetail('7be2-uuid', detail({ ...ITINERARY, stops: [] }))
+    expect(host.querySelector('.siyur-plan__empty')?.textContent).toMatch(/not enough/i)
+    expect(host.querySelector('.siyur-plan__empty')?.textContent).not.toMatch(/could not be read/i)
+  })
+
+  it('still reads a malformed plan back as unreadable', () => {
+    expect(detail({ nonsense: true }).plan).toEqual({ kind: 'unreadable' })
+    const host = document.createElement('div')
+    new PlanReviewSurface(host, { sites: SITES }).applyDetail('7be2-uuid', detail({ nonsense: true }))
+    expect(host.querySelector('.siyur-plan__empty')?.textContent).toMatch(/could not be read/i)
+  })
+
+  it('reads a row with no plan yet as "not proposed", which is a third thing again', () => {
+    expect(detail(undefined).plan).toEqual({ kind: 'absent' })
+    expect(detail(null).plan).toEqual({ kind: 'absent' })
+    const host = document.createElement('div')
+    new PlanReviewSurface(host, { sites: SITES }).applyDetail('7be2-uuid', detail(undefined))
+    expect(host.querySelector('.siyur-plan__empty')?.textContent).toMatch(/no day has been proposed/i)
+  })
+
+  it('applies a readable plan, its verdict and its credits', () => {
+    const host = document.createElement('div')
+    const surface = new PlanReviewSurface(host, { sites: SITES })
+    surface.applyDetail(
+      '7be2-uuid',
+      sanitisePlanDetail({
+        plan: ITINERARY,
+        feasibility: { ok: true, violations: [], checked_at: CHECKED_AT },
+        approval: { state: 'proposed', approved_at: null, superseded_by: null },
+        attribution: ['© OpenStreetMap contributors'],
+      }),
+    )
+    expect(surface.approvable).toBe(true)
+    expect(host.querySelector('.siyur-plan__date')?.textContent).toBe('2026-08-14')
+    expect(host.querySelector('.siyur-plan-attribution')?.textContent).toBe(
+      '© OpenStreetMap contributors',
+    )
+    const rows = [...host.querySelectorAll('.siyur-plan-timeline > *')] as HTMLElement[]
+    expect(rows.map((r) => r.dataset.stopOrder ?? r.dataset.legId)).toEqual(['0', 'leg-0', '1'])
+  })
+})
+
+/* -------------------------------------------------- the verdict's caption --- */
+
+describe('ADR-0030 A1 — a server-computed verdict carries its own caption', () => {
+  it('captions the verdict inside the feasibility section, in every branch', () => {
+    // Inside `renderFeasibility`, so it travels with the section: the plan-structure
+    // credit is appended only in the `itinerary` branch, and the verdict renders in all
+    // of them.
+    for (const feasibility of [FEASIBLE, INFEASIBLE, sanitiseFeasibility(undefined)]) {
+      const caption = renderFeasibility(feasibility).querySelector<HTMLElement>(
+        '.siyur-plan-verdict-credit',
+      )
+      expect(caption, String(feasibility.readable) + String(feasibility.ok)).not.toBeNull()
+      expect(caption?.dataset.verdictSource).toBe('server-computed')
+      expect(caption?.querySelector('.siyur-chip')).toBeNull() // stated, never stamped
+    }
+  })
+
+  it('captions violations even when NO itinerary rendered — the gap A1 closes', () => {
+    const panel = renderPlanPanel(
+      model({ itinerary: { kind: 'unreadable' }, feasibility: INFEASIBLE }),
+    )
+    // The user-owned plan credit is absent here, exactly as before…
+    expect(panel.querySelector('.siyur-plan-credit')).toBeNull()
+    // …and the violations are captioned anyway, by their own section.
+    expect(panel.querySelectorAll('.siyur-plan-violation').length).toBe(VIOLATIONS.length)
+    expect(
+      panel.querySelector('.siyur-plan-feasibility .siyur-plan-verdict-credit'),
+    ).not.toBeNull()
+  })
+
+  it('does not file the verdict under the user’s own-data credit', () => {
+    // "Times, stop order … are your own plan" is a claim about the user's composition.
+    // A server verdict ABOUT that composition filed under it says the verdict is theirs.
+    const panel = renderPlanPanel(model({ feasibility: INFEASIBLE }))
+    const structure = panel.querySelector<HTMLElement>('.siyur-plan-credit')
+    expect(structure?.dataset.planSource).toBe('user-owned')
+    expect(structure?.textContent).not.toMatch(/verdict|conflict/i)
+    const verdict = panel.querySelector<HTMLElement>(
+      '.siyur-plan-feasibility .siyur-plan-verdict-credit',
+    )
+    expect(verdict?.textContent).toMatch(/not sourced data/i)
+    expect(verdict?.textContent).not.toMatch(/your own plan/i)
   })
 })
 

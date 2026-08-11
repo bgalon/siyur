@@ -6,8 +6,9 @@
  *
  * 1. **Feasibility fails closed.** A missing, malformed or unreadable verdict is
  *    `ok:false, readable:false` — never `ok:true` by omission and never "no violations,
- *    so fine". Approval is gated on this value, and the only safe direction for a gate
- *    to fail is shut.
+ *    so fine". A verdict that says `ok:true` while *naming* violations contradicts
+ *    itself and is read as not-ok, with the violations kept. Approval is gated on this
+ *    value, and the only safe direction for a gate to fail is shut.
  * 2. **An unknown `approval.state` stays unknown.** The seven states are a closed set;
  *    an eighth is narrowed to `null` and reported as unrecognised, rather than mapped
  *    onto whichever known state looks closest.
@@ -82,14 +83,25 @@ export function sanitisePlanStatus(raw: unknown): PlanStatusFrame | null {
   }
 }
 
-/** The verdict, failing closed. See the module note. */
+/**
+ * The verdict, failing closed. See the module note.
+ *
+ * **`ok:true` with a non-empty `violations[]` is read as not-ok.** The contract pairs
+ * `ok:false` with the named breaches, so the combination is a self-contradicting body —
+ * a half-deployed checker, a partial write, a merge of two verdicts. Believing `ok`
+ * would open the one irreversible gate in the product *and* drop the sentence saying
+ * what is wrong, and the server would then answer `409` anyway. Believing `violations`
+ * costs a user a re-plan. Nothing is discarded: both fields are kept, so the panel still
+ * shows the server's own words.
+ */
 export function sanitiseFeasibility(raw: unknown): Feasibility {
   const body = isRecord(raw) ? raw : {}
+  const violations = Array.isArray(body.violations)
+    ? body.violations.filter((v): v is string => str(v) !== null)
+    : []
   return {
-    ok: body.ok === true,
-    violations: Array.isArray(body.violations)
-      ? body.violations.filter((v): v is string => str(v) !== null)
-      : [],
+    ok: body.ok === true && violations.length === 0,
+    violations,
     checked_at: str(body.checked_at),
     // Keyed to `ok`, the one field the contract always sends.
     readable: typeof body.ok === 'boolean',
@@ -145,11 +157,24 @@ export function readItineraryFrame(raw: unknown): ItineraryFrame {
   return { kind: 'unreadable' }
 }
 
+/**
+ * The `plan` field of a detail body, as a frame.
+ *
+ * An absent or `null` `plan` is **`absent`**, not `unreadable`: a row still `proposing`
+ * has no itinerary yet, which is not the statement "the itinerary is corrupt". Anything
+ * else goes through {@link readItineraryFrame}, so the read-back path keeps the honest
+ * zero-stop day apart from a malformed one exactly as the stream does — the two paths
+ * describing one row must not contradict each other.
+ */
+function planFrame(raw: unknown): ItineraryFrame {
+  return raw === undefined || raw === null ? { kind: 'absent' } : readItineraryFrame(raw)
+}
+
 /** The whole `GET /plans/{plan_id}` body. */
 export function sanitisePlanDetail(raw: unknown): PlanDetail {
   const body = isRecord(raw) ? raw : {}
   return {
-    plan: parseItinerary(body.plan),
+    plan: planFrame(body.plan),
     feasibility: sanitiseFeasibility(body.feasibility),
     approval: sanitiseApproval(body.approval),
     // Server-owned wording, filtered but never rewritten (`../map/attribution.ts`).

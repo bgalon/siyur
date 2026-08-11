@@ -22,19 +22,29 @@
  * *explained* rather than indistinguishable from a missing one — the precedent
  * `../travel/render.ts::createPlanCredit` set for the offline surface.
  *
- * **3. Feasibility violations carry no chip either, and sit under the same credit.**
- * A violation is a **server-computed verdict about the user's own plan**
+ * **3. Feasibility violations carry no chip, and carry a caption of their OWN**
+ * (**ADR-0030 (proposed), amendment A1** — the ruling, not a judgement call left open
+ * here). A violation is a **server-computed assertion about the user's composition**
  * ("`walking_m 4200 > budget 3000`"), returned by the contract with no `SourceRef` and
- * stored on `user_plan`, not in the itinerary. Some violation strings quote an OSM
- * opening-hours expression, which is the one place this reading is arguable — but the
- * value being displayed is the verdict, the server stamps it with nothing, and
+ * stored on `user_plan`, not in the itinerary — so there is no stamp to render, and
  * fabricating an ODbL chip for a sentence the server composed would be a provenance lie
- * in the direction the funnel exists to stop. FR-005 requires the violations be *named*,
- * so they are rendered verbatim rather than dropped.
+ * in the direction the funnel exists to stop.
  *
- * Points 2 and 3 are judgement calls about the scope of "value" and they owe an ADR —
- * the same one `../travel/render.ts` flagged. Recorded here so a reviewer can disagree
- * with a decision rather than discover a gap. Neither is resolved unilaterally.
+ * A1 rules that it may **not** shelter under the plan-structure credit, for two reasons.
+ * *Mechanically*, that credit is appended only in the `itinerary` branch while
+ * {@link renderFeasibility} renders in every branch — an unreadable itinerary plus a
+ * verdict carrying violations left uncaptioned unsourced sentences on screen.
+ * *Semantically*, "your own plan … your data, not sourced data" is a claim about **user
+ * composition**, and filing the server's verdict *about* that composition under it tells
+ * the reader the verdict is their own data. So {@link createVerdictCaption} is emitted
+ * **inside** `renderFeasibility` (and inside the approval-failure block, which carries
+ * the same kind of sentence), and therefore travels with the section in every branch.
+ * FR-005 requires the violations be *named*, so they are rendered verbatim, never
+ * collapsed — and never parsed: an opening-window breach names the window, and the
+ * expression itself belongs to the stop's chipped `opening_hours`.
+ *
+ * Point 2 is the same ADR's reading of "value" and is likewise recorded, not decided
+ * here — `../travel/render.ts` flagged it first.
  *
  * ────────────────────────────────────────────────────────────────────────────────
  *
@@ -48,16 +58,28 @@
  * be approved.** The server answers `409` while a plan is infeasible or superseded, so
  * a button that fires a doomed request is a button that lies; the click listener is
  * bound in exactly one branch, under {@link approvability}. There is no override.
+ *
+ * **A refused approval is a first-class outcome of this surface, not a caught-and-logged
+ * one.** Approve is the one irreversible action in the product, and the request can be
+ * refused for a reason the panel could not have known: another tab re-planned the same
+ * area, so this proposal is superseded (`409 plan_superseded`), or the session expired.
+ * The model therefore carries {@link PlanReviewModel.failure} and
+ * {@link PlanReviewModel.approving}: a rejection lands on the model and is rendered —
+ * with the `superseded_by` id, which is the one thing that resolves the situation — and
+ * the button is unbound while a request is in flight, so a click that appears to do
+ * nothing cannot be answered by clicking again.
  */
 
 import { renderSourcedValue } from '../map/attribution-chip'
 import type { SiteRecordV1, SourceRef, SourcedValue } from '../map/types'
+import { PlanApprovalConflictError, PlanRequestError } from './client'
 import type {
   ExcludedSite,
   Feasibility,
   ItineraryFrame,
   ItineraryV1,
   PlanApproval,
+  PlanDetail,
   PlanState,
   RouteLegV1,
   Stop,
@@ -76,6 +98,10 @@ export interface PlanReviewModel {
   readonly attribution: readonly string[]
   /** `load_sites.candidates`; `0` is the honest "not enough here" (never padded). */
   readonly candidates: number | null
+  /** The last approve attempt that was refused. Cleared by any fresh read-back. */
+  readonly failure: PlanApprovalFailure | null
+  /** An approve request is in flight: the button is disabled *and* unbound. */
+  readonly approving: boolean
 }
 
 export const EMPTY_PLAN_MODEL: PlanReviewModel = {
@@ -87,6 +113,71 @@ export const EMPTY_PLAN_MODEL: PlanReviewModel = {
   excluded: [],
   attribution: [],
   candidates: null,
+  failure: null,
+  approving: false,
+}
+
+/* ---------------------------------------------------- a refused approval --- */
+
+/** A refused approve attempt, in the shape the panel can render. */
+export interface PlanApprovalFailure {
+  /** The server's own machine-readable reason (`infeasible` | `plan_superseded`), else `null`. */
+  readonly reason: string | null
+  /** What to tell the user. **Never claims the plan was approved.** */
+  readonly message: string
+  /** The server's named violations, when it refused as infeasible (FR-005). */
+  readonly violations: readonly string[]
+  /** The successor plan id — the actionable part of a `plan_superseded` refusal. */
+  readonly supersededBy: string | null
+}
+
+/**
+ * Turn whatever `onApprove` rejected with into something the panel can say.
+ *
+ * Every message ends on the same fact — **nothing was approved** — because the failure
+ * mode this exists to prevent is a user who cannot tell a refused request from a click
+ * that did not register. A status this client has no wording for is reported with its
+ * number rather than as a generic "something went wrong": the number is what a support
+ * conversation can act on, and inventing a cause would be worse than naming none.
+ */
+export function describeApprovalFailure(error: unknown): PlanApprovalFailure {
+  if (error instanceof PlanApprovalConflictError) {
+    if (error.reason === 'plan_superseded') {
+      return {
+        reason: error.reason,
+        message:
+          'A newer proposal replaced this day before it could be approved, so nothing ' +
+          'was approved. Approve the newer plan instead.',
+        violations: error.violations,
+        supersededBy: error.supersededBy,
+      }
+    }
+    return {
+      reason: error.reason,
+      message:
+        error.reason === 'infeasible'
+          ? 'The server refused this approval because the day is not feasible. ' +
+            'Nothing was approved.'
+          : 'The server refused this approval. Nothing was approved.',
+      violations: error.violations,
+      supersededBy: error.supersededBy,
+    }
+  }
+  if (error instanceof PlanRequestError) {
+    const message =
+      error.status === 401
+        ? 'Your session has ended, so nothing was approved. Sign in and try again.'
+        : error.status === 404
+          ? 'This plan is no longer on the server, so nothing was approved.'
+          : `The server refused this approval (status ${error.status}). Nothing was approved.`
+    return { reason: null, message, violations: [], supersededBy: null }
+  }
+  return {
+    reason: null,
+    message: 'The approval request did not complete, so nothing was approved.',
+    violations: [],
+    supersededBy: null,
+  }
 }
 
 /* --------------------------------------------------------- approvability --- */
@@ -115,6 +206,22 @@ const FRAME_BLOCK: Record<Exclude<ItineraryFrame['kind'], 'itinerary'>, string> 
 }
 
 /**
+ * Did the day pass — the single reading of a verdict this module uses.
+ *
+ * `ok` alone is not the answer. A verdict that claims `ok:true` while naming violations
+ * contradicts itself, and the gate resolves the contradiction shut.
+ * `./parse::sanitiseFeasibility` already applies this rule at the wire boundary; this is
+ * the same rule at the point of use, so a `Feasibility` assembled anywhere else — a
+ * caller's fixture, a future non-HTTP source — cannot open the one irreversible gate in
+ * the product on a self-contradicting verdict. Both {@link approvability} and
+ * {@link renderFeasibility} go through here, so the gate and the sentence beside it can
+ * never disagree.
+ */
+export function feasibilityPasses(feasibility: Feasibility): boolean {
+  return feasibility.readable && feasibility.ok && feasibility.violations.length === 0
+}
+
+/**
  * May this plan be approved, and if not, why?
  *
  * The order of the checks is the order of the honest answer: nothing to approve, then
@@ -133,7 +240,7 @@ export function approvability(model: PlanReviewModel): Approvability {
       reason: 'Feasibility was not reported for this day, so it cannot be approved.',
     }
   }
-  if (!model.feasibility.ok) {
+  if (!feasibilityPasses(model.feasibility)) {
     const n = model.feasibility.violations.length
     return {
       approvable: false,
@@ -269,35 +376,67 @@ export function createPlanStructureCredit(itinerary: ItineraryV1): HTMLElement {
 }
 
 /**
+ * The caption for a **server-computed verdict** — ADR-0030 (proposed) A1, module header
+ * point 3.
+ *
+ * Its own line, not the plan-structure credit's: this text says "we checked your plan",
+ * where {@link createPlanStructureCredit} says "this is your plan". Emitted by every
+ * function that renders verdict prose, so the sentences are never uncaptioned in any
+ * branch — including the branches where no itinerary rendered at all.
+ */
+export function createVerdictCaption(): HTMLElement {
+  const caption = line(
+    'siyur-plan-verdict-credit',
+    'This verdict is Siyur’s own check of your plan — a computed result, not sourced ' +
+      'data, so it carries no source stamp. Any place details it refers to carry their ' +
+      'own stamps above.',
+  )
+  caption.dataset.verdictSource = 'server-computed'
+  return caption
+}
+
+/**
  * The named violations (FR-005), one row each, in the server's own words.
  *
  * **Never collapsed to "infeasible".** "walking_m 4200 > budget 3000" tells the user
  * what to change; "this plan is infeasible" tells them only that something is wrong.
  * `textContent`, never `innerHTML`: a server-composed string is data, not a template.
+ *
+ * The reassurance line is spoken only when the verdict actually passes
+ * ({@link feasibilityPasses}). A body claiming `ok:true` while naming breaches would
+ * otherwise print "this day fits your budgets" *and* drop the one string saying what to
+ * fix — the reassurance and the omission being the same mistake twice.
  */
 export function renderFeasibility(feasibility: Feasibility): HTMLElement {
   const section = document.createElement('section')
   section.className = 'siyur-plan-feasibility'
-  section.dataset.ok = String(feasibility.ok)
+  const passes = feasibilityPasses(feasibility)
+  section.dataset.ok = String(passes)
   section.dataset.readable = String(feasibility.readable)
 
   if (!feasibility.readable) {
     section.append(line('siyur-plan-feasibility__title', 'Feasibility was not reported.'))
+    section.append(createVerdictCaption())
     return section
   }
-  if (feasibility.ok) {
+  if (passes) {
     section.append(
       line('siyur-plan-feasibility__title', 'This day fits your time and walking budgets.'),
     )
+    section.append(createVerdictCaption())
     return section
   }
 
   section.append(
     line(
       'siyur-plan-feasibility__title',
-      feasibility.violations.length === 1
-        ? '1 conflict to resolve:'
-        : `${feasibility.violations.length} conflicts to resolve:`,
+      // A refusal with nothing named is stated as such: "0 conflicts to resolve" reads
+      // as a bug, and pretending the day passed would be the opposite of failing shut.
+      feasibility.violations.length === 0
+        ? 'This day was refused, but the server named no conflict.'
+        : feasibility.violations.length === 1
+          ? '1 conflict to resolve:'
+          : `${feasibility.violations.length} conflicts to resolve:`,
     ),
   )
   const list = document.createElement('ul')
@@ -309,6 +448,7 @@ export function renderFeasibility(feasibility: Feasibility): HTMLElement {
     list.append(item)
   }
   section.append(list)
+  section.append(createVerdictCaption())
   return section
 }
 
@@ -360,6 +500,14 @@ export interface PlanPanelOptions {
   /** Called **only** from the approve button's click listener, which is bound only
    * when {@link approvability} says the request can succeed. */
   readonly onApprove?: (planId: string) => void | Promise<void>
+  /**
+   * Called when {@link PlanPanelOptions.onApprove} rejects.
+   *
+   * The rejection is never discarded. {@link PlanReviewSurface} renders it onto its own
+   * model; a caller rendering a bare panel gets it here, and is expected to re-render
+   * with {@link PlanReviewModel.failure} set — {@link describeApprovalFailure} builds it.
+   */
+  readonly onApproveFailure?: (error: unknown) => void
   readonly lang?: string
 }
 
@@ -371,7 +519,11 @@ export function renderPlanPanel(
   const root = document.createElement('section')
   root.className = 'siyur-plan'
   root.dataset.planState = model.approval.state ?? 'unknown'
-  root.dataset.feasible = String(model.feasibility.ok)
+  // Three values, not two: `false` alone conflated "checked, and it does not fit" with
+  // "never reported", which are different things to tell a user and to assert on.
+  root.dataset.feasible = model.feasibility.readable
+    ? String(feasibilityPasses(model.feasibility))
+    : 'unknown'
   if (model.planId) root.dataset.planId = model.planId
 
   const verdict = approvability(model)
@@ -437,6 +589,8 @@ export function renderPlanPanel(
   }
 
   root.append(renderApproveControl(model, verdict, options))
+  // Directly under the control that failed, so the refusal is where the click was.
+  if (model.failure) root.append(renderApprovalFailure(model.failure))
 
   if (model.attribution.length > 0) {
     // The aggregate credit, mirrored verbatim. Additional to the per-value chips
@@ -452,6 +606,50 @@ export function renderPlanPanel(
 let blockedReasonSeq = 0
 
 /**
+ * A refused approval, stated where the click happened.
+ *
+ * `role="alert"` because the panel re-renders around it: the refusal has to reach a user
+ * who is looking at the button, not at the bottom of the page. The `supersededBy` id is
+ * rendered as its own addressable line — it is the actionable part of the one refusal a
+ * user cannot otherwise diagnose, since the plan on their screen still looks fine.
+ */
+export function renderApprovalFailure(failure: PlanApprovalFailure): HTMLElement {
+  const block = document.createElement('section')
+  block.className = 'siyur-plan-approve-failure'
+  block.setAttribute('role', 'alert')
+  block.dataset.reason = failure.reason ?? 'unknown'
+  block.append(line('siyur-plan-approve-failure__message', failure.message))
+
+  if (failure.supersededBy) {
+    const successor = line(
+      'siyur-plan-approve-failure__superseded',
+      `The plan that replaced it is ${failure.supersededBy}.`,
+    )
+    successor.dataset.supersededBy = failure.supersededBy
+    block.append(successor)
+  }
+
+  if (failure.violations.length > 0) {
+    // The server's own words again (FR-005), verbatim and `textContent`-only. Their own
+    // class, so a violation the *refusal* named is never mistaken in a query for one the
+    // feasibility section reported — they can disagree, and that difference is the news.
+    const list = document.createElement('ul')
+    list.className = 'siyur-plan-approve-failure__violations'
+    for (const violation of failure.violations) {
+      const item = document.createElement('li')
+      item.className = 'siyur-plan-approve-failure__violation'
+      item.textContent = violation
+      list.append(item)
+    }
+    block.append(list)
+  }
+
+  // Server-computed prose about the user's own plan — captioned here too (A1).
+  block.append(createVerdictCaption())
+  return block
+}
+
+/**
  * The HITL gate's control.
  *
  * Rendered as a **disabled** button plus the stated reason rather than as nothing at
@@ -459,6 +657,12 @@ let blockedReasonSeq = 0
  * one beside the named violations says what to fix. It is disabled *and* unwired — a
  * DOM tamper that clears `disabled` still fires no request, because there is no
  * listener to fire.
+ *
+ * **In flight is a third state.** While an approve request is outstanding the button is
+ * disabled, unbound and says so: approval is irreversible and the server's idempotency
+ * is the last line of defence, not the first. The listener additionally disarms itself
+ * the instant it fires, so a double-click cannot POST twice in the window before the
+ * surface re-renders.
  */
 export function renderApproveControl(
   model: PlanReviewModel,
@@ -471,17 +675,35 @@ export function renderApproveControl(
   const button = document.createElement('button')
   button.type = 'button'
   button.className = 'siyur-plan-approve__button'
-  button.textContent = 'Approve this day'
+  button.textContent = model.approving ? 'Approving this day…' : 'Approve this day'
   button.dataset.approvable = String(verdict.approvable)
-  button.disabled = !verdict.approvable
-  button.setAttribute('aria-disabled', String(!verdict.approvable))
+  button.dataset.pending = String(model.approving)
+  button.disabled = !verdict.approvable || model.approving
+  button.setAttribute('aria-disabled', String(button.disabled))
+  if (model.approving) button.setAttribute('aria-busy', 'true')
   wrapper.append(button)
 
-  if (verdict.approvable && model.planId) {
+  if (verdict.approvable && model.planId && !model.approving) {
     const planId = model.planId
-    const { onApprove } = options
+    const { onApprove, onApproveFailure } = options
     // ⬇︎ THE ONLY call site, in the only branch where the server can answer 200.
-    if (onApprove) button.addEventListener('click', () => void onApprove(planId))
+    if (onApprove) {
+      let fired = false
+      button.addEventListener('click', () => {
+        if (fired) return
+        fired = true
+        button.disabled = true
+        button.dataset.pending = 'true'
+        // The rejection is routed, never `void`ed away: a refused approval that changes
+        // nothing on screen is a click the user will simply make again.
+        void Promise.resolve(onApprove(planId)).catch((error: unknown) => {
+          fired = false
+          button.disabled = false
+          button.dataset.pending = 'false'
+          onApproveFailure?.(error)
+        })
+      })
+    }
   } else if (verdict.reason) {
     const reason = line('siyur-plan-approve__blocked', verdict.reason)
     // A per-instance id: `aria-describedby` resolves to the FIRST matching element in
@@ -510,13 +732,24 @@ export interface PlanReviewOptions extends PlanPanelOptions {
 export class PlanReviewSurface {
   private model: PlanReviewModel
   private panel: HTMLElement
+  /**
+   * The caller's options with `onApprove` **wrapped**, so the surface owns the request's
+   * lifecycle: pending on the way in, {@link PlanApprovalFailure} on the way out. The
+   * caller keeps writing a plain `approvePlan(...)` call and does not have to remember
+   * that a rejection has to be routed back onto a model it cannot see.
+   */
+  private readonly panelOptions: PlanReviewOptions
 
   constructor(
     private readonly container: HTMLElement,
     private readonly options: PlanReviewOptions = {},
   ) {
+    const { onApprove } = options
+    this.panelOptions = onApprove
+      ? { ...options, onApprove: (planId: string) => this.runApprove(planId, onApprove) }
+      : options
     this.model = { ...EMPTY_PLAN_MODEL, sites: options.sites ?? new Map() }
-    this.panel = renderPlanPanel(this.model, this.options)
+    this.panel = renderPlanPanel(this.model, this.panelOptions)
     this.container.append(this.panel)
   }
 
@@ -536,9 +769,31 @@ export class PlanReviewSurface {
   /** Merge a partial model and re-render in place. */
   update(patch: Partial<PlanReviewModel>): void {
     this.model = { ...this.model, ...patch }
-    const next = renderPlanPanel(this.model, this.options)
+    const next = renderPlanPanel(this.model, this.panelOptions)
     this.panel.replaceWith(next)
     this.panel = next
+  }
+
+  /**
+   * Run the caller's approve, with the two states the panel needs to tell the truth.
+   *
+   * Does **not** re-throw: the rejection has already been rendered by the time this
+   * returns, and re-throwing would leave an unhandled rejection for a failure that is a
+   * handled outcome. `options.onApproveFailure`, if the caller supplied one, still gets
+   * the original error — the surface handles the *display*, not the caller's business.
+   */
+  private async runApprove(
+    planId: string,
+    onApprove: NonNullable<PlanPanelOptions['onApprove']>,
+  ): Promise<void> {
+    this.update({ approving: true, failure: null })
+    try {
+      await onApprove(planId)
+      this.update({ approving: false })
+    } catch (error: unknown) {
+      this.update({ approving: false, failure: describeApprovalFailure(error) })
+      this.options.onApproveFailure?.(error)
+    }
   }
 
   /** Clear the previous proposal so nothing stale is left on screen. */
@@ -578,16 +833,25 @@ export class PlanReviewSurface {
     }
   }
 
-  /** Apply a `GET /plans/{id}` body — the read-back path (and the post-approve one). */
+  /**
+   * Apply a `GET /plans/{id}` body — the read-back path (and the post-approve one).
+   *
+   * `detail.plan` arrives as a **frame** and is applied unchanged. Re-deriving it here
+   * (`plan ? itinerary : unreadable`) is what turned a reloaded honest empty day into
+   * "could not be read" — the panel then contradicted, on the same row, what the stream
+   * had said a moment earlier. A fresh read-back also clears a stale refusal: it is an
+   * answer about the *current* server state, which is exactly what the refusal was
+   * about.
+   */
   applyDetail(planId: string, detail: PlanApplyDetail): void {
     this.update({
       planId,
-      itinerary: detail.plan
-        ? { kind: 'itinerary', itinerary: detail.plan }
-        : { kind: 'unreadable' },
+      itinerary: detail.plan,
       feasibility: detail.feasibility,
       approval: detail.approval,
       attribution: detail.attribution,
+      failure: null,
+      approving: false,
     })
   }
 
@@ -596,13 +860,15 @@ export class PlanReviewSurface {
   }
 }
 
-/** The `GET /plans/{id}` shape {@link PlanReviewSurface.applyDetail} consumes. */
-export interface PlanApplyDetail {
-  readonly plan: ItineraryV1 | null
-  readonly feasibility: Feasibility
-  readonly approval: PlanApproval
-  readonly attribution: readonly string[]
-}
+/**
+ * The `GET /plans/{id}` shape {@link PlanReviewSurface.applyDetail} consumes — the wire
+ * type itself, deliberately.
+ *
+ * It was a separate declaration while it differed (`plan: ItineraryV1 | null`); now that
+ * `PlanDetail` carries the frame, a second copy would only be a thing that can drift
+ * away from the contract's own shape.
+ */
+export type PlanApplyDetail = PlanDetail
 
 /** Create and mount a {@link PlanReviewSurface}. */
 export function mountPlanReview(

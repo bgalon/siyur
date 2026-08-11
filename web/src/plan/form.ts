@@ -132,6 +132,8 @@ export function validatePlanRequest(values: PlanFormValues): PlanFormResult {
 export interface PlanFormOptions {
   /** Called only from `submit`, with a validated body. */
   readonly onSubmit?: (request: ProposeRequest) => void | Promise<void>
+  /** Called when `onSubmit` rejects. The form states the failure either way. */
+  readonly onSubmitFailure?: (error: unknown) => void
   readonly lang?: string
 }
 
@@ -170,6 +172,12 @@ function textInput(type: string, attrs: Record<string, string> = {}): HTMLInputE
 export class PlanRequestForm {
   private readonly form: HTMLFormElement
   private readonly problems: HTMLUListElement
+  /**
+   * Where a *transport* failure is said — separate from {@link problems}, which is a
+   * list of fields the user can fix. An expired session is not a bad field.
+   */
+  private readonly failure: HTMLParagraphElement
+  private pending = false
 
   constructor(
     container: HTMLElement,
@@ -203,14 +211,21 @@ export class PlanRequestForm {
     this.problems.className = 'siyur-plan-form__problems'
     this.problems.setAttribute('aria-live', 'polite')
 
+    this.failure = document.createElement('p')
+    this.failure.className = 'siyur-plan-form__failure'
+    this.failure.setAttribute('role', 'alert')
+    this.failure.hidden = true
+
     const submit = document.createElement('button')
     submit.type = 'submit'
     submit.className = 'siyur-plan-form__submit'
     submit.textContent = 'Plan this day →'
 
-    this.form.append(this.problems, submit)
+    this.form.append(this.problems, this.failure, submit)
     this.form.addEventListener('submit', (event) => {
       event.preventDefault()
+      // `submit()` handles its own rejection, so nothing is discarded here — see the
+      // note on {@link PlanRequestForm.submit}.
       void this.submit()
     })
     container.append(this.form)
@@ -241,11 +256,20 @@ export class PlanRequestForm {
   /**
    * Validate and, only if valid, hand the body to `onSubmit`.
    *
-   * @returns the result, so a caller (or a test) reads the decision rather than prose.
+   * **A rejecting `onSubmit` is reported, not swallowed.** The problems list is cleared
+   * before the request is made, so an expired session (`401` from `streamPlan`) used to
+   * leave an empty list and an unchanged form: a submit that visibly did nothing, which
+   * a user answers by submitting again. The failure is stated on its own line and the
+   * button is released so they *can* retry — knowingly.
+   *
+   * @returns the **validation** decision. A transport failure does not change it (the
+   * body was valid); it is reported on the form and, if the caller wants to act on it,
+   * through `onSubmitFailure`.
    */
   async submit(): Promise<PlanFormResult> {
     const result = validatePlanRequest(this.values())
     this.problems.replaceChildren()
+    this.clearFailure()
     if (!result.ok) {
       for (const problem of result.problems) {
         const item = document.createElement('li')
@@ -256,12 +280,57 @@ export class PlanRequestForm {
       }
       return result
     }
-    await this.options.onSubmit?.(result.request)
+    // One request at a time: a second click while the first is in flight would start a
+    // second proposal for the same area, which the server answers `409` (contract,
+    // idempotency guard) — a refusal the user did nothing to deserve.
+    if (this.pending) return result
+    this.setPending(true)
+    try {
+      await this.options.onSubmit?.(result.request)
+    } catch (error: unknown) {
+      this.showFailure(error)
+      this.options.onSubmitFailure?.(error)
+    } finally {
+      this.setPending(false)
+    }
     return result
   }
 
   destroy(): void {
     this.form.remove()
+  }
+
+  private setPending(pending: boolean): void {
+    this.pending = pending
+    this.form.dataset.pending = String(pending)
+    const submit = this.form.querySelector<HTMLButtonElement>('.siyur-plan-form__submit')
+    if (submit) submit.disabled = pending
+  }
+
+  private clearFailure(): void {
+    this.failure.textContent = ''
+    this.failure.hidden = true
+    delete this.failure.dataset.status
+  }
+
+  /**
+   * State the failure without inventing a cause.
+   *
+   * A `PlanRequestError` is recognised by its `status` — checked structurally rather
+   * than with `instanceof`, so this module does not pull the SSE transport in behind an
+   * import purely to name a number. Anything else is reported as not having completed,
+   * which is the only thing that is actually known.
+   */
+  private showFailure(error: unknown): void {
+    const status = (error as { status?: unknown } | null | undefined)?.status
+    const known = typeof status === 'number'
+    this.failure.textContent = known
+      ? status === 401
+        ? 'Your session has ended, so no day was planned. Sign in and try again.'
+        : `The server refused this request (status ${status}). No day was planned.`
+      : 'The request did not complete, so no day was planned. Try again.'
+    if (known) this.failure.dataset.status = String(status)
+    this.failure.hidden = false
   }
 
   private control(name: keyof PlanFormValues): HTMLInputElement | HTMLTextAreaElement | null {

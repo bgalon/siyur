@@ -108,9 +108,18 @@ export interface PlanApproval {
   readonly superseded_by: string | null
 }
 
-/** `200` body of `GET /plans/{plan_id}`. */
+/**
+ * `200` body of `GET /plans/{plan_id}`.
+ *
+ * `plan` is an {@link ItineraryFrame}, **not `ItineraryV1 | null`**. `null` collapsed
+ * the four outcomes back into two at the type level, so the read-back path reported an
+ * honest zero-stop day — the contract's "not enough here", which the stream renders
+ * correctly — as "could not be read": two contradictory statements about one row, the
+ * second of which tells the user the app is broken when it is working. The distinction
+ * has to survive the type or no render layer can restore it.
+ */
 export interface PlanDetail {
-  readonly plan: ItineraryV1 | null
+  readonly plan: ItineraryFrame
   readonly feasibility: Feasibility
   readonly approval: PlanApproval
   /** Union of the required credit strings, mirrored verbatim — never composed here. */
