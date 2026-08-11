@@ -39,3 +39,18 @@ uv run mypy .           # types
 
 Pins and traps for the geospatial libraries (Shapely 2.1 / h3 4.5 / OSMnx 2.1 /
 GeoPandas 1.1) live in [`AGENTS.md`](AGENTS.md); never emit the pre-major idioms.
+
+## Licence
+
+Three licences, because this repository holds three kinds of thing — see
+[`LICENSING.md`](LICENSING.md) for the reasoning.
+
+| | |
+|---|---|
+| **Code** | [Apache-2.0](LICENSE) |
+| **Documentation** (`docs/`, `specs/`, `prompts/`) | [CC BY 4.0](LICENSE-docs) |
+| **Committed data** (`tests/fixtures/`, `data/`) | **Third-party, per file** — [`DATA-LICENSES.md`](DATA-LICENSES.md) |
+
+The data files are **not** covered by the code licence and are not ours to relicense: the
+OSM-derived fixtures are ODbL ("© OpenStreetMap contributors") and the Wikivoyage capture is
+CC BY-SA. Those obligations travel with the bytes.

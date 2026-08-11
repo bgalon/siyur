@@ -1,5 +1,13 @@
 # `tests/fixtures/` — provenance
 
+> **⚖️ These files are third-party data and are NOT covered by the repository's Apache-2.0
+> code licence.** Each carries its own terms — ODbL-1.0 for the OSM-derived captures
+> (Overpass, Valhalla), CC-BY-SA-4.0 for the Wikivoyage/Wikipedia capture, CDLA-Permissive-2.0
+> for the Overture extracts. See [`/DATA-LICENSES.md`](../../DATA-LICENSES.md) for the
+> per-source row and [`/LICENSING.md`](../../LICENSING.md) for why the repository is split
+> three ways. **Copying a fixture into another project brings its licence with it**; the code
+> licence does not override it. OSM-derived data requires "© OpenStreetMap contributors".
+
 Committed fixtures back the T1/T2 source-adapter tests (ADR-0009) without ever hitting live
 Overture/OSM/Wikimedia/Valhalla in CI (test-strategy.md "Test data & flake control"). Every
 fixture below is **real data**, extracted live on the date noted — not synthetic. All of them
