@@ -1,8 +1,8 @@
 # 0005 — PR-based workflow with worktree (local) + cloud parallelism
 
-- Status: proposed
+- Status: accepted
 - Decision Maker(s): Ben
-- drafted-by: claude-code · approved-by: — · Date: 2026-07-25
+- drafted-by: claude-code · approved-by: — · Date: 2026-07-25 · accepted: 2026-08-11
 
 ## Context and Problem Statement
 
