@@ -1,6 +1,6 @@
 """Commons persistence — the PostGIS schema (data-model §4, tech-design §2), T014.
 
-Five tables, one privacy boundary:
+Six tables, one privacy boundary:
 
 - ``area`` — a user's delimitation, resolved to one polygon (`api/areas.py`, T037). It is
   what makes ``POST /areas/{area_id}/research`` able to answer ``404`` on an unknown id
@@ -26,6 +26,9 @@ Five tables, one privacy boundary:
 - ``user_note`` — **private, row-scoped to ``user_id``**. Validation rule 7 (FR-010): no
   ``source.kind="user"`` value ever reaches ``site``/``site_source``, and no commons read
   joins this table. It is a sibling of the commons, never a part of it.
+- ``user_plan`` — the planned day **and the HITL pause** (ADR-0023), private and row-scoped
+  to ``user_id`` exactly like ``user_note``. The approval is a row state rather than a
+  waiting coroutine, which is what makes it survive a restart; see :class:`UserPlan`.
 
 The DB URL comes from the ``SIYUR_DATABASE_URL`` process environment variable only — never
 a file, never ``.env*`` (AGENTS.md), matching ``alembic/env.py``.
@@ -43,7 +46,7 @@ from __future__ import annotations
 
 import os
 from datetime import UTC, date, datetime
-from typing import Any, Final
+from typing import Any, Final, Literal, get_args
 from uuid import UUID, uuid4
 
 from geoalchemy2 import Geometry, WKBElement
@@ -51,17 +54,21 @@ from geoalchemy2.shape import from_shape, to_shape
 from pydantic import JsonValue
 from shapely import Point
 from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
     ColumnElement,
     Date,
     DateTime,
     Engine,
     ForeignKey,
     Index,
+    Integer,
     MetaData,
     SQLColumnExpression,
     Text,
     create_engine,
     func,
+    text,
 )
 from sqlalchemy import cast as sql_cast
 from sqlalchemy.dialects.postgresql import JSONB
@@ -73,15 +80,19 @@ from commons.geo import validate_point
 
 __all__ = [
     "DATABASE_URL_ENV",
+    "PLAN_STATUSES",
+    "POST_APPROVAL_STATUSES",
     "SITE_CONFLICT_NATURAL_KEY",
     "SITE_SOURCE_NATURAL_KEY",
     "SRID",
     "Area",
     "Base",
+    "PlanStatus",
     "Site",
     "SiteConflict",
     "SiteSource",
     "UserNote",
+    "UserPlan",
     "create_db_engine",
     "create_session_factory",
     "database_url",
@@ -289,6 +300,118 @@ class UserNote(Base):
     value: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
 
     __table_args__ = (Index("ix_user_note_user_id_site_id", "user_id", "site_id"),)
+
+
+#: ADR-0023's lifecycle, in transition order. The API exposes this vocabulary **verbatim**
+#: (`contracts/plans.md`) — a DB→API translation table is a thing that drifts, and hiding
+#: ``compiling`` would leave the UI unable to tell "approved, idle" from "compile running".
+PlanStatus = Literal[
+    "proposing", "proposed", "approved", "superseded", "compiling", "compiled", "failed"
+]
+
+#: One definition, derived — so the `CHECK` below and any ``match`` over the enum cannot
+#: disagree about which states exist.
+PLAN_STATUSES: Final[tuple[PlanStatus, ...]] = get_args(PlanStatus)
+
+#: The states at or beyond approval. Both approval `CHECK`s are written over this **set**,
+#: never over the single ``approved`` state — see :class:`UserPlan`.
+POST_APPROVAL_STATUSES: Final[tuple[PlanStatus, ...]] = ("approved", "compiling", "compiled")
+
+
+def _quoted(statuses: tuple[PlanStatus, ...]) -> str:
+    return ", ".join(f"'{status}'" for status in statuses)
+
+
+class UserPlan(Base):
+    """A planned day and its approval state — **private, row-scoped to ``user_id``**.
+
+    The sibling of :class:`UserNote`, one level up: an itinerary is personal data, so it
+    lives here and never touches ``site``/``site_source``/``site_conflict`` (PRD §13 #4,
+    data-model §6). Every read of this table filters on ``user_id``; another subject's plan
+    must be **indistinguishable from a missing one**, which is why
+    `commons/repository.py`'s reads take the subject as a keyword rather than offering an
+    unscoped overload someone could reach for.
+
+    **The pause is this row's ``status``, not a suspended coroutine** (ADR-0023). That is
+    the whole reason an approval survives a restart: there is nothing in memory to lose. It
+    also means compile's precondition is a ``WHERE`` clause in the transaction that consumes
+    it — a ``proposed`` plan is not refused by an ``if``, it is *unclaimable*.
+
+    **Both approval `CHECK`s are implications over :data:`POST_APPROVAL_STATUSES`, and the
+    obvious biconditional has been written wrong twice.** ``(status='approved') =
+    (approved_at IS NOT NULL)`` rejects ``compiling``/``compiled`` outright; widening the
+    left side but keeping the biconditional then rejects a ``superseded`` row that keeps
+    ``approved_at`` as history — which makes "edit an approved plan" impossible at runtime,
+    the exact transition T026 asserts. An implication says post-approval states *require* a
+    timestamp; it does not say only they may have one. ``(approved_at IS NULL) =
+    (approved_by IS NULL)`` stays a biconditional because those two genuinely move together.
+
+    Transcribed from ``alembic/versions/0005_user_plan.py``, which is **already applied to
+    the live database** — the constraints are declared here so `alembic/env.py`'s
+    autogenerate diff sees what 0005 created rather than proposing to add it again.
+    """
+
+    __tablename__ = "user_plan"
+
+    id: Mapped[UUID] = mapped_column(PgUuid(as_uuid=True), primary_key=True, default=uuid4)
+    #: The auth subject (``SessionUser.sub``). Every read of this table filters on it.
+    user_id: Mapped[str] = mapped_column(Text, nullable=False)
+    area_id: Mapped[UUID] = mapped_column(
+        PgUuid(as_uuid=True), ForeignKey("area.id"), nullable=False
+    )
+    #: The serialised :class:`~commons.models.ItineraryV1`.
+    itinerary: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    status: Mapped[PlanStatus] = mapped_column(Text, nullable=False)
+    #: Incremented per edit — an edit writes a **new row**, never an update in place.
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1", default=1)
+    #: The successor row when an edit replaced this one. Self-FK, set in the same
+    #: transaction that writes ``revision+1``.
+    superseded_by: Mapped[UUID | None] = mapped_column(
+        PgUuid(as_uuid=True), ForeignKey("user_plan.id"), nullable=True, default=None
+    )
+    #: UTC, set at approval. **Never cleared** — a superseded row keeps it as history.
+    approved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+    approved_by: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    #: SHA-256 over the itinerary serialised per **RFC 8785 (JCS)** —
+    #: :meth:`~commons.models.ItineraryV1.canonical_sha256`, never a second canonicaliser.
+    itinerary_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    feasible: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    #: The **named** violations of FR-005; a JSON array of strings.
+    violations: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb"), default=list
+    )
+    #: UTC; set **only** when feasibility runs — never from ``updated_at``, which bumps on
+    #: any write and would report a time the check did not happen.
+    feasibility_checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow, onupdate=_utcnow
+    )
+
+    # Constraint names are BARE: NAMING_CONVENTION templates them as
+    # "ck_%(table_name)s_%(constraint_name)s", so an already-prefixed name would yield
+    # "ck_user_plan_ck_user_plan_status".
+    __table_args__ = (
+        CheckConstraint(f"status IN ({_quoted(PLAN_STATUSES)})", name="status"),
+        CheckConstraint(
+            f"status NOT IN ({_quoted(POST_APPROVAL_STATUSES)}) OR approved_at IS NOT NULL",
+            name="approved_at",
+        ),
+        # An infeasible plan is unapprovable in the DATABASE, not merely in code (FR-005).
+        CheckConstraint(
+            f"status NOT IN ({_quoted(POST_APPROVAL_STATUSES)}) OR feasible", name="feasible"
+        ),
+        CheckConstraint("(approved_at IS NULL) = (approved_by IS NULL)", name="approver"),
+        CheckConstraint("(status = 'superseded') = (superseded_by IS NOT NULL)", name="superseded"),
+        Index("ix_user_plan_user_id_area_id", "user_id", "area_id"),
+        Index("ix_user_plan_user_id_status", "user_id", "status"),
+    )
 
 
 # ── the idempotence invariant (T054, enforced in the database) ─────────────────────
