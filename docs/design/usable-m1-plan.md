@@ -206,12 +206,23 @@ backlog of individually-correct work that never added up to something usable. Ev
 is defined by *a journey that starts working*, and should be verified the way the bundle was:
 **by a person doing it, on a phone, not by a green suite.**
 
-## Open questions for Ben
+## Decisions (Ben, 2026-08-15)
 
-1. **Sign-in for M1** — real Google SSO, or an explicit dev sign-in screen? SSO needs a Google
-   project and a redirect URI; the dev screen is hours. This gates every journey.
-2. **Is Phase D in M1?** "Edit on the go" is in the PRD's promise, but touring is the release
-   gate. D could be M2 without weakening M1's claim.
-3. **RTL** — deferred, agreed. The delivery plan says **M3**, Ben said **M2**; the audit found
-   **zero physical direction properties against 35 logical ones**, so the debt is not
-   accumulating either way. Worth settling the number when convenient.
+1. **Sign-in stays the dev cookie for now** — real SSO comes *after* the local version
+   functions. So the sign-in item is **removed from Phase B** and sequenced after Phase C.
+   **Consequence to keep visible:** until then the only way into the app is pasting
+   `document.cookie` into devtools, so *every* usability claim made before that point is a
+   claim about a session that a developer started. That is acceptable for now and must not
+   quietly become the shipped answer.
+2. **Phase D (edit a plan) is deferred out of M1.** Touring is the release gate; editing is
+   not. The repository machinery stays built and unreachable in the meantime, which is
+   tolerable *because it is written down here* rather than forgotten.
+3. **A before B confirmed.**
+
+**So M1's remaining path is: A → B (minus sign-in) → C, and C is done.**
+
+## Still open
+
+- **RTL** — deferred, agreed. The delivery plan says **M3**, Ben said **M2**; the audit found
+  **zero physical direction properties against 35 logical ones**, so the debt is not
+  accumulating either way. Worth settling the number when convenient, not now.
