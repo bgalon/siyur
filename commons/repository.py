@@ -75,7 +75,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any, Final, Literal
 from uuid import UUID, uuid4
 
@@ -116,6 +116,7 @@ from commons.models import ItineraryV1, SiteRecordV1, SourceRef
 __all__ = [
     "COVERED_FRACTION",
     "EDITABLE_STATUSES",
+    "STALE_COMPILE_TIMEOUT",
     "ApprovalOutcome",
     "Coverage",
     "CommonsWriteRefused",
@@ -132,6 +133,8 @@ __all__ = [
     "finish_compile",
     "load_plan",
     "load_site",
+    "reap_stale_compiles",
+    "rearm_failed_compile",
     "record_feasibility",
     "sites_in_bbox",
     "sites_within",
@@ -925,6 +928,120 @@ def finish_compile(
         where=[UserPlan.status == "compiling"],
         values={"status": outcome},
     )
+
+
+def rearm_failed_compile(session: Session, plan_id: UUID, *, user_id: str) -> PlanRecord | None:
+    """Re-arm a failed compile: ``failed → approved``, and **nothing else moves**.
+
+    Without this, ``failed`` is a terminal dead end. A transient storage ``503`` in the middle
+    of a compile leaves the row unclaimable (:func:`claim_plan_for_compile` wants ``approved``),
+    unapprovable (:func:`approve_plan` refuses ``failed`` as ``plan_not_approvable``) and
+    uneditable (``failed`` is outside :data:`EDITABLE_STATUSES`) — so the only way back was to
+    discard a human approval that nothing had invalidated. Retrying a failed compile is not a
+    new decision; it is the *same* decision, still standing.
+
+    **Both post-approval implications already hold, so nothing but ``status`` is written.**
+    ``approved_at``/``approved_by`` were populated at approval and :func:`finish_compile` leaves
+    them untouched on the failure path, and ``feasible`` is still true because the ``CHECK``
+    would not have let the plan reach ``approved`` otherwise. Do **not** "tidy" either approval
+    column on the way through: ``ck_user_plan_approver`` is a *biconditional* —
+    ``(approved_at IS NULL) = (approved_by IS NULL)`` — so clearing one of them aborts the whole
+    transaction, and clearing both would violate ``ck_user_plan_approved_at`` the moment the
+    status becomes ``approved`` again.
+
+    Idempotent by construction: the second call's ``WHERE status='failed'`` matches zero rows and
+    returns ``None``, exactly as it does for a plan that never failed. A row in any other state
+    is likewise unreachable from here — this is a transition, not a status assignment.
+    """
+    return _update_plan(
+        session,
+        plan_id,
+        user_id,
+        where=[UserPlan.status == "failed"],
+        values={"status": "approved"},
+    )
+
+
+#: How long a ``compiling`` row may sit untouched before :func:`reap_stale_compiles` calls it
+#: failed. Generous against the compile it describes — the pipeline extracts tiles, fetches a
+#: walking network and hashes an archive, which `contracts/bundles.md` calls "a multi-minute
+#: pipeline" — because the cost of the two errors is asymmetric: reaping a *live* compile makes
+#: its own ``finish_compile`` match zero rows and silently orphans a bundle, while reaping late
+#: costs a user some minutes of a status they can already see.
+STALE_COMPILE_TIMEOUT: Final[timedelta] = timedelta(minutes=30)
+
+
+def reap_stale_compiles(
+    session: Session,
+    *,
+    timeout: timedelta = STALE_COMPILE_TIMEOUT,
+    now: datetime | None = None,
+    plan_id: UUID | None = None,
+    user_id: str | None = None,
+) -> tuple[UUID, ...]:
+    """Fail every ``compiling`` row untouched for longer than ``timeout``; return their ids.
+
+    A compile that dies with its process — an evicted container, a killed worker, an API restart
+    mid-stream — never reaches :func:`finish_compile`, and the row stays ``compiling`` forever:
+    unclaimable, uneditable, and a permanent ``409`` on the endpoint that would retry it. This is
+    the timeout that state has never had.
+
+    **``compiling → failed``, deliberately not ``compiling → approved``.**
+    :func:`rearm_failed_compile` stays the single path back to ``approved``, so a plan whose
+    compile died for a *non-transient* reason cannot silently re-arm itself forever — a crash
+    loop wearing the costume of a retry policy. Routing through ``failed`` keeps the retry a
+    decision somebody made.
+
+    **The clock is ``updated_at``, and that needs no new column.** ``updated_at`` carries
+    ``onupdate=_utcnow`` and ``compiling`` is excluded from :data:`EDITABLE_STATUSES`, so between
+    the claim and :func:`finish_compile` **nothing writes a ``compiling`` row at all** — every
+    other transition here is a conditional ``UPDATE`` whose predicate excludes that status and
+    therefore matches zero rows, and a zero-row ``UPDATE`` moves no timestamp. Its ``updated_at``
+    *is* its claim time. `commons/db.py` warns against reading ``updated_at`` semantically, and
+    that warning is about ``feasibility_checked_at``, where other writes genuinely intervene;
+    here none can, and ``test_nothing_writes_a_compiling_row`` pins the property this rides on —
+    if a future writer touches a ``compiling`` row (a progress field, a heartbeat, a retry
+    counter) it resets this clock and stops the reaper, and that test is what goes red.
+
+    Args:
+        timeout: how stale is stale. Explicit, with a default, rather than a wall-clock guess.
+        now: the moment "stale" is measured against; defaults to UTC now. **Must be tz-aware** —
+            a naive datetime compared against a ``timestamptz`` is a silent offset error.
+        plan_id, user_id: optional narrowing. Unset on both is the **sweeper** form, for a
+            maintenance job that has no user; a request path passes both so one caller's compile
+            can never rewrite another subject's row (the PRD §13 #4 scope, kept even here).
+    """
+    moment = now or datetime.now(UTC)
+    if moment.tzinfo is None:
+        raise ValueError("reap_stale_compiles needs a tz-aware `now`; a naive one is a guess")
+    where: list[ColumnElement[bool]] = [
+        UserPlan.status == "compiling",
+        UserPlan.updated_at < moment - timeout,
+    ]
+    if plan_id is not None:
+        where.append(UserPlan.id == plan_id)
+    if user_id is not None:
+        where.append(UserPlan.user_id == user_id)
+    statement = (
+        update(UserPlan)
+        .where(*where)
+        .values(status="failed", updated_at=moment)
+        .returning(UserPlan.id)
+        .execution_options(synchronize_session=False)
+    )
+    reaped: Sequence[UUID] = session.execute(statement).scalars().all()
+    if reaped:
+        _log.warning(
+            "reaped %d compile(s) still marked compiling after %s: %s",
+            len(reaped),
+            timeout,
+            _ids(reaped),
+        )
+    return tuple(reaped)
+
+
+def _ids(values: Sequence[UUID]) -> str:
+    return ", ".join(sorted(str(value) for value in values))
 
 
 def supersede_plan(

@@ -55,7 +55,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Final
@@ -71,6 +71,7 @@ from sqlalchemy.orm import Session
 from commons.db import DATABASE_URL_ENV, SRID, Area, UserPlan
 from commons.models import ItineraryV1
 from commons.repository import (
+    STALE_COMPILE_TIMEOUT,
     PlanApproved,
     PlanRecord,
     PlanRefused,
@@ -79,6 +80,8 @@ from commons.repository import (
     create_plan,
     finish_compile,
     load_plan,
+    reap_stale_compiles,
+    rearm_failed_compile,
     record_feasibility,
     supersede_plan,
 )
@@ -172,7 +175,13 @@ class _ScriptedSession:
     def execute(self, statement: Any, *args: Any, **kwargs: Any) -> Any:
         self.statements.append(statement)
         row = self._rows.pop(0) if self._rows else None
-        return SimpleNamespace(first=lambda: row, one=lambda: row)
+        # `scalars()` is the sweeper's read shape (``RETURNING user_plan.id``); the others
+        # take whole column tuples through `first()`/`one()`.
+        return SimpleNamespace(
+            first=lambda: row,
+            one=lambda: row,
+            scalars=lambda: SimpleNamespace(all=lambda: [] if row is None else [row.id]),
+        )
 
     def begin_nested(self) -> SimpleNamespace:
         return SimpleNamespace(commit=lambda: None, rollback=lambda: None)
@@ -201,6 +210,10 @@ def test_every_plan_statement_filters_on_user_id() -> None:
         lambda s: finish_compile(s, plan_id, user_id=SUBJECT, outcome="compiled"),
         lambda s: record_feasibility(s, plan_id, user_id=SUBJECT, feasible=True, violations=[]),
         lambda s: supersede_plan(s, plan_id, user_id=SUBJECT, itinerary=_itinerary(uuid4())),
+        lambda s: rearm_failed_compile(s, plan_id, user_id=SUBJECT),
+        # The sweeper takes its scope as *optional* arguments, since a maintenance job has no
+        # subject. A request path passes both, and then it is scoped like everything else here.
+        lambda s: reap_stale_compiles(s, plan_id=plan_id, user_id=SUBJECT),
     ):
         session = _ScriptedSession(_fake_row(), _fake_row(), _fake_row())
         call(session)  # a stand-in, deliberately not a Session
@@ -225,6 +238,50 @@ def test_the_compile_claim_is_a_conditional_update_not_a_read() -> None:
     assert str(compiled).startswith("UPDATE user_plan SET"), str(compiled)
     assert compiled.params["status"] == "compiling", "the SET"
     assert compiled.params["status_1"] == "approved", "the gate, as a WHERE"
+
+
+def test_the_re_arm_and_the_reaper_are_conditional_updates_over_the_state_they_leave() -> None:
+    """Both new transitions are ``UPDATE … WHERE <current state>``, like every other one here.
+
+    The re-arm writes **only** ``status``: ``approved_at``/``approved_by`` are already populated
+    (``finish_compile`` leaves them alone on the failure path) and ``ck_user_plan_approver`` is a
+    biconditional, so a statement that "tidied" either column would abort the transaction rather
+    than re-arm anything. Asserted on the ``SET`` clause, where a helpful future edit would show
+    up first.
+
+    The reaper's ``WHERE`` carries the staleness cutoff as a **bound parameter** — a moment
+    computed by the caller from an explicit ``timeout``, never ``now()`` evaluated in SQL, which
+    is what makes the timeout testable without waiting for it.
+    """
+    plan_id = uuid4()
+    session = _ScriptedSession()
+    assert rearm_failed_compile(session, plan_id, user_id=SUBJECT) is None  # type: ignore[arg-type]
+    rearm = session.compiled(0)
+    assert str(rearm).startswith("UPDATE user_plan SET"), str(rearm)
+    assert rearm.params["status"] == "approved", "the SET"
+    assert rearm.params["status_1"] == "failed", "the gate, as a WHERE"
+    assert set(rearm.params) == {"status", "updated_at", "id_1", "user_id_1", "status_1"}, (
+        f"the re-arm writes a column it should not: {sorted(rearm.params)}"
+    )
+
+    moment = datetime(2026, 8, 14, 12, 0, tzinfo=UTC)
+    session = _ScriptedSession()
+    assert reap_stale_compiles(session, timeout=STALE_COMPILE_TIMEOUT, now=moment) == ()  # type: ignore[arg-type]
+    reaper = session.compiled(0)
+    assert reaper.params["status"] == "failed", "the SET"
+    assert reaper.params["status_1"] == "compiling", "only a claimed row is stale-able"
+    assert reaper.params["updated_at_1"] == moment - STALE_COMPILE_TIMEOUT, "the cutoff"
+    assert "user_plan.updated_at < " in str(reaper), str(reaper)
+
+
+def test_the_reaper_refuses_a_naive_now() -> None:
+    """A naive datetime against a ``timestamptz`` is a silent offset error, so it is refused.
+
+    Not a hypothetical: ``datetime.now()`` is one character shorter than ``datetime.now(UTC)``
+    and would reap rows hours early or never, depending on the deployment's local zone.
+    """
+    with pytest.raises(ValueError, match="tz-aware"):
+        reap_stale_compiles(_ScriptedSession(), now=datetime(2026, 8, 14, 12, 0))  # type: ignore[arg-type]
 
 
 def test_approval_predicates_on_status_hash_and_feasibility() -> None:
@@ -695,6 +752,133 @@ def test_a_plan_handed_to_the_compiler_is_no_longer_editable(
     )
     assert _plan_count(db_session) == rows
     assert _status(db_session, feasible_plan.id) == "compiled"
+
+
+def _updated_at(session: Session, plan_id: UUID) -> datetime:
+    """The row's ``updated_at``, read as a column — the reaper's clock, straight from the row."""
+    moment: datetime = session.execute(
+        select(UserPlan.updated_at).where(UserPlan.id == plan_id)
+    ).scalar_one()
+    return moment.astimezone(UTC)
+
+
+@pytest.mark.integration
+def test_nothing_writes_a_compiling_row(
+    db_session: Session, area: Area, feasible_plan: PlanRecord
+) -> None:
+    """The invariant :func:`~commons.repository.reap_stale_compiles` rides on, named as itself.
+
+    The reaper has no column of its own: it reads ``updated_at`` and treats it as *the moment
+    the claim was taken*. That is true only because nothing writes a ``compiling`` row between
+    :func:`~commons.repository.claim_plan_for_compile` and
+    :func:`~commons.repository.finish_compile` — which is not one fence but three
+    (``EDITABLE_STATUSES`` excludes ``compiling``; every other transition's ``WHERE`` excludes it
+    and a zero-row ``UPDATE`` moves no timestamp; ``record_feasibility`` refuses post-approval
+    states). So the property is asserted directly rather than the reaper's arithmetic alone:
+    **the row does not move**, and *therefore* the clock is the claim time.
+
+    Mutation: give any transition here a reason to touch a ``compiling`` row — a progress
+    field, a heartbeat, a retry counter — and the first half goes red immediately. Without this
+    test that change would be silently correct-looking and would stop the reaper firing at all,
+    since the row's clock would restart on every heartbeat.
+    """
+    plan_id = feasible_plan.id
+    approve_plan(db_session, plan_id, user_id=SUBJECT, approved_by=SUBJECT)
+    assert claim_plan_for_compile(db_session, plan_id, user_id=SUBJECT) is not None
+    db_session.commit()
+    claimed_at = _updated_at(db_session, plan_id)
+
+    # Every other way this module can be asked to write this row, all of them refused.
+    assert claim_plan_for_compile(db_session, plan_id, user_id=SUBJECT) is None
+    assert (
+        record_feasibility(db_session, plan_id, user_id=SUBJECT, feasible=True, violations=[])
+        is None
+    )
+    assert (
+        supersede_plan(db_session, plan_id, user_id=SUBJECT, itinerary=_itinerary(area.id)) is None
+    )
+    assert rearm_failed_compile(db_session, plan_id, user_id=SUBJECT) is None
+    replay = approve_plan(db_session, plan_id, user_id=SUBJECT, approved_by=SUBJECT)
+    assert isinstance(replay, PlanApproved) and not replay.newly_approved
+    db_session.commit()
+
+    assert _updated_at(db_session, plan_id) == claimed_at, (
+        "something wrote a compiling row: `updated_at` is no longer the claim time, so the "
+        "reaper is now measuring from that write instead and will never fire"
+    )
+
+    # And therefore the reaper's clock is the claim's: not yet stale one second early …
+    assert (
+        reap_stale_compiles(
+            db_session,
+            timeout=STALE_COMPILE_TIMEOUT,
+            now=claimed_at + STALE_COMPILE_TIMEOUT - timedelta(seconds=1),
+        )
+        == ()
+    )
+    assert _status(db_session, plan_id) == "compiling"
+    # … stale one second late, and routed to `failed` rather than back to `approved`.
+    reaped = reap_stale_compiles(
+        db_session,
+        timeout=STALE_COMPILE_TIMEOUT,
+        now=claimed_at + STALE_COMPILE_TIMEOUT + timedelta(seconds=1),
+    )
+    assert reaped == (plan_id,)
+    db_session.commit()
+    assert _status(db_session, plan_id) == "failed"
+    # The compile that was never coming back cannot release a claim it no longer holds.
+    assert finish_compile(db_session, plan_id, user_id=SUBJECT, outcome="compiled") is None
+
+
+@pytest.mark.integration
+def test_a_failed_compile_re_arms_and_keeps_the_approval_that_was_never_invalidated(
+    db_session: Session, area: Area, feasible_plan: PlanRecord
+) -> None:
+    """``failed`` stops being a dead end, and the re-arm moves **only** the status.
+
+    Before this transition a transient storage error stranded an approved day for good: the row
+    was unclaimable, unapprovable (``plan_not_approvable``) and uneditable, so the only recourse
+    was to discard a human approval that nothing had invalidated. Retrying is the *same*
+    decision, still standing — which is why ``approved_at``/``approved_by`` must survive it
+    untouched, and why touching them is not merely untidy: ``ck_user_plan_approver`` is a
+    biconditional and clearing one column aborts the transaction.
+
+    The guard is proved to bite (FAIL-007): a ``proposed`` plan is not re-armable, so this is a
+    transition and not a status assignment.
+    """
+    plan_id = feasible_plan.id
+    approved = approve_plan(db_session, plan_id, user_id=SUBJECT, approved_by=SUBJECT)
+    assert isinstance(approved, PlanApproved)
+    assert claim_plan_for_compile(db_session, plan_id, user_id=SUBJECT) is not None
+    assert finish_compile(db_session, plan_id, user_id=SUBJECT, outcome="failed") is not None
+    db_session.commit()
+
+    # The dead end, as it stood: neither approvable nor claimable nor editable.
+    refused = approve_plan(db_session, plan_id, user_id=SUBJECT, approved_by=SUBJECT)
+    assert isinstance(refused, PlanRefused) and refused.reason == "plan_not_approvable"
+    assert claim_plan_for_compile(db_session, plan_id, user_id=SUBJECT) is None
+    assert (
+        supersede_plan(db_session, plan_id, user_id=SUBJECT, itinerary=_itinerary(area.id)) is None
+    )
+
+    rearmed = rearm_failed_compile(db_session, plan_id, user_id=SUBJECT)
+    assert rearmed is not None and rearmed.status == "approved"
+    assert (rearmed.approved_at, rearmed.approved_by) == (approved.plan.approved_at, SUBJECT)
+    assert rearmed.feasible and rearmed.violations == ()
+    db_session.commit()
+
+    # The gate is genuinely open again — the compile the failure interrupted can be retried.
+    assert claim_plan_for_compile(db_session, plan_id, user_id=SUBJECT) is not None
+    # …and re-arming is a transition, not an assignment: a `compiling` row is not re-armable.
+    assert rearm_failed_compile(db_session, plan_id, user_id=SUBJECT) is None
+
+    # Nor is a plan that never failed — including one nobody has even approved.
+    other = create_plan(db_session, _itinerary(area.id))
+    record_feasibility(db_session, other.id, user_id=SUBJECT, feasible=True, violations=[])
+    assert rearm_failed_compile(db_session, other.id, user_id=SUBJECT) is None
+    assert _status(db_session, other.id) == "proposed"
+    # And another subject cannot re-arm someone else's failure.
+    assert rearm_failed_compile(db_session, plan_id, user_id=OTHER) is None
 
 
 @pytest.mark.integration
