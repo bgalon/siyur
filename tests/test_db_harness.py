@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import pytest
 
+from commons.db import DATABASE_URL_ENV
 from tests.conftest import TEST_DB_SUFFIX, UndisposableDatabase, _derive_disposable_url
 
 
@@ -68,3 +69,38 @@ def test_the_harness_hands_out_a_disposable_database(postgis_url: str) -> None:
     still pass while the hazard was fully restored.
     """
     assert postgis_url.rstrip("/").endswith(TEST_DB_SUFFIX)
+
+
+@pytest.mark.integration
+def test_the_testcontainer_path_also_yields_a_disposable_database(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The branch CI would otherwise never execute.
+
+    ``postgis_url`` has two sources — a configured ``SIYUR_DATABASE_URL`` and, failing that, a
+    testcontainer. **CI job 3 always sets the variable**, so until 2026-08-14 the container
+    branch had never run under CI, and it yielded its URL *undisposed*: the guard above failed
+    for anyone running Tier 2 locally with nothing exported, while CI stayed green.
+
+    That is precisely the shape this whole file exists to prevent, so the fix is not only to
+    derive on both paths but to make the untaken path taken. This test clears the environment
+    and drives the fixture function directly, so the container branch is exercised wherever
+    Docker is available — including CI, which has it.
+    """
+    from tests import conftest
+
+    monkeypatch.delenv(DATABASE_URL_ENV, raising=False)
+    monkeypatch.delenv("CI", raising=False)
+
+    source = conftest._postgis_source()
+    try:
+        url = next(source)
+    except Exception as exc:  # Docker absent — the fixture's own skip contract
+        pytest.skip(f"testcontainer path unavailable: {type(exc).__name__}: {exc}")
+    try:
+        assert conftest._disposable_url(url).rstrip("/").endswith(TEST_DB_SUFFIX), (
+            "the testcontainer branch handed out an underived database — the exact regression "
+            "that reached main on 2026-08-14"
+        )
+    finally:
+        source.close()
