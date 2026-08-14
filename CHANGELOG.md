@@ -16,6 +16,7 @@ Do not hand-edit — run `git-cliff -o CHANGELOG.md`.
 
 ### CI
 
+- Exclude canonical licence texts from the diff-guard count (#103)
 - Exclude captured fixtures + alembic scaffold from diff-guard
 - Real PostGIS service container on job 3 (T006)
 - Run real web typecheck + vitest (replace echo stubs)
@@ -24,6 +25,8 @@ Do not hand-edit — run `git-cliff -o CHANGELOG.md`.
 
 ### Chores
 
+- Ratify six ADRs, add the FAIL-009 merge guard, resync tasks.md (#107)
+- Notice unwritten devlog entries at session start
 - Close the Bash secret-read hole, gate agent self-edits
 - Enable auto mode + Agent Teams, add three subagents
 - Log permission telemetry, consolidate 177 rules to 103
@@ -35,6 +38,25 @@ Do not hand-edit — run `git-cliff -o CHANGELOG.md`.
 
 ### Docs, decisions & course artifacts
 
+- 2026-08-14, and stop the debt hook flagging days already covered (#117)
+- 2026-08-11 — the day the repo went public, and what that fixed (#108)
+- ADR-0030 — attribution scope, sourced values chip and user composition is captioned (#93)
+- Licence the repository, three ways, before going public (#102)
+- Tick the 16 tasks that shipped but were never checked off
+- 2026-08-08 — narration, and reasoned-vs-run verification (#91)
+- Ratify ADR-0020, 0021, 0024 and 0027 (Ben, 2026-08-08)
+- Ratify ADR-0014..0019, amend ADR-0022, add ADR-0029, and a guardrail for FAIL-008 (#82)
+- Reconcile the design authority before any DU-04 code (T007/T007a/T007b)
+- Clear the non-blocking review findings (6-16) and nits
+- Corrections from the card-amendment and review pass
+- Spec 002 tasks, ADR-0020..0025, and the schema-card amendments they force
+- Spec 002 Phase 0 research; correct the quickstart's auth
+- Spec 002 Phase 1 — data model, contracts, quickstart
+- Spec 002 implementation plan
+- Spec 002 — plan a day, compile it, travel it offline
+- Close the instruction gaps the event trail exposed
+- Reconstruct 2026-08-06 from the captured event trail
+- Restore the changelog generator and log the 2026-08-07 session
 - ADR-0019 — attribution is co-present with its value, not permanent
 - Record the four decisions US1 flagged but did not settle (0015-0018)
 - Record the pip-audit CVE that reddened job 6 after the gate check
@@ -78,6 +100,29 @@ Do not hand-edit — run `git-cliff -o CHANGELOG.md`.
 
 ### Features
 
+- The bundles endpoints, and the two dead ends in the plan lifecycle (T043, T047) (#115)
+- The compile pipeline, and the approved day is frozen not re-routed (T042) (#114)
+- The basemap stage, glyph/sprite integrity, and the licences it exposed (T035, T035a, T035b) (#113)
+- The walking network and its nodedness tripwire (T036, T037) (#112)
+- The plans API, the wiring that makes the gate reachable, and the frame POST /areas dropped (T024, T025) (#110)
+- Run_plan streams status, itinerary, feasibility, done (T023) (#105)
+- The per-bundle attribution file (T039, T046) (#100)
+- Bundle object storage with real range semantics (T041) (#99)
+- The bundle manifest — per-artifact hashes and the frozen frame (T040, T040a, T045) (#98)
+- The plan review surface, with approve unattached rather than disabled (T027, T028) (#101)
+- The HITL approval gate as row state, not a suspended coroutine (T022, T026) (#97)
+- A feasibility verdict and a proposal node that cannot emit a numeric (T018-T021) (#96)
+- The licence quarantine filter, with its traps pinned (T038, T044) (#95)
+- The RoutingProvider seam — Valhalla, ORS fallback, fixtures (T016, T017)
+- The offline travel UI and off-route recovery (T051, T052)
+- The offline bundle transport — OPFS, module worker, integrity (T048-T050, T053)
+- The area's local frame, and the HITL gate's table (T008, T009)
+- The narrate node and its prompt registry entry (T032, T034) (#86)
+- The Wikivoyage/Wikipedia narration adapter, with its traps pinned (T031, T033) (#85)
+- The opening-hours evaluator, fail-closed on three inputs (T014, T015) (#84)
+- The DU-04 data spine — ItineraryV1, RouteLegV1, BundleManifestV1 (T010-T013)
+- Phase-1 setup and the airplane-mode gate, made real (T001-T004, T029, T030)
+- Allowlist MIT as a bundleable data license (ADR-0026)
 - A dev vector basemap so the map shows streets
 - One command to start and stop the dev stack
 - Enforce ledger idempotence in the database, not in Python
@@ -107,6 +152,13 @@ Do not hand-edit — run `git-cliff -o CHANGELOG.md`.
 
 ### Fixes
 
+- The Tier-2 harness gets its own database, never yours (FAIL-011) (#116)
+- Discover routing captures by shape, not by place name
+- RFC 8785 canonicalization, the missing checked_at column, and a CHECK got wrong twice
+- Pin image digests, correct the timezonefinder claim and the SH design
+- Overpass mirror + a retry policy that survives a rate limit
+- Make the sprite URL absolute, as MapLibre requires (FAIL-007)
+- The five blocking defects from the Spec 002 review
 - Covered means "researched", not "contains a site"
 - Give an unnamed marker an accessible name without inventing one
 - Static dedupe SQL in 0003, no dynamic construction
@@ -132,6 +184,7 @@ Do not hand-edit — run `git-cliff -o CHANGELOG.md`.
 
 ### Tests
 
+- Live Valhalla and MediaWiki fixtures (T005, T006) (#83)
 - Drop a redundant natural-key case
 - Prove genericity on a second, non-Greek-script area (T063)
 - Re-aim T065 caching eval at the curate tier (ADR-0014)
