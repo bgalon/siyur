@@ -810,6 +810,45 @@ def test_missing_cli_says_it_is_a_system_binary(tmp_path: Path) -> None:
         )
 
 
+def test_the_extractor_never_uses_a_shell(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The argv reaches ``execvp`` as a vector, and no element is ever shell-interpreted.
+
+    This test exists to hold up the ``# nosemgrep`` in
+    :meth:`~compiler.tiles.PmtilesCliExtractor.extract`. That suppression's justification is
+    "``shell=False``, so an argument cannot become a command" — a claim about code that a
+    future edit could silently falsify, since adding ``shell=True`` is a one-word change that
+    turns every element of ``argv`` into shell input and makes the suppressed finding real.
+
+    A suppression whose premise nothing checks is how a real vulnerability ends up wearing a
+    comment that says it is fine. So the premise is asserted here: ``shell`` is never passed
+    truthy, and the command is handed over as a **list**, not a joined string.
+    """
+    captured: dict[str, object] = {}
+
+    def _fake_run(argv: object, **kwargs: object) -> object:
+        captured["argv"] = argv
+        captured["kwargs"] = kwargs
+        raise FileNotFoundError("not actually running pmtiles")
+
+    monkeypatch.setattr("compiler.tiles.subprocess.run", _fake_run)
+
+    with pytest.raises(ExtractFailed):
+        PmtilesCliExtractor().extract(
+            ExtractRequest(
+                build_url=BUILD.url,
+                bbox=(28.216, 36.440, 28.232, 36.451),
+                maxzoom=MAXZOOM,
+                destination=tmp_path / "out.pmtiles",
+            )
+        )
+
+    kwargs = captured["kwargs"]
+    assert isinstance(kwargs, dict)
+    # Not `is False` — absent is also correct, and the point is that it is never truthy.
+    assert not kwargs.get("shell"), "shell=True would make the suppressed semgrep finding real"
+    assert isinstance(captured["argv"], list), "a joined string would be shell-parseable"
+
+
 def test_fixture_extractor_refuses_a_missing_archive(tmp_path: Path) -> None:
     with pytest.raises(ExtractFailed, match="does not exist"):
         FixtureExtractor(tmp_path / "absent.pmtiles").extract(

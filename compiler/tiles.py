@@ -638,6 +638,23 @@ class PmtilesCliExtractor:
         ]
         try:
             # Fixed argv, no shell: the build URL and bbox are our own computed strings.
+            #
+            # The repo's first semgrep suppression, so it carries its own justification
+            # (Ben, 2026-08-14). The rule taints `argv` because its elements are not
+            # literals. Injection is nonetheless unreachable here, for two independent
+            # reasons: `shell=False` (the default, and never set otherwise), so the list is
+            # passed to `execvp` as an argument vector and no element can become a command
+            # or a shell metacharacter; and no element carries user input — `self.binary`
+            # is the module constant, `build_url` is `resolve_build`'s `<host>/<YYYYMMDD>`
+            # against an operator-set host, `destination` is a path under our own staging
+            # dir, and `bbox_arg`/`maxzoom` are formatted from floats and an int.
+            #
+            # **Revisit if any of that changes** — specifically if `binary` ever becomes
+            # request- or env-derived (an attacker choosing the *program* is the actual
+            # vulnerability this rule is about), or if `shell=True` appears here. Neither
+            # is true today and `test_the_extractor_never_uses_a_shell` pins the second.
+            #
+            # nosemgrep: python.django.security.injection.command.subprocess-injection.subprocess-injection  # noqa: E501
             completed = subprocess.run(
                 argv, capture_output=True, text=True, timeout=self.timeout_s, check=False
             )
