@@ -358,6 +358,54 @@
   overflow-wrap: anywhere;
 }
 
+/* --- Warnings: advisory, and they must LOOK it (ADR-0022 A12). ---
+   "We could not check this stop's hours" does not block approval, so it must not wear
+   the violations' clothes — a user who reads an amber row as a blocker is back to the
+   behaviour this ruling removed. Three separations, on purpose:
+
+   1. **Different classes, never shared with `.siyur-plan-violation`.** A selector written
+      to catch one must never silently match the other. (Same defect class as a structural
+      assertion whose query quietly matches nothing.)
+   2. **Dashed, where violations are solid.** This is the separation that does NOT depend
+      on colour, and it is the one that carries for anyone who cannot tell amber from
+      red-brown. **Do not "unify" these borders in a later tidy-up** — the difference is
+      load-bearing, not an inconsistency.
+   3. **Amber `#664400`, hue 40° against the violations' 20°** — and dark enough to read.
+      Measured (WCAG 2.1, sRGB): **8.44:1** on the warning row's own `#fffaf0`, and as the
+      section heading **7.56:1** on the passed-verdict background, **7.72:1** on the failed
+      one, **7.13:1** on `--siyur-paper-deep` when the verdict was never reported. The
+      floor is the 6.85:1 the credits measure at; the worst case here is 7.13:1. The
+      `#a67c1a` border is **3.66:1**, clearing the 3:1 non-text threshold — the existing
+      violation border is 1.88:1, so this is not a regression on that precedent. */
+.siyur-plan-warnings {
+  margin-block-start: 8px;
+}
+
+.siyur-plan-warnings__title {
+  margin: 0;
+  color: #664400;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.siyur-plan-warning-list {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.siyur-plan-warning {
+  margin-block-start: 4px;
+  padding: 5px 8px;
+  border: 1px dashed #a67c1a;
+  border-radius: 6px;
+  background: #fffaf0;
+  color: #664400;
+  font-family: var(--siyur-mono);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+
 /* --- FR-003: a place the walking network could not reach, dropped and reported. --- */
 .siyur-plan-excluded {
   margin: 8px 0 0;

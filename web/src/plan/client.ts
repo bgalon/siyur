@@ -128,6 +128,7 @@ export interface PlanProposal {
 const UNREPORTED_FEASIBILITY: Feasibility = {
   ok: false,
   violations: [],
+  warnings: [],
   checked_at: null,
   readable: false,
 }

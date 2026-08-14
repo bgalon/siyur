@@ -630,7 +630,14 @@ class PlanRecord:
     #: The digest **as stored** at the last write of :attr:`itinerary`.
     itinerary_hash: str
     feasible: bool
+    #: The **blocking** messages — the ones that made ``feasible`` false. A row reporting
+    #: ``feasible=True`` alongside a non-empty ``violations`` is the self-contradiction the
+    #: severity split exists to prevent, and no write path here can produce one.
     violations: tuple[str, ...]
+    #: The **advisory** messages: "we could not check this stop's hours", never a refusal
+    #: (ADR-0022, amended 2026-08-14). Kept apart from :attr:`violations` through the column
+    #: itself, because a warning read back under the heading "violations" *is* a violation.
+    warnings: tuple[str, ...]
     feasibility_checked_at: datetime | None
 
     @property
@@ -674,6 +681,66 @@ def _utc(value: datetime | None) -> datetime | None:
     return None if value is None else value.astimezone(UTC)
 
 
+def _verdict_entries(violations: Sequence[str], warnings: Sequence[str]) -> list[dict[str, Any]]:
+    """The ``user_plan.violations`` payload: one object per message, **severity stated**.
+
+    **The column is ``jsonb``, so it holds this without a migration** — which is why the
+    severity split (ADR-0022, amended 2026-08-14) needed no schema change and no ``ask``-gated
+    ``alembic revision``. The column *name* stays ``violations`` because renaming it would
+    need one; it now means "what the feasibility check found", of which the blocking entries
+    are a subset, and `data-model.md` §6 says so.
+
+    Order is blocking-then-advisory rather than interleaved. Nothing reads the order, but a
+    deterministic one means two identical verdicts produce identical ``jsonb`` — which is what
+    keeps a diff of this row, and any digest taken over it, meaningful.
+    """
+    return [{"message": message, "blocking": True} for message in violations] + [
+        {"message": message, "blocking": False} for message in warnings
+    ]
+
+
+def _split_verdict(stored: Any) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Read that payload back into ``(blocking, advisory)``, **failing towards blocking**.
+
+    Two shapes arrive here, and only one of them is written by this module today:
+
+    * ``{"message": …, "blocking": …}`` — the current shape; the severity is read straight
+      back rather than re-derived from the message text, so the split survives the round trip
+      instead of being guessed at by whoever reads the row next.
+    * a **bare string** — every row written before the split, when the column was a plain
+      array of strings and *every* entry was blocking by construction. Reading those as
+      blocking is not a shim being generous; it is what those rows mean.
+
+    **Fail closed on ambiguity, and that direction is deliberate — not an accident of which
+    branch came first.** A legacy row is one we cannot ask what the checker meant, so it
+    stays unapprovable until something re-checks it (:func:`record_feasibility`, on the next
+    proposal), rather than having its old unknowns quietly promoted into an approvable day.
+    The amendment un-blocks days the checker has *judged* under the new rule; it does not
+    retroactively re-judge days written under the old one.
+
+    Anything else — a null, a number, an object with no message — is dropped rather than
+    stringified, on :func:`_record_of`'s rule that a half-value is worse than an absent one.
+    An entry whose ``blocking`` flag is missing or is not a bool reads as **blocking**: the
+    only safe direction to resolve an unreadable severity is the one that keeps the approval
+    gate shut, which is the posture `web/src/plan/parse.ts` takes at the wire boundary too.
+    """
+    if not isinstance(stored, list):
+        return ((), ())
+    blocking: list[str] = []
+    advisory: list[str] = []
+    for entry in stored:
+        if isinstance(entry, str):
+            blocking.append(entry)
+            continue
+        if not isinstance(entry, dict):
+            continue
+        message = entry.get("message")
+        if not isinstance(message, str):
+            continue
+        (advisory if entry.get("blocking") is False else blocking).append(message)
+    return (tuple(blocking), tuple(advisory))
+
+
 def _plan_of(row: Row[Any]) -> PlanRecord:
     """Build a :class:`PlanRecord`; raises ``ValidationError`` on a non-itinerary blob.
 
@@ -681,6 +748,7 @@ def _plan_of(row: Row[Any]) -> PlanRecord:
     failure here is a real defect and must not be swallowed. :func:`load_plan` is the one
     place that catches, mirroring :func:`_record_of`'s never-a-half-record rule.
     """
+    violations, warnings = _split_verdict(row.violations)
     return PlanRecord(
         id=row.id,
         user_id=row.user_id,
@@ -693,7 +761,8 @@ def _plan_of(row: Row[Any]) -> PlanRecord:
         approved_by=row.approved_by,
         itinerary_hash=row.itinerary_hash,
         feasible=row.feasible,
-        violations=tuple(row.violations),
+        violations=violations,
+        warnings=warnings,
         feasibility_checked_at=_utc(row.feasibility_checked_at),
     )
 
@@ -792,9 +861,18 @@ def record_feasibility(
     user_id: str,
     feasible: bool,
     violations: Sequence[str],
+    warnings: Sequence[str] = (),
     checked_at: datetime | None = None,
 ) -> PlanRecord | None:
     """Record the deterministic verdict and advance ``proposing → proposed``.
+
+    **``violations`` and ``warnings`` are two arguments and stay two things.** They share one
+    ``jsonb`` column as severity-stamped entries (:func:`_verdict_entries`), so
+    :func:`load_plan` reconstructs the split rather than re-deriving it from the message text
+    — a reloaded plan reporting ``feasible=True`` under a heading that says "violations" is
+    exactly the contradiction the split removes. ``warnings`` defaults to empty for the
+    callers that genuinely have none (a seeded row, a test); :func:`planner.pipeline.run_plan`
+    always states it, because it always knows.
 
     Only a ``proposing``/``proposed`` row is touched, and that is a real guard rather than
     tidiness: re-running feasibility over an ``approved`` row could flip ``feasible`` to
@@ -815,7 +893,7 @@ def record_feasibility(
         values={
             "status": "proposed",
             "feasible": feasible,
-            "violations": list(violations),
+            "violations": _verdict_entries(violations, warnings),
             "feasibility_checked_at": checked_at or datetime.now(UTC),
         },
     )

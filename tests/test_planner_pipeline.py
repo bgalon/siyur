@@ -109,16 +109,25 @@ class RecordingStore:
 
     vanish: bool = False
     created: list[ItineraryV1] = field(default_factory=list)
-    recorded: list[tuple[UUID, bool, tuple[str, ...]]] = field(default_factory=list)
+    #: ``(plan_id, feasible, violations, warnings)`` — the two severities recorded as the two
+    #: arguments they arrive as, so a test can prove the pipeline did not merge them.
+    recorded: list[tuple[UUID, bool, tuple[str, ...], tuple[str, ...]]] = field(
+        default_factory=list
+    )
 
     def create(self, itinerary: ItineraryV1) -> StubRow:
         self.created.append(itinerary)
         return StubRow(id=itinerary.id, status="proposing")
 
     def record_feasibility(
-        self, plan_id: UUID, *, feasible: bool, violations: Sequence[str]
+        self,
+        plan_id: UUID,
+        *,
+        feasible: bool,
+        violations: Sequence[str],
+        warnings: Sequence[str],
     ) -> StubRow | None:
-        self.recorded.append((plan_id, feasible, tuple(violations)))
+        self.recorded.append((plan_id, feasible, tuple(violations), tuple(warnings)))
         return None if self.vanish else StubRow(id=plan_id, status="proposed")
 
 
@@ -299,6 +308,37 @@ def test_a_day_inside_its_budgets_and_windows_streams_ok(feasible_day: list[Even
     verdict = frame(feasible_day, "feasibility")
     assert verdict.data["ok"] is True
     assert verdict.data["violations"] == []
+    assert verdict.data["warnings"] == [], "these fixtures are all tagged Mo-Su 00:00-24:00"
+
+
+def test_stops_whose_hours_cannot_be_checked_warn_on_the_wire_and_still_stream_ok() -> None:
+    """ADR-0022 as amended 2026-08-14, at the frame the client actually reads.
+
+    Untagged places are the common case, not the exotic one — most OSM/Overture records carry
+    no ``opening_hours`` at all — so this is what a real day looks like on the wire: ``ok``
+    true, ``violations`` empty, and one ``warnings`` entry **per stop** so the traveller is
+    told which places to check rather than being handed a single "some hours are unknown".
+    """
+    untagged = (
+        site("Upper Fortress", lon=28.2247, hours=None),
+        site("Museum of the Citadel", lon=28.2251, hours=None),
+    )
+    store = RecordingStore()
+    events = drain(sites=untagged, store=store)
+
+    verdict = frame(events, "feasibility")
+    assert verdict.data["ok"] is True, "no real day would ever be approvable otherwise"
+    assert verdict.data["violations"] == []
+    warnings = list(verdict.data["warnings"])
+    assert len(warnings) == len(untagged)
+    assert all("no_expression" in message for message in warnings)
+    assert [message.split()[1] for message in warnings] == ["0", "1"], "named per stop"
+
+    # …and the row holds the same split, because the gate and the panel both read the row.
+    _, feasible, recorded_violations, recorded_warnings = store.recorded[0]
+    assert feasible is True
+    assert recorded_violations == ()
+    assert list(recorded_warnings) == warnings
 
 
 def test_an_infeasible_day_still_streams_its_itinerary_then_names_every_violation() -> None:
@@ -327,10 +367,11 @@ def test_an_infeasible_day_still_streams_its_itinerary_then_names_every_violatio
     assert any("stop 1" in message and "closed at 10:50" in message for message in violations)
 
     # …and the row holds exactly what the stream showed, because the gate reads the row.
-    plan_id, feasible, recorded = store.recorded[0]
+    plan_id, feasible, recorded, recorded_warnings = store.recorded[0]
     assert plan_id == store.created[0].id
     assert feasible is False
     assert list(recorded) == violations
+    assert recorded_warnings == (), "these stops are all tagged, so nothing is unknown"
 
 
 def test_the_verdict_reaches_the_row_and_is_never_attached_to_the_plan(
@@ -339,7 +380,7 @@ def test_the_verdict_reaches_the_row_and_is_never_attached_to_the_plan(
     """ADR-0025 ruling 3 — `feasible`/`violations` are row state; `ItineraryV1` forbids extras."""
     store = RecordingStore()
     events = drain(sites=candidates, store=store)
-    assert store.recorded == [(store.created[0].id, True, ())]
+    assert store.recorded == [(store.created[0].id, True, (), ())]
     payload = dict(frame(events, "itinerary").data)
     assert "feasible" not in payload
     assert "violations" not in payload
@@ -380,7 +421,8 @@ def test_an_area_with_no_candidates_is_an_honest_empty_plan_that_cannot_be_appro
     verdict = frame(events, "feasibility")
     assert verdict.data["ok"] is False
     assert verdict.data["violations"] == [EMPTY_DAY_VIOLATION]
-    assert store.recorded == [(store.created[0].id, False, (EMPTY_DAY_VIOLATION,))]
+    assert verdict.data["warnings"] == [], "an absent day is a refusal, never an advisory"
+    assert store.recorded == [(store.created[0].id, False, (EMPTY_DAY_VIOLATION,), ())]
 
 
 def test_a_model_that_answers_nothing_usable_raises_and_writes_no_row(
@@ -489,6 +531,7 @@ def test_the_repository_row_satisfies_the_pipeline_protocol() -> None:
         itinerary_hash=itinerary.canonical_sha256(),
         feasible=False,
         violations=(),
+        warnings=(),
         feasibility_checked_at=None,
     )
     row: PlanRow = record

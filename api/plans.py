@@ -185,10 +185,20 @@ class ProposeRequestBody(BaseModel):
 
 
 class FeasibilityBody(BaseModel):
-    """The deterministic verdict, read off the ``user_plan`` row — never recomputed here."""
+    """The deterministic verdict, read off the ``user_plan`` row — never recomputed here.
+
+    **``ok`` is the approval predicate and ``violations`` is what makes it false.**
+    ``warnings`` is the advisory half (ADR-0022, amended 2026-08-14) — today, every stop whose
+    opening hours could not be evaluated — and it is a *separate* list rather than a flag on a
+    combined one so that a client which has never heard of warnings cannot render one as a
+    blocker. Both are the server's own words, verbatim (FR-005).
+    """
 
     ok: bool
     violations: list[str]
+    #: Advisory only. A non-empty ``warnings`` with ``ok: true`` is the normal case, not a
+    #: contradiction — a non-empty ``violations`` with ``ok: true`` still is.
+    warnings: list[str] = []
     #: UTC, and set **only** when the check ran (never mirrored from ``updated_at``, which
     #: bumps on any write and would report a time the check did not happen).
     checked_at: datetime | None
@@ -250,7 +260,12 @@ class _PlanStore:
         return create_plan(self.session, itinerary)
 
     def record_feasibility(
-        self, plan_id: UUID, *, feasible: bool, violations: Sequence[str]
+        self,
+        plan_id: UUID,
+        *,
+        feasible: bool,
+        violations: Sequence[str],
+        warnings: Sequence[str],
     ) -> PlanRow | None:
         return record_feasibility(
             self.session,
@@ -258,6 +273,7 @@ class _PlanStore:
             user_id=self.user_id,
             feasible=feasible,
             violations=list(violations),
+            warnings=list(warnings),
         )
 
 
@@ -378,6 +394,10 @@ def _detail(session: Session, plan: PlanRecord) -> PlanDetailResponse:
         feasibility=FeasibilityBody(
             ok=plan.feasible,
             violations=list(plan.violations),
+            # Read off the row's own severity split, never re-derived from the message text:
+            # `commons.repository` stores the severity beside each message precisely so the
+            # read-back path does not have to guess which half a sentence came from.
+            warnings=list(plan.warnings),
             checked_at=plan.feasibility_checked_at,
         ),
         approval=ApprovalBody(

@@ -29,10 +29,12 @@ import {
   PlanReviewSurface,
   approvability,
   approvePlan,
+  hasWarnings,
   mountPlanForm,
   readItineraryFrame,
   renderFeasibility,
   renderPlanPanel,
+  renderWarnings,
   sanitiseApproval,
   sanitiseFeasibility,
   sanitisePlanDetail,
@@ -148,10 +150,29 @@ const jsonFetch = (status: number, body: unknown): typeof fetch =>
   vi.fn(async () => new Response(JSON.stringify(body), { status })) as unknown as typeof fetch
 
 const CHECKED_AT = '2026-08-07T09:12:00Z'
-const FEASIBLE: Feasibility = { ok: true, violations: [], checked_at: CHECKED_AT, readable: true }
+const FEASIBLE: Feasibility = {
+  ok: true,
+  violations: [],
+  warnings: [],
+  checked_at: CHECKED_AT,
+  readable: true,
+}
 const INFEASIBLE: Feasibility = {
   ok: false,
   violations: VIOLATIONS,
+  warnings: [],
+  checked_at: CHECKED_AT,
+  readable: true,
+}
+/** The measured common case: nothing is wrong, and two stops could not be checked. */
+const WARNINGS = [
+  'stop 0 hours cannot be evaluated (no_expression), so it may be shut when you arrive',
+  'stop 1 hours cannot be evaluated (no_expression), so it may be shut when you arrive',
+]
+const WARNED: Feasibility = {
+  ok: true,
+  violations: [],
+  warnings: WARNINGS,
   checked_at: CHECKED_AT,
   readable: true,
 }
@@ -526,6 +547,7 @@ describe('feasibility violations are named, and approval is blocked until they a
     const handBuilt: Feasibility = {
       ok: true,
       violations: VIOLATIONS,
+      warnings: [],
       checked_at: CHECKED_AT,
       readable: true,
     }
@@ -551,6 +573,85 @@ describe('feasibility violations are named, and approval is blocked until they a
     expect(renderPlanPanel(model({ feasibility: INFEASIBLE })).dataset.feasible).toBe('false')
     const unreported = renderPlanPanel(model({ feasibility: sanitiseFeasibility(undefined) }))
     expect(unreported.dataset.feasible).toBe('unknown')
+  })
+})
+
+/* ------------------------------------------------------------- warnings --- */
+
+describe('warnings are advisory (ADR-0022, amended 2026-08-14)', () => {
+  it('renders them under their own heading and leaves approve wired', () => {
+    // The measured normal case: nothing is wrong, and two stops carry no `opening_hours`.
+    // Blocking here would refuse every real day, which is what the amendment fixes.
+    const onApprove = vi.fn()
+    const panel = renderPlanPanel(model({ feasibility: WARNED }), { onApprove })
+
+    const button = panel.querySelector<HTMLButtonElement>('.siyur-plan-approve__button')!
+    expect(button.disabled).toBe(false)
+    button.click()
+    expect(onApprove).toHaveBeenCalledWith('7be2-uuid')
+    expect(panel.dataset.feasible).toBe('true')
+    expect(approvability(model({ feasibility: WARNED })).approvable).toBe(true)
+
+    const warnings = panel.querySelector<HTMLElement>('.siyur-plan-warnings')!
+    expect(warnings).not.toBeNull()
+    expect(warnings.dataset.warnings).toBe('2')
+    expect(warnings.querySelector('.siyur-plan-warnings__title')?.textContent).toMatch(
+      /do not block approval/i,
+    )
+    // Verbatim, one row per stop — the actionable part is WHICH place to check.
+    expect([...warnings.querySelectorAll('.siyur-plan-warning')].map((n) => n.textContent)).toEqual(
+      WARNINGS,
+    )
+    // …and the reassurance is still spoken, because the day genuinely does fit.
+    expect(panel.textContent).toMatch(/fits your time and walking budgets/)
+  })
+
+  it('never files a warning under the violations list, in either direction', () => {
+    // A query for one must not return the other: they answer different questions, and
+    // "N conflicts to resolve" counting warnings would put a number on the approve
+    // blocker that nothing is actually blocked by.
+    const warned = renderFeasibility(WARNED)
+    expect(warned.querySelectorAll('.siyur-plan-violation').length).toBe(0)
+    expect(warned.dataset.ok).toBe('true')
+
+    const both = renderFeasibility({ ...INFEASIBLE, warnings: WARNINGS })
+    expect([...both.querySelectorAll('.siyur-plan-violation')].map((n) => n.textContent)).toEqual(
+      VIOLATIONS,
+    )
+    expect([...both.querySelectorAll('.siyur-plan-warning')].map((n) => n.textContent)).toEqual(
+      WARNINGS,
+    )
+    expect(both.querySelector('.siyur-plan-feasibility__title')?.textContent).toMatch(
+      new RegExp(`^${VIOLATIONS.length} conflicts to resolve`),
+    )
+  })
+
+  it('shows warnings in every branch, including the ones with no itinerary', () => {
+    // An unreadable day does not make "stop 0's hours could not be checked" untrue, and
+    // this is the branch where the reviewer has the least to go on.
+    for (const feasibility of [WARNED, { ...INFEASIBLE, warnings: WARNINGS }]) {
+      const panel = renderPlanPanel(model({ itinerary: { kind: 'unreadable' }, feasibility }))
+      expect(panel.querySelectorAll('.siyur-plan-warning').length).toBe(WARNINGS.length)
+    }
+    const unreported = renderFeasibility({ ...sanitiseFeasibility(undefined), warnings: WARNINGS })
+    expect(unreported.querySelectorAll('.siyur-plan-warning').length).toBe(WARNINGS.length)
+  })
+
+  it('emits nothing at all when there is nothing to warn about', () => {
+    expect(renderWarnings(FEASIBLE)).toBeNull()
+    expect(hasWarnings(FEASIBLE)).toBe(false)
+    expect(renderFeasibility(FEASIBLE).querySelector('.siyur-plan-warnings')).toBeNull()
+  })
+
+  it('captions warnings as server-computed prose, like every other verdict sentence', () => {
+    // ADR-0030 A1: same kind of sentence, same caption — which is why `renderWarnings` is
+    // emitted inside `renderFeasibility` rather than beside it.
+    const section = renderFeasibility(WARNED)
+    const caption = section.querySelector<HTMLElement>('.siyur-plan-verdict-credit')
+    expect(caption?.dataset.verdictSource).toBe('server-computed')
+    for (const warning of section.querySelectorAll('.siyur-plan-warning')) {
+      expect(warning.querySelector('.siyur-chip')).toBeNull() // no invented stamp
+    }
   })
 })
 
@@ -829,6 +930,7 @@ describe('the plan wire is narrowed before anything is shown', () => {
     expect(sanitiseFeasibility(undefined)).toEqual({
       ok: false,
       violations: [],
+      warnings: [],
       checked_at: null,
       readable: false,
     })
@@ -843,6 +945,28 @@ describe('the plan wire is narrowed before anything is shown', () => {
       readable: true,
       checked_at: CHECKED_AT,
     })
+  })
+
+  it('reads warnings as their own list and never lets them touch `ok`', () => {
+    // The amendment's whole point: `ok:true` WITH warnings is the contract's normal
+    // answer, so the self-contradiction rule that applies to `violations` must not be
+    // extended here — doing so would re-block every day the amendment unblocks.
+    const warned = sanitiseFeasibility({ ok: true, violations: [], warnings: WARNINGS })
+    expect(warned.ok).toBe(true)
+    expect(warned.warnings).toEqual(WARNINGS)
+    expect(warned.violations).toEqual([])
+
+    // An older server sends no `warnings` at all; that reads as none, not as unreadable.
+    expect(sanitiseFeasibility({ ok: true }).warnings).toEqual([])
+    expect(sanitiseFeasibility({ ok: true, warnings: 'nope' }).warnings).toEqual([])
+    expect(sanitiseFeasibility({ ok: true, warnings: [null, '', 'kept', 3] }).warnings).toEqual([
+      'kept',
+    ])
+
+    // …and a genuinely blocked day keeps both lists apart rather than merging them.
+    const both = sanitiseFeasibility({ ok: false, violations: VIOLATIONS, warnings: WARNINGS })
+    expect(both.violations).toEqual(VIOLATIONS)
+    expect(both.warnings).toEqual(WARNINGS)
   })
 
   it('tells an honest empty day apart from an unreadable one', () => {

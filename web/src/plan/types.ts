@@ -88,8 +88,22 @@ export interface PlanStatusFrame {
  */
 export interface Feasibility {
   readonly ok: boolean
-  /** The specific budget or opening window breached, in the server's own words. */
+  /**
+   * The specific budget or opening window breached, in the server's own words.
+   * **Blocking**: a non-empty `violations` is why `ok` is false.
+   */
   readonly violations: readonly string[]
+  /**
+   * Advisory only, and a **separate list** rather than a flag inside `violations`
+   * (ADR-0022, amended 2026-08-14). Today every entry is a stop whose opening hours could
+   * not be evaluated — "we do not know", which is not "we know it is shut". A non-empty
+   * `warnings` beside `ok: true` is the normal case: most OSM records carry no
+   * `opening_hours` at all, and blocking on that would make no real day approvable.
+   *
+   * The separation is what stops a renderer disabling approve on one, so it must not be
+   * flattened into `violations` anywhere downstream.
+   */
+  readonly warnings: readonly string[]
   /** UTC, set only when the check ran — never mirrored from `updated_at`. */
   readonly checked_at: string | null
   readonly readable: boolean

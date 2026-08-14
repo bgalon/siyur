@@ -97,6 +97,33 @@ containing a failing job and assert it exits non-zero; feed it an all-green payl
 and assert it *still* exits non-zero. The second case is the one a hand-written guard gets wrong,
 and it is the one #93 demonstrated.
 
+## Recurrence — 2026-08-14, by the author of this entry, in a different command
+
+Hours after writing the guardrail, I truncated a status command again and reached a
+confidently wrong conclusion about someone else's work.
+
+Checking whether a subagent had begun editing, I ran `git status --short | head -12` and then
+`| tail -20`. The list was longer than both windows, so three files it *had* already modified
+fell in the **hidden middle**. I concluded it had not started, reset the worktree to a newer
+`main`, and destroyed its in-progress edits to `planner/feasibility.py`,
+`planner/pipeline.py` and `commons/repository.py`.
+
+**`scripts/merge-guard.sh` did not and could not prevent this.** The guardrail fixed one
+*command*; the failure is a *habit*, and it transfers to any tool that prints a list. The rule
+in `AGENTS.md` names `gh pr checks` because that is where it was found — but the general form
+is:
+
+> **Never pipe a status command into `head`/`tail` and treat the remainder as the answer.**
+> If the output is too long to read, that is a reason to count it, filter it by predicate, or
+> ask for a machine-readable form — never a reason to look at one end of it.
+
+`git status --porcelain` piped to `wc -l`, or `git diff --name-only <paths>` for a specific
+question, would both have been correct here and neither is longer to type.
+
+Recorded because a failure repeated by the person who documented it is the strongest available
+evidence that the countermeasure has to be mechanical rather than remembered — and because the
+class was wider than the entry originally claimed.
+
 ## Related
 
 - `exhibit/U2-override-that-lies` — the neighbouring temptation. #93 later reported 1005 changed

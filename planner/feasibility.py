@@ -1,6 +1,7 @@
 """T018 — the deterministic feasibility verdict: *can this day actually be walked?*
 
-Three checks, one verdict, **named violations** (FR-005 / `data-model.md` §7 rule 1):
+Three checks, one verdict, **named violations** — some of which block approval and some of
+which only warn (FR-005 / `data-model.md` §7 rule 1):
 
 1. **Walking** — ``Σ legs.distance_m`` against :attr:`~commons.models.Budgets.walking_m`.
 2. **Elapsed** — the span from the first stop's start to the last stop's end, against
@@ -17,9 +18,11 @@ compares them to a budget. That is FR-004 stated as a code layout rather than as
 
 :class:`FeasibilityVerdict` is returned, never attached. ``ItineraryV1`` is
 ``extra="forbid"`` and ADR-0025 ruling 3 puts the verdict on the ``user_plan`` row
-(``feasible`` + ``violations``), so the caller persists :attr:`FeasibilityVerdict.ok` and
-:attr:`FeasibilityVerdict.messages` into those two columns. A plan is a description of a
-day; whether it holds together is server state about that description.
+(``feasible`` + ``violations``), so the caller persists :attr:`FeasibilityVerdict.ok` into
+the first and **both** :attr:`FeasibilityVerdict.violation_messages` and
+:attr:`FeasibilityVerdict.warning_messages` into the second — severity-stamped, so the two
+come back apart (`commons/repository.py`). A plan is a description of a day; whether it
+holds together is server state about that description.
 
 ## Two things this module refuses to be clever about
 
@@ -44,21 +47,42 @@ every reason except ``unparseable`` — where it is the parser's caret diagram w
 expression embedded in it. One reason leaking is the whole rule failing, so the field is
 dropped from the message entirely rather than filtered per reason.
 
-**``hours_unknown`` blocks.** It is a first-class third outcome, not "probably open"
-(:mod:`commons.opening_hours`), and it is named as a violation exactly like a budget
-breach. The evaluator fails closed for a reason — a ``PH``-bearing expression with no
-country, an unparseable tag, a place with no hours at all — and a planner that swallowed any
-of those would ship a traveller to a locked door with a green tick beside it. The area frame
-(``timezone`` / ``country_code``) is nullable on the ``area`` row for rows that predate it
-(`commons/db.py`), so ``None`` arrives here in normal operation: it is *unresolved*, it
-reaches the traveller as ``hours_unknown``, and it is never defaulted to UTC or to a country.
+**``hours_unknown`` warns; ``outside_opening_window`` blocks** (ADR-0022, amended
+2026-08-14). *"We do not know"* and *"we know it is shut"* are different facts, and only the
+second is a reason to refuse a day. ``hours_unknown`` is still a first-class third outcome
+and still emphatically not "probably open" (:mod:`commons.opening_hours` is unchanged and
+must stay so) — it is still *named*, per stop, in the verdict. What changed is its weight:
+it is an **advisory** :class:`Violation`, :attr:`Violation.blocking` is ``False``, and
+:attr:`FeasibilityVerdict.ok` ignores it.
+
+The measurement that forced the change: most OSM/Overture records carry no ``opening_hours``
+tag at all — **1 of 25 records in the fixture set**, and a live 6-stop day over 599
+candidates produced a ``no_expression`` violation on **every** stop. Blocking on that does
+not protect a traveller from a locked door; it means no real day is ever approvable, and a
+gate that refuses everything is indistinguishable from a broken one. The accepted cost is
+stated where it lands: a traveller can approve a day containing places that may be shut, so
+the warning has to reach them **per stop** rather than as one aggregate line — which is why
+each unknown stop keeps its own :class:`Violation` with its own ``stop_order`` rather than
+being folded into a count.
+
+Two things that did **not** move. ``outside_opening_window`` still blocks — a stop the
+evaluator positively answered *closed* for is the case the checker exists for. And
+``unknown_site`` still blocks: a stop we cannot resolve is not "hours unknown", it is a plan
+referencing a place that is not in the commons, and the missing fact there is the *place*,
+not its hours.
+
+The area frame (``timezone`` / ``country_code``) is nullable on the ``area`` row for rows
+that predate it (`commons/db.py`), so ``None`` arrives here in normal operation: it is
+*unresolved*, it reaches the traveller as ``hours_unknown`` — and now as a warning — and it
+is never defaulted to UTC or to a country. Guessing a frame would produce a confident wrong
+*answer*; warning produces an honest absence of one.
 
 That is also where the "T018 coverage gate" of `pyproject.toml` is discharged: a
 ``PH``-bearing expression in a country the evaluator has no calendar for arrives here as
-``hours_unknown``/``country_not_supported`` and blocks. It is deliberately **not** re-asked
-of ``holidays`` — :func:`commons.frame.holiday_countries` covers every code the resolver can
-produce, so wired as a gate it would pass everything, and a second oracle inside the checker
-would be re-opening ADR-0022.
+``hours_unknown``/``country_not_supported`` and is surfaced rather than guessed. It is
+deliberately **not** re-asked of ``holidays`` — :func:`commons.frame.holiday_countries`
+covers every code the resolver can produce, so wired as a gate it would pass everything, and
+a second oracle inside the checker would be re-opening ADR-0022.
 
 ## Two hazards this module cannot close on its own
 
@@ -88,13 +112,14 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Literal
+from typing import Final, Literal
 from uuid import UUID
 
 from commons.models import ItineraryV1, SiteRecordV1
 from commons.opening_hours import evaluate
 
 __all__ = [
+    "ADVISORY_CODES",
     "FeasibilityVerdict",
     "Violation",
     "ViolationCode",
@@ -112,6 +137,19 @@ ViolationCode = Literal[
     "unknown_site",
 ]
 
+#: The codes that **warn without blocking approval** — everything else refuses the day.
+#:
+#: Severity is derived from the code rather than passed per instance, and that is the point:
+#: "is this a reason to refuse the day" is a property of *what was found*, not of who found
+#: it. A per-call flag would let one call site raise ``outside_opening_window`` as advisory
+#: and another raise it as blocking, and the two would disagree about the same day. Keeping
+#: it here also means the closed :data:`ViolationCode` set and the severity table are one
+#: table, so adding a code without deciding its severity is not expressible.
+#:
+#: ``hours_unknown`` is the only member, and deliberately so — see the module docstring for
+#: the measurement. ``unknown_site`` is **not** advisory: what is missing there is the place.
+ADVISORY_CODES: Final[frozenset[ViolationCode]] = frozenset({"hours_unknown"})
+
 #: Budgets are compared with a *float-artefact* guard, not a grace margin. Summing eight
 #: leg distances accumulates error around 1e-10 m on a 4 km day, and a plan reported as
 #: "walking_m 4000 > budget 4000" would be a defect wearing a violation's clothes. The
@@ -122,7 +160,7 @@ _FLOAT_ARTEFACT_TOLERANCE = 1e-9
 
 @dataclass(frozen=True, slots=True)
 class Violation:
-    """One named reason this plan may not be approved."""
+    """One named thing found wrong with this plan — blocking approval, or merely warning."""
 
     code: ViolationCode
     #: The sentence persisted into ``user_plan.violations`` and streamed to the client.
@@ -134,6 +172,11 @@ class Violation:
     #: Positions, never a site UUID — the same addressing the timeline and the legs use.
     stop_order: int | None = None
 
+    @property
+    def blocking(self) -> bool:
+        """Does this refuse the day, or only warn about it? See :data:`ADVISORY_CODES`."""
+        return self.code not in ADVISORY_CODES
+
 
 @dataclass(frozen=True, slots=True)
 class FeasibilityVerdict:
@@ -144,6 +187,8 @@ class FeasibilityVerdict:
     implementation of the one piece of arithmetic this module exists to own.
     """
 
+    #: **Everything found, both severities**, in the order it was found. Nothing is dropped
+    #: here and nothing is partitioned away — a caller that wants one side asks for it.
     violations: tuple[Violation, ...]
     #: ``Σ legs.distance_m``, metres.
     walking_m: float
@@ -151,14 +196,39 @@ class FeasibilityVerdict:
     elapsed_hours: float
 
     @property
+    def blocking(self) -> tuple[Violation, ...]:
+        """The ones that refuse the day. This tuple being empty is exactly :attr:`ok`."""
+        return tuple(violation for violation in self.violations if violation.blocking)
+
+    @property
+    def advisory(self) -> tuple[Violation, ...]:
+        """The ones that only warn — today, every one of them is ``hours_unknown``."""
+        return tuple(violation for violation in self.violations if not violation.blocking)
+
+    @property
     def ok(self) -> bool:
-        """``user_plan.feasible``. No violations is the *only* way to be feasible."""
-        return not self.violations
+        """``user_plan.feasible``. **No *blocking* violation is what makes a day feasible.**
+
+        A warning deliberately does not enter this predicate. That is the whole of the
+        2026-08-14 amendment to ADR-0022, expressed as one line of code: the checker still
+        reports every unevaluable stop, and the approval gate stops refusing days over them.
+        """
+        return not self.blocking
 
     @property
     def messages(self) -> tuple[str, ...]:
-        """``user_plan.violations`` / the SSE ``feasibility`` frame's ``violations[]``."""
+        """Every message, both severities — the combined view, so nothing is lost."""
         return tuple(violation.message for violation in self.violations)
+
+    @property
+    def violation_messages(self) -> tuple[str, ...]:
+        """``user_plan.violations`` / the ``feasibility`` frame's ``violations[]``: blocking."""
+        return tuple(violation.message for violation in self.blocking)
+
+    @property
+    def warning_messages(self) -> tuple[str, ...]:
+        """The ``feasibility`` frame's ``warnings[]``: advisory, and never a reason to refuse."""
+        return tuple(violation.message for violation in self.advisory)
 
 
 def _local_starts(itinerary: ItineraryV1) -> tuple[datetime, ...]:
@@ -239,6 +309,11 @@ def _check_hours(
 ) -> list[Violation]:
     """One violation at most per stop: the first minute of the dwell that is not *open*.
 
+    **Two outcomes with two weights.** A minute the evaluator answers ``closed`` for is an
+    ``outside_opening_window`` violation and refuses the day; a minute it cannot answer at all
+    is an ``hours_unknown`` warning and does not (:data:`ADVISORY_CODES`). Both are still
+    raised per stop, so "may be shut" is never silently rounded down to "fine".
+
     **Every minute of ``[planned_start, planned_start + dwell_min)`` is evaluated**, not just
     the two endpoints. A place tagged ``Mo-Fr 09:00-12:00,13:00-17:00`` is open at 11:30 and
     open at 13:30, and shut for the hour between — an endpoint check calls that stop feasible
@@ -285,12 +360,31 @@ def _check_hours(
             # `None` on the area row means *unresolved*, and unresolved reaches the traveller
             # as hours_unknown (commons/db.py). Substituting UTC here would make every window
             # check answer confidently in the wrong frame.
+            #
+            # **This one is advisory too, and that was decided rather than inherited.** It is
+            # the strongest candidate for an exception: a missing frame means *every* stop's
+            # wall-clock check was skipped — one systemic gap, not N independent unknowns —
+            # and unlike an untagged place it is our data that is missing, so the traveller
+            # cannot resolve it at all. It stays advisory anyway, for three reasons. It is the
+            # *purest* case of "we do not know", which is the whole distinction A12 draws.
+            # Blocking would reinstate exactly the defect A12 removed, for a whole class of
+            # areas at once, and hand the user an unapprovable day they have no way to fix —
+            # the gate nobody can pass. And expressing it would need either a sixth
+            # `ViolationCode` (a contract change, since the web renders per kind) or a
+            # per-instance severity flag, which :data:`ADVISORY_CODES` deliberately makes
+            # inexpressible so severity cannot differ between two call sites raising one code.
+            #
+            # What makes that affordable: `POST /areas` now persists the frame, so a `None`
+            # here is a **legacy row**, not a live bug — rare, and fixed by re-resolving the
+            # area rather than by refusing the day. The message says the *area* has no frame,
+            # so the systemic case reads differently from a per-place one.
             violations.append(
                 Violation(
                     code="hours_unknown",
                     message=(
                         f"stop {stop.order} hours cannot be evaluated (no_timezone): the "
-                        "area carries no local frame, so no wall-clock check is possible"
+                        "area carries no local frame, so no wall-clock check is possible — "
+                        "check before you go"
                     ),
                     stop_order=stop.order,
                 )
@@ -330,7 +424,7 @@ def _check_hours(
                         code="hours_unknown",
                         message=(
                             f"stop {stop.order} hours cannot be evaluated ({result.reason}), "
-                            "so this day cannot be approved over them"
+                            "so it may be shut when you arrive — check before you go"
                         ),
                         stop_order=stop.order,
                     )
