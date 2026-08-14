@@ -342,6 +342,18 @@ def create_area(
         polygon=from_shape(resolved.polygon, srid=4326),
         name=body.name,
         created_by=user.sub,
+        # The local frame is persisted HERE or it is never persisted at all. `resolve_area`
+        # computes both from the polygon and `0005_user_plan` backfilled every existing row,
+        # so dropping them left API-created areas — and only those — with a NULL frame.
+        #
+        # It failed far from here and looked like correct behaviour: `feasibility._check_hours`
+        # refuses to substitute UTC for an unresolved timezone (deliberately), so every stop
+        # returned `hours_unknown`, every plan came out `feasible=False`, and `approve_plan`'s
+        # `feasible IS TRUE` predicate answered 409 `infeasible` for every plan over every
+        # area the API ever created. Each of those refusals is individually right; the area
+        # row was the thing that was wrong.
+        timezone=resolved.timezone,
+        country_code=resolved.country_code,
     )
     session.add(area)
     session.flush()
