@@ -20,6 +20,12 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+# OSMnx writes its Overpass response cache to ./cache by default, so any real compile
+# leaves ~2 MB of hash-named JSON in the repo root. Ignored rather than relocated: it is a
+# genuine cache (a re-compile of the same area is then free and offline), and the failure
+# it prevents is someone's `git add -A` committing a few megabytes of third-party API
+# responses whose licence terms nobody checked for redistribution.
+cache/
 
 # Node / web (arrives at M1)
 node_modules/
