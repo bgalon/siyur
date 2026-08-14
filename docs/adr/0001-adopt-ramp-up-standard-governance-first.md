@@ -1,9 +1,8 @@
 # 0001 — Adopt the ramp-up standard, executed governance-first
 
-- Status: proposed
+- Status: accepted
 - Decision Maker(s): Ben
-- drafted-by: claude-code · approved-by: — · Date: 2026-07-24
-
+- drafted-by: claude-code · approved-by: Ben · Date: 2026-07-24 · accepted: 2026-08-14
 ## Context and Problem Statement
 
 The project adopts the 28-step ramp-up standard in `docs/planning/methods-ramp-up-standards.md` §7 as its bootstrap process. But the project also grew (PRD v2.0) into a multi-user platform whose design is non-trivial, and it must itself be a teaching exemplar of AI-first project management where "the repo is the agent's brain" and "documentation-as-you-build is a first-class deliverable" (syllabus U1/U2).
