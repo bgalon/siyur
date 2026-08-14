@@ -47,11 +47,13 @@ from compiler.tiles import (
     BASE_GLYPH_RANGES,
     BUILD_SOURCE,
     DEFAULT_FONTSTACKS,
+    DEFAULT_SPRITE_ASSETS,
     EXTRACTOR_ENV,
     FIXTURE_ARCHIVE_ENV,
     GLYPH_LICENSE,
     MAXZOOM,
     MINZOOM,
+    SPRITE_LICENSE,
     TILE_ATTRIBUTION,
     TILE_LICENSE,
     Bbox,
@@ -436,6 +438,12 @@ def test_emitted_tile_source_matches_the_schema_card(staging: Path, archive: Pat
     assert source.attribution == TILE_ATTRIBUTION
     assert source.glyphs.license == GLYPH_LICENSE == "OFL-1.1"
     assert source.glyphs.path == "glyphs/"
+    assert source.sprites.license == SPRITE_LICENSE == "MIT"
+    assert source.sprites.path == "sprites/"
+    # T035b: the two directory refs carry the digests this stage computed, and carry the
+    # *same* strings the stage reports — one digest, recorded and echoed, never recomputed.
+    assert source.glyphs.sha256 == stage.glyphs_sha256 == directory_digest(stage.glyphs)
+    assert source.sprites.sha256 == stage.sprites_sha256 == directory_digest(stage.sprites)
     assert (source.style.path, source.style.sha256) == (STYLE.path, STYLE.sha256)
     # Re-validating the emitted object is the card check ADR-0021 asks for: `TileSourceV1` is
     # `extra="forbid"` and validates its own bbox/zoom range.
@@ -517,6 +525,77 @@ def test_sprites_are_written_and_hashed(staging: Path, archive: Path) -> None:
     for artifact in stage.sprites:
         assert artifact.sha256 == hashlib.sha256((staging / artifact.path).read_bytes()).hexdigest()
     assert stage.sprites_sha256 == directory_digest(stage.sprites)
+
+
+def _remeasure(staging: Path, directory: str) -> str:
+    """The verifier's half of T035b: re-hash what is actually in the staged directory.
+
+    Deliberately walks the filesystem rather than `stage.glyphs`, because a digest that only
+    ever sees the producer's own in-memory list cannot notice anything happening to the files.
+    """
+    root = staging / directory
+    return directory_digest(
+        Artifact.from_file(str(path.relative_to(staging)), path)
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    )
+
+
+@pytest.mark.parametrize("directory", ["glyphs", "sprites"])
+def test_a_corrupted_file_makes_the_recorded_digest_disagree(
+    staging: Path, archive: Path, directory: str
+) -> None:
+    """The reason the field exists. A hash that is merely *present* is not integrity: flipping
+    one bit in one vendored file, exactly as a truncated download or a bad sector would, has to
+    make the bundle's own directory re-measurement disagree with what the manifest recorded."""
+    stage = _run(staging, archive, sites=[_site(names={"el": "Ρόδος"})])
+    recorded = getattr(stage.source, directory).sha256
+    assert _remeasure(staging, directory) == recorded, "an untouched bundle verifies"
+    # …and it verifies because the digest covers **the bytes in the bundle**, not bytes the
+    # producer happened to have in hand. Each file the ref names is re-read from the staging
+    # tree and re-hashed: a stage that hashed one buffer and wrote another — a truncated
+    # write, a source file copied instead of the emitted one — fails here rather than
+    # shipping a digest that verifies cleanly and protects nothing.
+    for artifact in getattr(stage, directory):
+        on_disk = (staging / artifact.path).read_bytes()
+        assert artifact.sha256 == hashlib.sha256(on_disk).hexdigest(), artifact.path
+
+    victim = staging / getattr(stage, directory)[0].path
+    mutated = bytearray(victim.read_bytes())
+    mutated[0] ^= 0x01
+    victim.write_bytes(bytes(mutated))
+
+    assert _remeasure(staging, directory) != recorded
+
+
+@pytest.mark.parametrize("directory", ["glyphs", "sprites"])
+def test_a_deleted_file_makes_the_recorded_digest_disagree(
+    staging: Path, archive: Path, directory: str
+) -> None:
+    """The other half of the same promise, and the one a digest over concatenated bytes would
+    miss for an empty file: the *listing* is hashed, so a file that is simply gone is caught."""
+    stage = _run(staging, archive, sites=[_site(names={"el": "Ρόδος"})])
+    recorded = getattr(stage.source, directory).sha256
+
+    (staging / getattr(stage, directory)[0].path).unlink()
+
+    assert _remeasure(staging, directory) != recorded
+
+
+def test_an_asset_host_that_published_no_sprites_still_records_a_digest(
+    staging: Path, archive: Path
+) -> None:
+    """A sprite the host does not publish is skipped, not fatal (icons, not every label) — so
+    the empty case has to produce a *valid* recorded digest rather than an empty string, and a
+    different one from a populated directory."""
+    stage = _run(
+        staging, archive, assets=_FakeAssets(absent_sprites=frozenset(DEFAULT_SPRITE_ASSETS))
+    )
+    assert stage.sprites == ()
+    assert stage.source.sprites.sha256 == directory_digest(())
+    assert stage.source.sprites.sha256 != stage.source.glyphs.sha256
+    # Re-validating proves the empty-directory digest is still a legal `Sha256Hex`.
+    assert TileSourceV1.model_validate(stage.source.model_dump(mode="json")) == stage.source
 
 
 def test_a_range_the_host_does_not_publish_is_recorded_not_invented(
@@ -647,7 +726,16 @@ def _tile_source(**overrides: Any) -> TileSourceV1:
         "tile_license": TILE_LICENSE,
         "attribution": TILE_ATTRIBUTION,
         "style": {"path": STYLE.path, "sha256": STYLE.sha256},
-        "glyphs": {"path": "glyphs/", "license": GLYPH_LICENSE},
+        "glyphs": {
+            "path": "glyphs/",
+            "license": GLYPH_LICENSE,
+            "sha256": hashlib.sha256(b"glyphs").hexdigest(),
+        },
+        "sprites": {
+            "path": "sprites/",
+            "license": SPRITE_LICENSE,
+            "sha256": hashlib.sha256(b"sprites").hexdigest(),
+        },
     }
     payload.update(overrides)
     return TileSourceV1.model_validate(payload)

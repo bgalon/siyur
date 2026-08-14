@@ -74,18 +74,21 @@ Upstream not having a range is **recorded, not guessed at**: :class:`AssetSource
 :attr:`TileStage.missing`. A *detected script* for which nothing at all could be fetched is
 the T035a failure itself, and raises :class:`GlyphCoverageError` rather than shipping.
 
-## T035b — glyphs are a bundled artifact and had no hash
+## T035b — glyphs and sprites are bundled artifacts, so they carry hashes
 
-``TileSourceV1.glyphs`` carries ``{path, license}`` while ``style`` carries ``{path,
-sha256}``, so as the manifest stands, every bundled artifact has an integrity hash except the
-one that decides whether labels render. This module computes both halves of the fix —
-:attr:`TileStage.glyphs` (one :class:`~compiler.manifest.Artifact` per file) and
-:attr:`TileStage.glyphs_sha256` (:func:`directory_digest` over them) — but **cannot record
-them**: ``GlyphsRef`` has no ``sha256`` field, and adding one is a schema-card amendment
-(`docs/data/tile-source.md`), not something a producer may invent. Until the card is amended
-the digests are computed and returned, and the manifest is unable to carry them. Same for
-sprites, which the card mentions only in prose under ``glyphs`` and gives no field of their
-own at all.
+They did not, until the 2026-08-14 card amendment: ``glyphs`` was ``{path, license}`` where
+``style`` was ``{path, sha256}``, and sprites had no field at all — this stage wrote
+``sprites/*`` into the bundle and nothing in the manifest pointed at them. Every other
+bundled artifact was covered, and the two that were not are the two that decide whether
+labels and icons render. A corrupted glyph set is a blank map, offline, silently, under a
+manifest whose own seal verifies.
+
+Both refs now carry a **required** ``sha256`` (`docs/data/tile-source.md`), and this stage
+fills them: one :class:`~compiler.manifest.Artifact` per file, and :func:`directory_digest`
+over each set. The digest is over the *listing* — ``[[path, sha256], …]``, JCS — not over
+concatenated bytes, so a renamed or dropped range file is as detectable as a mutated one.
+Note what the recording does **not** yet buy: ``web/src/bundle/`` parses the manifest with
+these keys dropped, so nothing verifies the digests at launch. Recording precedes checking.
 
 ## Seams, and what Tier 1 therefore never touches
 
@@ -867,10 +870,12 @@ class TileStage:
     style: Artifact
     #: One :class:`~compiler.manifest.Artifact` per vendored glyph range file.
     glyphs: tuple[Artifact, ...]
-    #: :func:`directory_digest` over :attr:`glyphs`. **Not yet recordable in the manifest** —
-    #: ``GlyphsRef`` has no ``sha256`` field; see the module docstring (T035b).
+    #: :func:`directory_digest` over :attr:`glyphs` — and the same string recorded at
+    #: ``source.glyphs.sha256``. Echoed here so a caller that wants the digest without
+    #: unpacking the embedded ``TileSourceV1`` has it (T035b).
     glyphs_sha256: str
     sprites: tuple[Artifact, ...]
+    #: :func:`directory_digest` over :attr:`sprites`; recorded at ``source.sprites.sha256``.
     sprites_sha256: str
     #: The ranges selected for this area, and the scripts they were derived from — reported so
     #: the genericity eval can assert on the *selection*, not only on the bytes.
@@ -950,6 +955,12 @@ def compile_tiles(
 
     glyphs, missing = _vendor_glyphs(staging, source, fontstacks, ranges, scripts)
     sprites = _vendor_sprites(staging, source, sprite_assets)
+    # Digested once and used twice — the embedded `TileSourceV1` is what the traveller's
+    # device verifies against, `TileStage` echoes it for callers. Two `directory_digest`
+    # calls over the same tuple could not disagree, but only because nothing edits between
+    # them; one call cannot disagree at all.
+    glyphs_sha256 = directory_digest(glyphs)
+    sprites_sha256 = directory_digest(sprites)
 
     return TileStage(
         source=TileSourceV1(
@@ -963,15 +974,18 @@ def compile_tiles(
             tile_license=TILE_LICENSE,
             attribution=TILE_ATTRIBUTION,
             style=ArtifactRef(path=style.path, sha256=style.sha256),
-            glyphs=GlyphsRef(path=f"{GLYPHS_DIR}/", license=GLYPH_LICENSE),
+            glyphs=GlyphsRef(path=f"{GLYPHS_DIR}/", license=GLYPH_LICENSE, sha256=glyphs_sha256),
+            sprites=GlyphsRef(
+                path=f"{SPRITES_DIR}/", license=SPRITE_LICENSE, sha256=sprites_sha256
+            ),
         ),
         build=resolved,
         archive=archive,
         style=style,
         glyphs=glyphs,
-        glyphs_sha256=directory_digest(glyphs),
+        glyphs_sha256=glyphs_sha256,
         sprites=sprites,
-        sprites_sha256=directory_digest(sprites),
+        sprites_sha256=sprites_sha256,
         ranges=ranges,
         scripts=scripts,
         missing=missing,
@@ -1043,11 +1057,11 @@ def _vendor_sprites(
 ) -> tuple[Artifact, ...]:
     """Fetch, write and hash the sprite sheets.
 
-    Hashed for the same reason as the glyphs, and with the same gap: ``TileSourceV1`` gives
-    sprites no field at all — the card mentions them only in prose under ``glyphs`` — so these
-    hashes are returned and, until the card is amended, cannot be recorded in the manifest.
-    A missing sprite sheet costs icons rather than every label, so an absent asset is skipped
-    rather than fatal.
+    Hashed and recorded exactly like the glyphs (``TileSourceV1.sprites``, T035b), but a
+    missing sheet is treated differently: it costs icons rather than every label, so an asset
+    the host does not publish is skipped rather than fatal. There is no sprite equivalent of
+    :func:`_refuse_uncovered_scripts` because there is no per-area sprite selection — the
+    sheets are :data:`DEFAULT_SPRITE_ASSETS` for every area on earth.
     """
     written: list[Artifact] = []
     for asset in sprite_assets:

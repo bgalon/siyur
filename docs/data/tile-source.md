@@ -31,7 +31,8 @@
   **Do not cache PMTiles range requests in the service worker** (Cache API mishandles 206 partials) — download the whole
   archive once into OPFS and satisfy tile reads as local byte-range reads (stack reference §2–3, ADR-0003).
 - **License & provenance:** tile **data is © OpenStreetMap contributors → ODbL** (Produced Work); the Protomaps build
-  pipeline/styles and the PMTiles spec are BSD; glyphs/sprites are **OFL** (Noto), vendored from basemaps-assets.
+  pipeline/styles and the PMTiles spec are BSD; the vendored **glyphs are OFL-1.1** (Noto) and the **sprite sheets MIT**
+  (tangrams/icons via basemaps-assets) — two upstreams, two licences, which is why they are two fields and not one.
   **ODbL attribution renders on every map** (control corner) + credits screen. License pointer →
   [`/DATA-LICENSES.md`](../../DATA-LICENSES.md). `bundleable=true` (ODbL is in the allowed set).
 
@@ -50,8 +51,38 @@
 | `tile_license` | `SPDX str` | M1 | `ODbL-1.0` (data); attribution required |
 | `attribution` | `str` | M1 | `© OpenStreetMap contributors` |
 | `style` | `{ path, sha256 }` | M1 | base MapLibre style JSON (no customization at M1) |
-| `glyphs` | `{ path, license }` | M1 | Noto glyphs, **OFL**; `sprites` likewise |
+| `glyphs` | `{ path, license, sha256 }` | M1 | Noto glyphs, **OFL**; `path` is a directory prefix (`glyphs/`) and `sha256` is the **directory digest** below |
+| `sprites` | `{ path, license, sha256 }` | M1 | Protomaps sprite sheets, **MIT**; same shape, same directory digest (`sprites/`) |
 | `schema_ver` | `"TileSourceV1"` | M1 | literal |
+
+### Directory digests — `glyphs.sha256` / `sprites.sha256`
+
+`glyphs` and `sprites` name **directory prefixes**, not files, so there is no single byte stream to hash. Their
+`sha256` is a SHA-256 over the **RFC 8785 (JCS)** serialization of the directory's `[[path, sha256], …]` listing,
+sorted by path — the same canonicalization the manifest seal uses, and for the same reason: the writer is Python and
+the verifier is TypeScript. Covering the *paths* as well as the bytes is what makes a renamed, added or removed range
+file detectable; a digest over concatenated bytes would not be.
+`compiler.tiles.directory_digest` is the one implementation — never hand-roll a second one.
+
+*Amended 2026-08-14 (slice 002 T035b, ADR-0031): **two changes, and they are not the same change.***
+
+*(a) **`glyphs` gains a required `sha256`.** Until now glyphs were a bundled artifact with no integrity hash, while the
+manifest claimed one hash per artifact. A corrupted or truncated glyph range is not a crash: MapLibre draws no glyph
+and reports no error, so every label renders as nothing — a blank map, offline, under a manifest that verifies.*
+
+*(b) **The `sprites` ref was created, not merely given a hash.** There was no sprite field at all; the card described
+sprites in prose under `glyphs` ("`sprites` likewise") and `compiler/tiles.py` wrote `sprites/*` into the bundle with
+**nothing in the manifest pointing at them**. That is not an integrity gap, it is an **FR-021 gap** — everything the
+traveller depends on resolves to a manifest path, and the sheet the map draws its icons from did not. It was found
+only because implementing (a) required naming the field that would hold the hash.*
+
+*Both hashes are **required, not optional**, because an optional integrity field re-opens the same gap for every
+producer that omits it, and the omission is invisible — the property that let this survive design review. Affordable
+as a `V1` correction because no bundle has been compiled and stored yet; that window closes at first use. Consequences:
+the two example rows in [`bundle-manifest.md`](./bundle-manifest.md) that embed a whole `TileSourceV1` carry both
+fields too, and `web/src/bundle/` **records but does not verify** either digest at launch (its parser drops the keys),
+so until that is closed the bundle states integrity coverage it does not enforce — recording precedes checking, and
+the check is its own task.*
 
 **Each example below is exactly what appears at `BundleManifestV1.tiles.pmtiles`** — paste it there verbatim, do not
 reduce it to the four required-subset keys.
@@ -67,7 +98,8 @@ reduce it to the four required-subset keys.
   "build_source": "protomaps-daily", "build_date": "2026-07-24",
   "tile_license": "ODbL-1.0", "attribution": "© OpenStreetMap contributors",
   "style": { "path": "style/base.json", "sha256": "77aa…" },
-  "glyphs": { "path": "glyphs/", "license": "OFL-1.1" }
+  "glyphs": { "path": "glyphs/", "license": "OFL-1.1", "sha256": "3d5e…" },
+  "sprites": { "path": "sprites/", "license": "MIT", "sha256": "0b71…" }
 }
 
 // 2 — larger area, deeper zoom (metro-scale extract)
@@ -78,7 +110,10 @@ reduce it to the four required-subset keys.
   "build_source": "protomaps-daily", "build_date": "2026-07-24",
   "tile_license": "ODbL-1.0", "attribution": "© OpenStreetMap contributors",
   "style": { "path": "style/base.json", "sha256": "77aa…" },
-  "glyphs": { "path": "glyphs/", "license": "OFL-1.1" }
+  // A wider area selects more glyph ranges, so the *directory digest* differs from row 1's
+  // even though both vendor the same three fontstacks from the same asset host.
+  "glyphs": { "path": "glyphs/", "license": "OFL-1.1", "sha256": "a904…" },
+  "sprites": { "path": "sprites/", "license": "MIT", "sha256": "0b71…" }
 }
 
 // 3 — Planetiler self-build fallback (custom schema, own POI layer)
@@ -89,6 +124,7 @@ reduce it to the four required-subset keys.
   "build_source": "planetiler", "build_date": "2026-07-20",
   "tile_license": "ODbL-1.0", "attribution": "© OpenStreetMap contributors",
   "style": { "path": "style/base.json", "sha256": "d901…" },
-  "glyphs": { "path": "glyphs/", "license": "OFL-1.1" }
+  "glyphs": { "path": "glyphs/", "license": "OFL-1.1", "sha256": "6c18…" },
+  "sprites": { "path": "sprites/", "license": "MIT", "sha256": "0b71…" }
 }
 ```

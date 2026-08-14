@@ -107,7 +107,8 @@ def _tile_source(**overrides: Any) -> TileSourceV1:
         "tile_license": "ODbL-1.0",
         "attribution": "© OpenStreetMap contributors",
         "style": {"path": "style/base.json", "sha256": _digest("style")},
-        "glyphs": {"path": "glyphs/", "license": "OFL-1.1"},
+        "glyphs": {"path": "glyphs/", "license": "OFL-1.1", "sha256": _digest("glyphs")},
+        "sprites": {"path": "sprites/", "license": "MIT", "sha256": _digest("sprites")},
     }
     payload.update(overrides)
     return TileSourceV1.model_validate(payload)
@@ -290,6 +291,16 @@ def test_build_manifest_refuses_two_artifacts_at_one_bundle_path() -> None:
             sites=Artifact.from_bytes("content/shared.json", SITES_BYTES),
             narrations=Artifact.from_bytes("content/shared.json", NARRATIONS_BYTES),
         )
+
+
+def test_the_sprites_path_is_inside_the_uniqueness_check_too() -> None:
+    """A *new* bundle path is a new way for two artifacts to claim one path, so `sprites`
+    joins the refusal rather than being trusted to differ from `glyphs` (ADR-0031)."""
+    collided = _tile_source(
+        sprites={"path": "glyphs/", "license": "MIT", "sha256": _digest("sprites")}
+    )
+    with pytest.raises(ValueError, match="share a bundle path"):
+        _built_manifest(tiles=collided)
 
 
 def test_build_manifest_itinerary_id_comes_from_the_frozen_itinerary() -> None:

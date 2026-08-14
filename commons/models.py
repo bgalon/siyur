@@ -828,14 +828,26 @@ class ArtifactRef(StampedModel):
 
 
 class GlyphsRef(StampedModel):
-    """Noto glyphs (and sprites), OFL. ``path`` is a directory prefix (``glyphs/``).
+    """A bundled **directory** of rendering assets — the Noto glyphs (OFL) or the sprite
+    sheets (MIT). ``path`` is a directory prefix (``glyphs/``, ``sprites/``), which is the
+    whole reason this is not an :class:`ArtifactRef`: it carries a ``license``, and its
+    ``sha256`` covers a *set* of files rather than one byte stream.
 
-    No ``sha256`` here yet: the card carries ``{path, license}`` and T035b is the task that
-    closes that gap. Do not add one ahead of the card.
+    ``sha256`` is **required, and required on purpose** (card amendment 2026-08-14, T035b).
+    Before it existed, glyphs and sprites were the only bundled artifacts the manifest could
+    not vouch for: a corrupted glyph set renders a blank map, offline, silently, under a
+    manifest that verifies. An *optional* hash would have re-opened exactly that gap for
+    every producer that omitted it, so there is no version of this object without one.
+
+    The digest is over the directory's ``[[path, sha256], …]`` listing, canonicalized per
+    RFC 8785 — :func:`compiler.tiles.directory_digest`, which is the only thing that may
+    compute it. Hashing the listing rather than the concatenated bytes is what makes a
+    renamed, added or removed file detectable as well as a mutated one.
     """
 
     path: BundlePath
     license: str = Field(min_length=1)
+    sha256: Sha256Hex
 
 
 class SchematicRef(StampedModel):
@@ -874,6 +886,14 @@ class TileSourceV1(StampedModel):
     #: The base MapLibre style JSON (no customization at M1).
     style: ArtifactRef
     glyphs: GlyphsRef
+    #: The sprite sheets. A field of their own since T035b: the card described them in prose
+    #: under ``glyphs`` and gave them nowhere to live, so the compiler wrote ``sprites/*`` into
+    #: the bundle and the manifest pointed at none of it. A missing sprite costs icons where a
+    #: missing glyph costs every label — cheaper, and still not something a bundle should be
+    #: unable to state. Same ``GlyphsRef`` shape because it is the same question (a hashed,
+    #: licensed directory); a different ``license`` (MIT, not OFL) because it is a different
+    #: upstream.
+    sprites: GlyphsRef
     schema_ver: Literal["TileSourceV1"] = "TileSourceV1"
 
     @field_validator("bbox")
