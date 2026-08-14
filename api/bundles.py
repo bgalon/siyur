@@ -109,6 +109,7 @@ from compiler.storage import (
     ObjectStoreError,
     RangeNotSatisfiable,
 )
+from compiler.style import STYLE_PATH, StyleError, base_style_bytes
 from compiler.tiles import AssetSource, ProtomapsBuild, TileExtractor
 
 __all__ = [
@@ -170,9 +171,14 @@ class CompileSeams:
     The style is carried as **bytes plus a bundle-relative path** rather than as a hashed
     :class:`~compiler.manifest.Artifact`, because the pipeline reads every hashed artifact back
     out of the staging tree at publish time: the bytes have to be written into *this compile's*
-    staging directory, and hashing them there is one line. There is no style stage in the
-    service yet, so both are ``None`` by default and a deployment that has not supplied one
-    answers ``503`` instead of compiling a bundle whose map cannot start.
+    staging directory, and hashing them there is one line.
+
+    Every field stays ``None`` on the dataclass, including the style: these are *overrides*,
+    and a default that manufactured one would make ``CompileSeams()`` mean "the live world"
+    for some fields and "a built artifact" for others. :func:`get_compile_seams` supplies the
+    real style when nothing is injected, so a deployment compiles; a caller that sets seams
+    explicitly and leaves the style ``None`` still gets the ``503`` — which is the honest
+    answer, because a bundle whose map cannot start is worse than no bundle.
     """
 
     #: Bundle-relative path of the base MapLibre style, e.g. ``style/base.json``.
@@ -198,8 +204,30 @@ def get_bundle_store(request: Request) -> BundleObjects:
 
 
 def get_compile_seams(request: Request) -> CompileSeams:
+    """Whatever ``app.state`` names, else the live seams — which means a **real base style**.
+
+    The style is the one seam this function can satisfy itself: `compiler/style.py` builds it
+    from committed data, offline, deterministically, so a deployment that injects nothing
+    still compiles a bundle whose map starts. The archive name is not passed and does not need
+    to be — :class:`~compiler.pipeline.CompileRequest` defaults ``archive_name`` to
+    :data:`~compiler.tiles.DEFAULT_ARCHIVE_NAME` and :func:`compiler.style.build_style`
+    defaults the source url to the same stem; ``tests/test_compiler_style.py`` pins the two
+    together, because a style pointing at an archive the bundle does not contain is a blank
+    map with a manifest that verifies.
+
+    A checkout that genuinely cannot produce a style — the frozen layers missing or malformed
+    — falls back to *no* style rather than raising, so the endpoint answers the contract's
+    ``503 style_unavailable`` and rolls the claim back, instead of a ``500`` that says nothing
+    about what is wrong.
+    """
     seams: CompileSeams | None = getattr(request.app.state, COMPILE_SEAMS_STATE, None)
-    return seams if seams is not None else CompileSeams()
+    if seams is not None:
+        return seams
+    try:
+        return CompileSeams(style_path=STYLE_PATH, style_bytes=base_style_bytes())
+    except StyleError:
+        _log.exception("the base MapLibre style could not be built; compiles will answer 503")
+        return CompileSeams()
 
 
 StoreDep = Annotated[BundleObjects, Depends(get_bundle_store)]
