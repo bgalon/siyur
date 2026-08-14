@@ -36,6 +36,16 @@ The distinction that carries it: **the legs are part of what was approved; the w
 
 Compile is a **publishing** step, not a planning step. Its job is to make the approved day available offline, byte for byte. A pipeline that recomputes any part of what was approved has quietly made compile a second planning pass with no gate in front of it — and the HITL gate exists precisely so that no unreviewed plan reaches a traveller (FR-006 / SC-003).
 
+**Stated precisely, because the loose version is false:**
+
+> **Compile writes plan *status*; it never writes plan *content*.**
+
+Compile demonstrably does write the `user_plan` row — `claim_plan_for_compile` moves `approved → compiling`, `finish_compile` moves `compiling → compiled | failed`, and the `failed → approved` re-arm and the stale-`compiling` reaper are two more status writes. Saying "compile has no write path over the plan state machine" would be contradicted by the very next module to land. The status/content line is the one that actually holds, and it is the more useful rule: expiring a stale claim is a status write and therefore permitted, while recomputing a leg is a content write and therefore not. Anything that would change what the human approved is out of bounds; anything that only changes where the row sits in its lifecycle is in bounds.
+
+*(Sharpened after review — the drafted version said compile "has no write path over the plan state machine", which the re-arm and reaper falsify.)*
+
+**A second, independent reason, which a reviewer can check in ten seconds:** routing refuses fewer than two waypoints, so under the re-routing design a **one-stop day cannot be compiled at all**. A single-museum afternoon is a legitimate plan, it passes feasibility, and it is approvable — so it must be publishable. A design that makes an approvable day uncompilable is wrong on its own terms, whatever one concludes about freshness. This reason stands even for a reader who rejects the whole argument above.
+
 Concretely, `run_compile` therefore takes **no** `RoutingProvider` and no `PedestrianCosting`. That absence is the enforcement: a pipeline with no routing provider cannot re-route by accident, and a future change that wants to must add the parameter and confront this ADR to do it.
 
 ## Consequences
