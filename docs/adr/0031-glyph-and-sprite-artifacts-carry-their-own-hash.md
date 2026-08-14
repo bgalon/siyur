@@ -1,8 +1,13 @@
 # 0031 — Glyph and sprite artifacts carry their own integrity hash
 
-- Status: proposed
+- Status: accepted
 - Decision Maker(s): Ben
-- drafted-by: claude-code · approved-by: Ben (2026-08-14, decision taken in session; ratification pending) · Date: 2026-08-14
+- drafted-by: claude-code (Opus 5) · approved-by: Ben · Date: 2026-08-14 · accepted: 2026-08-14
+
+> **Accepted while half-implemented, deliberately.** The producing side is complete and
+> verified; `web/` records both digests without verifying them, so the bundle currently states
+> integrity coverage it does not enforce. See Consequences and Confirmation — this ADR is not
+> discharged until the launch-time check rejects a mismatched glyph or sprite set.
 
 ## Context and Problem Statement
 
