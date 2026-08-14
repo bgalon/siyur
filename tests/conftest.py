@@ -25,7 +25,7 @@ CI selects these tests with ``-m integration``; the marker is registered below (
 from __future__ import annotations
 
 import os
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -130,8 +130,11 @@ def _disposable_url(configured: str) -> str:
     being in a hurry: "delete every row" becomes structurally unable to reach a database
     anyone works in, rather than merely discouraged from doing so.
 
-    The testcontainer path (:func:`postgis_url` case 3) is already disposable by
-    construction and does not come through here.
+    **Every source comes through here**, including the testcontainer — which is already
+    disposable by construction, so its `CREATE DATABASE` is ceremony. That is deliberate: the
+    container branch used to skip this, the two paths disagreed, and nothing noticed because
+    ``ci.yml`` job 3 always sets ``SIYUR_DATABASE_URL`` and therefore only ever exercises the
+    configured one. One invariant with one code path is worth a redundant statement.
     """
     from sqlalchemy.engine import make_url
 
@@ -185,7 +188,33 @@ def _reachable(url: str) -> bool:
 
 @pytest.fixture(scope="session")
 def postgis_url() -> Iterator[str]:
-    """A URL for a live PostGIS, or a skip. See the module docstring for the order."""
+    """A **disposable** PostGIS URL, or a skip. See the module docstring for the order.
+
+    The single place the disposable database is derived, so every source funnels through one
+    rule rather than each remembering to apply it. That is not stylistic: until 2026-08-14 the
+    derivation lived on the configured branch only, the testcontainer branch handed out its URL
+    undisposed, and CI never noticed because job 3 always sets ``SIYUR_DATABASE_URL`` and
+    therefore only ever executes the configured branch.
+    """
+    source = _postgis_source()
+    raw = next(source)
+    try:
+        # Derived for the container too, though it is already disposable by construction and
+        # the `CREATE DATABASE` is therefore ceremony. One invariant with one code path beats
+        # two rules that happen to agree — they did not agree, and nothing caught it.
+        yield _disposable_url(raw)
+    finally:
+        # Propagates into `_postgis_source`'s `finally`, stopping the container if it started.
+        source.close()
+
+
+def _postgis_source() -> Generator[str, None, None]:
+    """The raw URL and its lifecycle, undisposed. Yields exactly once, then cleans up.
+
+    Split from :func:`postgis_url` so the **testcontainer branch is directly reachable from a
+    test**. It previously was not, which is why an undisposed URL from that branch reached
+    ``main``: nothing exercised the path, and CI structurally could not.
+    """
     configured = os.environ.get(DATABASE_URL_ENV)
     if configured:
         if not _reachable(configured):
@@ -195,8 +224,7 @@ def postgis_url() -> Iterator[str]:
             if os.environ.get("CI"):
                 pytest.fail(message)
             pytest.skip(message)
-        # Never the configured database itself — see `_disposable_url` (FAIL-011).
-        yield _disposable_url(configured)
+        yield configured
         return
 
     if os.environ.get("CI"):
