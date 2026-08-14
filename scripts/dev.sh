@@ -50,6 +50,27 @@ die() { printf '\033[31merror: %s\033[0m\n' "$*" >&2; exit 1; }
 # time a port is legitimately free.
 port_pid() { lsof -nP -iTCP:"$1" -sTCP:LISTEN -t 2>/dev/null | head -1 || true; }
 
+# Is a usable Siyur database answering at SIYUR_DATABASE_URL?
+#
+# Deliberately a real connection and a real query, not `nc -z`. An open port says only that
+# *something* listens, and 5432 is the port every other Postgres on the machine also wants.
+# This asks the question that matters: can we speak to the `siyur` database, and is PostGIS
+# there. A stranger's Postgres fails on the database name or the extension, which is what
+# stops `start` from adopting — and then migrating — somebody else's data.
+db_answers() {
+  uv run python - <<'PY' >/dev/null 2>&1
+import os, sys
+from sqlalchemy import create_engine, text
+try:
+    engine = create_engine(os.environ["SIYUR_DATABASE_URL"], connect_args={"connect_timeout": 3})
+    with engine.connect() as conn:
+        conn.execute(text("SELECT 1"))
+        conn.execute(text("SELECT PostGIS_version()"))
+except Exception:
+    sys.exit(1)
+PY
+}
+
 require_free_port() {
   local port="$1" label="$2" busy
   busy="$(port_pid "$port")"
@@ -109,26 +130,45 @@ cmd_start() {
   # will claim it. Docker's own message for this is an opaque "failed to set up
   # container networking … Bind for 0.0.0.0:5432 failed", after it has already
   # created a network and a volume, so catch it here instead.
+  #
+  # "In use" is not the same as "unusable". `docker compose ps postgis` resolves the project
+  # from the CURRENT DIRECTORY, so from a git worktree — which ADR-0005 *requires* for
+  # parallel sessions — it never finds the container the primary checkout started, and this
+  # guard then refused to start against a database that was serving perfectly. What `start`
+  # needs is a working `siyur` database, not ownership of one.
+  #
+  # So ask the database. If it answers, adopt it. If the port is held by something that is
+  # NOT our database, refuse exactly as before — that is the Supabase-on-5432 case, and
+  # adopting it would run migrations against a stranger.
+  local db_external=0
   if ! docker compose ps --status running --quiet postgis 2>/dev/null | grep -q .; then
-    require_free_port "$DB_PORT" postgis SIYUR_DB_PORT
+    if db_answers; then
+      db_external=1
+    else
+      require_free_port "$DB_PORT" postgis SIYUR_DB_PORT
+    fi
   fi
 
   bold "1/5  PostGIS"
-  docker compose up -d >/dev/null
-  # Wait on compose's own healthcheck, not a bare `pg_isready`. The postgres
-  # entrypoint runs a temporary bootstrap server while it creates the database,
-  # so `pg_isready` (which defaults to the `postgres` database) answers "ready"
-  # in a window when `siyur` does not exist yet — migrations then fail against a
-  # database that is up but empty. The compose healthcheck names `-d siyur`.
-  local waited=0 cid
-  cid="$(docker compose ps -q postgis)"
-  [[ -n "$cid" ]] || die "postgis container did not start — try: docker compose logs postgis"
-  until [[ "$(docker inspect -f '{{.State.Health.Status}}' "$cid" 2>/dev/null)" == "healthy" ]]; do
-    ((waited += 1))
-    [[ $waited -gt 60 ]] && die "PostGIS unhealthy after 60s — try: docker compose logs postgis"
-    sleep 1
-  done
-  echo "  healthy on :$DB_PORT after ${waited}s"
+  if (( db_external )); then
+    echo "  adopting the database already serving on :$DB_PORT (container owned by another compose project)"
+  else
+    docker compose up -d >/dev/null
+    # Wait on compose's own healthcheck, not a bare `pg_isready`. The postgres
+    # entrypoint runs a temporary bootstrap server while it creates the database,
+    # so `pg_isready` (which defaults to the `postgres` database) answers "ready"
+    # in a window when `siyur` does not exist yet — migrations then fail against a
+    # database that is up but empty. The compose healthcheck names `-d siyur`.
+    local waited=0 cid
+    cid="$(docker compose ps -q postgis)"
+    [[ -n "$cid" ]] || die "postgis container did not start — try: docker compose logs postgis"
+    until [[ "$(docker inspect -f '{{.State.Health.Status}}' "$cid" 2>/dev/null)" == "healthy" ]]; do
+      ((waited += 1))
+      [[ $waited -gt 60 ]] && die "PostGIS unhealthy after 60s — try: docker compose logs postgis"
+      sleep 1
+    done
+    echo "  healthy on :$DB_PORT after ${waited}s"
+  fi
 
   bold "2/5  Migrations"
   # No pipe, no `|| true`: a failed migration must stop the script, not print
@@ -238,8 +278,20 @@ port_state() {
 cmd_status() {
   printf 'api    :%-5s %s\n' "$API_PORT" "$(port_state "$API_PORT")"
   printf 'web    :%-5s %s\n' "$WEB_PORT" "$(port_state "$WEB_PORT")"
+  # Ask the port, not the compose project. `docker compose ps postgis` resolves the project
+  # from the CURRENT DIRECTORY, so run from a git worktree — which ADR-0005 requires for
+  # parallel sessions — it looks for a container this project does not own and reports
+  # `down` for a database serving every query. Same shape as FAIL-010: a truthful check
+  # answering a different question from the one being asked.
+  #
+  # The port is what a client actually depends on, and it is project-agnostic. When the port
+  # answers but this project does not own the container, say so rather than claiming
+  # ownership — this script's own header warns that something *else* holding a pinned port
+  # is the failure that looks like success.
   if docker compose ps --status running --quiet postgis 2>/dev/null | grep -q .; then
     printf 'db     :%-5s up\n' "$DB_PORT"
+  elif nc -z localhost "$DB_PORT" 2>/dev/null; then
+    printf 'db     :%-5s up (container owned by another compose project)\n' "$DB_PORT"
   else
     printf 'db     :%-5s down\n' "$DB_PORT"
   fi
