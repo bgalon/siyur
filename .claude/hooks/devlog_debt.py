@@ -30,6 +30,7 @@ mechanism: it notices, it says so once, and it never blocks anything.
   missing git binary, a shallow clone, or a detached HEAD all mean "say nothing".
 """
 
+import re
 import subprocess
 import sys
 from datetime import date, datetime, timedelta, timezone
@@ -74,6 +75,54 @@ def _commit_dates(root: Path, since: date) -> set[str]:
     return {line.strip() for line in result.stdout.splitlines() if line.strip()}
 
 
+#: How far into an entry to look for its `**Covers: ... → ...**` line. It belongs directly
+#: under the title; scanning the whole file would let a date mentioned in prose ("the outage
+#: on 2026-08-06") silently discharge a debt it only narrates.
+_COVERS_SCAN_LINES = 8
+
+_ISO = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def _covered_dates(entry: Path) -> set:
+    """Dates an entry *declares* it covers, via `**Covers: <start> → <end>**` near the top.
+
+    A session that spans days is filed under the date its decisions landed, so the earlier
+    days have no file of their own and were reported as debt forever. That is the failure
+    mode this function exists to close: on 2026-08-14 a session came within one command of
+    reconstructing 08-09 and 08-10 from scratch, days after an entry covering both had been
+    merged. **A debt list that reports work already done gets ignored**, and this hook is
+    worth nothing the moment it is ignored.
+
+    Two dates are read as an inclusive range; a single date covers itself; more than two are
+    taken as an explicit list rather than a range, because a range is only unambiguous with
+    exactly two endpoints. Anything unparseable yields nothing and the date stays flagged —
+    failing towards *reporting* debt is the safe direction for a nudge.
+    """
+    try:
+        with entry.open(encoding="utf-8") as handle:
+            head = [next(handle, "") for _ in range(_COVERS_SCAN_LINES)]
+    except OSError:
+        return set()
+
+    for line in head:
+        if "covers:" not in line.lower():
+            continue
+        found = _ISO.findall(line)
+        if len(found) == 2:
+            start, end = sorted(found)
+            first = date.fromisoformat(start)
+            last = date.fromisoformat(end)
+            span = (last - first).days
+            # A malformed or reversed span could otherwise cover an unbounded stretch.
+            if 0 <= span <= _DAYS * 2:
+                return {
+                    (first + timedelta(days=offset)).isoformat() for offset in range(span + 1)
+                }
+            return set()
+        return set(found)
+    return set()
+
+
 def main() -> int:
     try:
         root = Path(__file__).resolve().parents[2]
@@ -83,9 +132,15 @@ def main() -> int:
 
         today = datetime.now(timezone.utc).date()
         worked = _commit_dates(root, today - timedelta(days=_DAYS))
-        # A date is covered by any entry whose filename starts with it, which is
-        # the `YYYY-MM-DD-<slug>.md` convention `docs/devlog/README.md` sets.
-        logged = {p.name[:10] for p in devlog_dir.glob("????-??-??-*.md")}
+        # A date is covered by any entry whose filename starts with it (the
+        # `YYYY-MM-DD-<slug>.md` convention `docs/devlog/README.md` sets), OR by any
+        # entry that *declares* it covers that date. A session spanning several days
+        # is filed under the day its decisions landed, so the earlier days have no
+        # file of their own and were reported as debt indefinitely.
+        entries = sorted(devlog_dir.glob("????-??-??-*.md"))
+        logged = {p.name[:10] for p in entries}
+        for entry in entries:
+            logged |= _covered_dates(entry)
 
         missing = sorted(d for d in worked - logged if d != today.isoformat())
         if not missing:

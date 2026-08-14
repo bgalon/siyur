@@ -88,12 +88,55 @@ Tear down with `docker compose down -v`.
 
 ## 4. The API — the whole research → read path over real HTTP
 
+**The short way is `scripts/dev.sh start`.** It does everything below in order, pins the ports,
+mints a session cookie, and loads the model key. Use it unless you need one piece by hand.
+
 ```bash
 docker compose up -d
 export SIYUR_DATABASE_URL="postgresql+psycopg://siyur:siyur@localhost:5432/siyur"
 uv run alembic upgrade head
 SIYUR_SESSION_SECRET=devsecret uv run uvicorn api.app:app --port 8000
 ```
+
+### The model key — stored once, never in a file
+
+`POST /plans` calls a real model and needs `ANTHROPIC_API_KEY`. It lives in the **macOS
+Keychain**. Store it once — note there is **no value argument**, so it prompts and the key
+never enters shell history:
+
+```bash
+security add-generic-password -a "$USER" -s siyur-anthropic-api-key -w
+# prints `password:` and waits — paste the key, press Enter
+```
+
+Check it took without printing it:
+
+```bash
+security find-generic-password -a "$USER" -s siyur-anthropic-api-key -w | cut -c1-7   # -> sk-ant-
+```
+
+`scripts/dev.sh` reads it automatically. For a one-off command, borrow it for that process
+only:
+
+```bash
+ANTHROPIC_API_KEY="$(security find-generic-password -a "$USER" -s siyur-anthropic-api-key -w)" \
+  uv run <command>
+```
+
+**Why not a `.env` file, even a gitignored one.** The primary reader of this filesystem is an
+agent, so a key in the tree reaches a transcript on the first unrelated `cat` — and transcripts
+are summarised into `logs/` and shipped as course material. `.claude/hooks/guard_secrets.py`
+blocks agents from `.env*` for exactly this reason, and it fires on the *filename*, not the
+contents. **Why not `~/.zshrc`:** that exports the key into every shell on the machine for
+something only this server needs.
+
+An already-set `ANTHROPIC_API_KEY` always wins, so CI and cloud deploys that inject it as a
+real secret are unaffected — the app only ever reads `os.environ`, and Keychain vs. Secret
+Manager is just a different supplier.
+
+**Without the key** the stack is fully usable for research, sites and the map; only
+`POST /plans` degrades, and it degrades honestly — an in-band `error` frame naming the missing
+variable. `scripts/dev.sh start` warns at startup so you learn it then rather than mid-demo.
 
 | Endpoint | Expect |
 |---|---|

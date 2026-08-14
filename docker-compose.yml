@@ -55,7 +55,20 @@ services:
     image: ghcr.io/valhalla/valhalla-scripted:3.8.3@sha256:24ef7955899dececb94e26c6dfb89d64fabfae875f980432694b0261eb6c251b
     environment:
       # Per-area extract, supplied at compile time; see compiler/routes.py.
+      #
+      # **Leave this empty and the image builds its own default demo extract (Andorra).**
+      # That is FAIL-010: the container then reports `Up (healthy)`, `/status` answers 200
+      # with a populated `tileset_last_modified`, and every route outside Andorra returns
+      # `171 No suitable edges`. Every health signal is green and none of them measures
+      # whether the graph covers the area you are routing in.
       tile_urls: ${SIYUR_VALHALLA_PBF_URL:-}
+      # Tiles are cached on the named volume below, so changing `tile_urls` alone does
+      # NOT rebuild them — the wrong graph survives a restart, which is exactly what makes
+      # FAIL-010 persistent rather than transient. Set this to `True` for the one run that
+      # repoints the graph; leave it `False` afterwards so recompiling the same area stays
+      # a no-op. The alternative is deleting the volume by hand, which is a destructive
+      # operation to require for a routine reconfiguration.
+      force_rebuild: ${SIYUR_VALHALLA_FORCE_REBUILD:-False}
       server_threads: "2"
     ports:
       - "${SIYUR_VALHALLA_PORT:-8002}:8002"

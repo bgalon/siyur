@@ -35,3 +35,29 @@ Chosen: **C — branch-per-unit + PRs with worktree/cloud isolation**, because i
 ## Confirmation
 
 This ADR + the PR template + the `AGENTS.md` workflow block are delivered on branch `agent/introduce-pr-worktree-workflow` and merged **via PR** (the dogfood proof). The protection rule is visible via `gh api repos/:owner/:repo/branches/main/protection`; required status checks (CI jobs 1–7 from `test-strategy.md`) are added to that rule at **DU-00** and tracked in `delivery-plan.md`. TODO: add the "enable branch protection" step to DU-00 and the worktree symlink config to the `web/` scaffolding task on implementation.
+
+## Amendments
+
+### A1 — the enforcement half finally landed (2026-08-14, approved-by Ben)
+
+**The Confirmation above is now discharged, roughly three weeks late.** At DU-00 it turned out that branch protection was **unavailable on a private free-tier repo**, so required status checks could not be configured at all. `AGENTS.md` recorded that as "the merge gate is self-enforced, not machine-enforced", and for the whole of Spec 001 and most of Spec 002 the gate was a discipline binding every session rather than a rule the platform applied.
+
+The repo went **public** on 2026-08-11, and protection was enabled:
+
+```
+required checks : 1 · lint  2 · unit  3 · integration  4 · deterministic-evals
+                  5 · e2e-airplane  6 · security  7 · diff-guard
+strict          : true      # branch must be up to date with main
+enforce_admins  : true      # applies to the repo owner
+force pushes    : blocked
+deletions       : blocked
+```
+
+**Why the delay is worth recording rather than quietly closing.** The gap between "we decided to gate merges" and "merges are gated" was filled by discipline, and discipline failed twice in two days — **FAIL-009**: `main` went red because `gh pr checks … | tail -4` hid failures that sort above passes, and both operators had checked before merging. That is the evidence for this ADR's premise: a rule that depends on a human reading output correctly is not yet a gate. It is also why `scripts/merge-guard.sh` still earns its place now that the platform enforces the same thing — it runs *before* you push, and it additionally asserts every required job is **present**, which a stale-base run can silently omit (#93).
+
+**Two things enforcement still does not cover**, so the discipline is narrower rather than gone:
+
+- `required_approving_review_count` is **0**. This remains the solo-dev model the Consequences section accepted: CI-gated, not human-reviewed. Raising it above 0 with a single maintainer would block every PR.
+- `strict: true` means a branch behind `main` is refused. That is deliberate — it removes the stale-`BASE_SHA` class of phantom failure — but it makes **rebase-before-push** part of the workflow rather than a courtesy.
+
+The "enforcement is deferred until in-flight branches land" cost in the Consequences is likewise discharged: protection was enabled with zero open PRs.
