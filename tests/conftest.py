@@ -2,8 +2,12 @@
 
 Where the database comes from, in order:
 
-1. **``SIYUR_DATABASE_URL`` is set** → use it verbatim. That is the CI service container
-   (``ci.yml`` job 3) and the documented local ``docker compose up postgis`` workflow.
+1. **``SIYUR_DATABASE_URL`` is set** → use a ``_test`` database derived from it, created on
+   demand. That is the CI service container (``ci.yml`` job 3) and the documented local
+   ``docker compose up postgis`` workflow. **The configured database itself is never
+   touched**: :func:`db_session` truncates every table, which is correct against a database
+   made to be thrown away and destroys the work of anyone sharing the server otherwise
+   (FAIL-011 — see :func:`_disposable_url`).
 2. **Not set, and running in CI** → skip. CI's Tier-1 lane (job 2) deliberately has no
    database; Tier-2 runs in job 3, which *does* set the variable.
 3. **Not set, local** → start ``postgis/postgis:16-3.4`` with testcontainers. If Docker is
@@ -78,6 +82,81 @@ def _run_migrations(url: str, revision: str = "head") -> None:
         command.upgrade(config, revision)
 
 
+#: Suffix appended to the configured database's name to get the one tests may destroy.
+TEST_DB_SUFFIX = "_test"
+
+
+class UndisposableDatabase(RuntimeError):
+    """The configured database cannot be made disposable, so no test may truncate it."""
+
+
+def _disposable_url(configured: str) -> str:
+    """Derive ``<name>_test`` from ``configured``, creating it if absent (FAIL-011).
+
+    **Why this exists.** :func:`db_session` deletes every row in every table before each
+    test. That is correct against a database created to be thrown away and catastrophic
+    against one someone is working in — and until now the two were the same database.
+    ``docker-compose.yml`` binds a fixed ``${SIYUR_DB_PORT:-5432}``, so two checkouts land on
+    one container by default; a worktree isolates *files* and isolates nothing else. On
+    2026-08-14 a Tier-2 run truncated a concurrently-running dev stack's data mid-session,
+    and the other operator spent half an hour diagnosing it as a persistence bug in
+    ``POST /areas`` — the endpoint was committing correctly and the rows were being deleted
+    out from under a live server. The symptom pointed at innocent code.
+
+    **Why a derived database rather than an opt-in variable.** Requiring a
+    ``SIYUR_TEST_DATABASE_URL`` (or refusing a name without ``_test``) would work, but CI's
+    database is *also* called ``siyur`` (``ci.yml`` job 3), so it would need a workflow edit
+    and would leave everyone a variable to remember — and the failure mode of forgetting is
+    silent data loss. Deriving needs no configuration anywhere and cannot be bypassed by
+    being in a hurry: "delete every row" becomes structurally unable to reach a database
+    anyone works in, rather than merely discouraged from doing so.
+
+    The testcontainer path (:func:`postgis_url` case 3) is already disposable by
+    construction and does not come through here.
+    """
+    from sqlalchemy.engine import make_url
+
+    url = make_url(configured)
+    name = url.database
+    if not name:
+        raise UndisposableDatabase(f"{DATABASE_URL_ENV} names no database: {configured!r}")
+    if name.endswith(TEST_DB_SUFFIX):
+        return configured
+
+    target = f"{name}{TEST_DB_SUFFIX}"
+    import psycopg
+    from psycopg import sql
+
+    admin = url.render_as_string(hide_password=False).replace(
+        "postgresql+psycopg://", "postgresql://"
+    )
+    try:
+        with psycopg.connect(admin, autocommit=True) as conn, conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (target,))
+            if cur.fetchone() is None:
+                # Identifier(), never an f-string: the name is derived, but a quoted
+                # identifier is the difference between a derived name and an injected one.
+                cur.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(target)))
+    except psycopg.Error as exc:  # no CREATEDB, or the server went away
+        raise UndisposableDatabase(
+            f"cannot create the disposable database {target!r}: {exc}. Tests refuse to "
+            f"truncate {name!r}, which is a database someone may be using (FAIL-011). Grant "
+            f"CREATEDB, or point {DATABASE_URL_ENV} at a database whose name already ends in "
+            f"{TEST_DB_SUFFIX!r}."
+        ) from exc
+
+    disposable = url.set(database=target).render_as_string(hide_password=False)
+    with (
+        psycopg.connect(
+            disposable.replace("postgresql+psycopg://", "postgresql://"), autocommit=True
+        ) as conn,
+        conn.cursor() as cur,
+    ):
+        # The migrations assume PostGIS; CI enables it on the configured database only.
+        cur.execute("CREATE EXTENSION IF NOT EXISTS postgis")
+    return disposable
+
+
 def _reachable(url: str) -> bool:
     engine = create_db_engine(url)
     try:
@@ -101,7 +180,8 @@ def postgis_url() -> Iterator[str]:
             if os.environ.get("CI"):
                 pytest.fail(message)
             pytest.skip(message)
-        yield configured
+        # Never the configured database itself — see `_disposable_url` (FAIL-011).
+        yield _disposable_url(configured)
         return
 
     if os.environ.get("CI"):
