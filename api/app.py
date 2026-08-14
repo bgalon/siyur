@@ -6,6 +6,8 @@ Endpoints:
 - ``GET  /me`` — the signed-in user, or ``401`` when unauthenticated.
 - ``POST /areas`` · ``POST /areas/{area_id}/research`` (SSE) — `api/areas.py` (spec 001).
 - ``GET  /sites?bbox=…`` — `api/sites.py` (spec 001), the map's read path.
+- ``POST /plans`` (SSE) · ``GET /plans/{plan_id}`` · ``POST /plans/{plan_id}/approve`` —
+  `api/plans.py` (spec 002), propose a day and pass it through the HITL gate.
 
 The signed session cookie (Starlette ``SessionMiddleware`` + itsdangerous) is the
 auth/session mechanism; identity is scoped by Google ``sub`` (api/security). A same-origin
@@ -25,6 +27,7 @@ from api.areas import router as areas_router
 from api.auth import build_oauth
 from api.auth import router as auth_router
 from api.config import Settings
+from api.plans import router as plans_router
 from api.security import CurrentUser, SessionUser
 from api.sites import router as sites_router
 
@@ -65,6 +68,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth_router)
     app.include_router(areas_router)
     app.include_router(sites_router)
+    app.include_router(plans_router)
     return app
 
 
