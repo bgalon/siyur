@@ -1,0 +1,492 @@
+/* The plan request form and the review panel (`src/plan/`), mounted by `main.ts`.
+   Its own file rather than more of `style.css`: everything here belongs to one
+   surface, and the tokens it uses are declared once in `style.css:root`.
+
+   Three things in here are requirements, not decoration, and are commented as such:
+   the verdict caption and the plan-structure credit must be *legible* (ADR-0030 A1 /
+   ADR-0019 — a caption nobody can read is the same as an absent one), attribution
+   chips must sit beside the value they attribute, and the approve button must look
+   as unavailable as it actually is. Logical properties throughout, so the M3 RTL
+   pass needs no new rules. */
+
+/* --- The panel itself ---
+   Beside the map, not over the bottom sheet: the sheet is capped at 55vh and holds
+   the research surfaces, and a reviewed day is the longest thing this app renders. */
+.siyur-plan-panel {
+  position: fixed;
+  z-index: 3;
+  inset-block: 58px 12px;
+  inset-inline-end: 12px;
+  width: min(400px, 92vw);
+  overflow-y: auto;
+  padding: 14px 16px 18px;
+  border-radius: 14px;
+  background: var(--siyur-paper);
+  box-shadow: var(--siyur-shadow), 0 10px 34px rgb(43 33 23 / 22%);
+  color: var(--siyur-ink);
+  font-family: 'Work Sans', system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+/* Narrow screens: the map keeps the top half, the panel takes the bottom — above
+   the sheet's own 55vh so the two never overlap. */
+@media (width <= 760px) {
+  .siyur-plan-panel {
+    inset-block: 58px auto;
+    inset-inline: 8px;
+    width: auto;
+    max-height: 40vh;
+  }
+}
+
+.siyur-plan-panel__title {
+  margin: 0 0 2px;
+  font-size: 15px;
+  letter-spacing: 0.01em;
+}
+
+.siyur-plan-panel__hint {
+  margin: 0 0 10px;
+  color: var(--siyur-ink-soft);
+  font-size: 12px;
+}
+
+/* --- The request form ---
+   Two columns, so the pairs that are read together sit together — the two budgets on
+   one row, the date and the day start on the next — and the reviewed day is visible
+   without scrolling past the form that produced it. The pairing falls out of the
+   field order `src/plan/form.ts` already mounts; nothing here reorders it. */
+.siyur-plan-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding-block-end: 12px;
+  border-block-end: 1px solid var(--siyur-border);
+}
+
+.siyur-plan-form__field[data-field='area_id'],
+.siyur-plan-form__field[data-field='interests'],
+.siyur-plan-form__problems,
+.siyur-plan-form__failure,
+.siyur-plan-form__submit {
+  grid-column: 1 / -1;
+}
+
+.siyur-plan-form__field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.siyur-plan-form__label {
+  color: var(--siyur-ink-soft);
+  font-family: var(--siyur-mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.siyur-plan-form__input {
+  min-height: 30px;
+  padding: 5px 9px;
+  border: 1px solid var(--siyur-border);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--siyur-ink);
+  font: inherit;
+  font-size: 13px;
+}
+
+.siyur-plan-form__input:focus-visible {
+  outline: 2px solid var(--siyur-route);
+  outline-offset: 1px;
+}
+
+/* The area is set by delimiting on the map, never typed — say so by looking inert. */
+.siyur-plan-form__input[readonly] {
+  background: var(--siyur-paper-deep);
+  color: var(--siyur-ink-soft);
+  font-family: var(--siyur-mono);
+  font-size: 11px;
+}
+
+.siyur-plan-form__problems {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.siyur-plan-form__problems:empty {
+  display: none;
+}
+
+/* A named field to fix, not a general complaint — coloured like every other
+   "needs your attention" surface in the app. */
+.siyur-plan-form__problem {
+  padding: 3px 0;
+  color: var(--siyur-route);
+  font-size: 12px;
+}
+
+/* A transport failure is not a bad field: its own block, alarm-coloured, and it
+   stays visible until the next submit clears it. */
+.siyur-plan-form__failure {
+  margin: 0;
+  padding: 7px 9px;
+  border: 1px solid var(--siyur-route);
+  border-radius: 7px;
+  background: #fbeee6;
+  color: #8c3a12;
+  font-size: 12px;
+}
+
+.siyur-plan-form__submit {
+  min-height: 36px;
+  padding: 0.5em 1em;
+  border: 0;
+  border-radius: 999px;
+  background: var(--siyur-ink);
+  color: var(--siyur-paper);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.siyur-plan-form__submit:disabled {
+  background: var(--siyur-stone);
+  cursor: progress;
+}
+
+/* --- The reviewed day --- */
+.siyur-plan {
+  display: block;
+  padding-block-start: 12px;
+}
+
+.siyur-plan__date {
+  margin: 0 0 4px;
+  font-family: var(--siyur-mono);
+  font-size: 15px;
+  letter-spacing: 0.04em;
+}
+
+.siyur-plan__budgets {
+  margin: 0 0 8px;
+  color: var(--siyur-ink-soft);
+  font-size: 12px;
+}
+
+/* "No day has been proposed yet" / "not enough in the commons here" — stated, not
+   greyed into invisibility: an empty panel reads as a broken app. */
+.siyur-plan__empty,
+.siyur-plan__candidates {
+  margin: 0 0 6px;
+  padding: 8px 10px;
+  border: 1px dashed var(--siyur-border);
+  border-radius: 8px;
+  background: var(--siyur-paper-deep);
+  color: var(--siyur-ink-soft);
+  font-size: 12px;
+}
+
+/* --- The timeline. Read in stop order, with the wall clock always visible. ---
+   `list-style: none` and a hand-drawn rail instead of numbers: the stop's own
+   `order` is what the day is addressed by, and a CSS counter would print a second,
+   independent numbering that can disagree with it. */
+.siyur-plan-timeline {
+  margin: 0;
+  padding: 0 0 0 14px;
+  border-inline-start: 2px solid var(--siyur-border);
+  list-style: none;
+}
+
+.siyur-plan-stop {
+  position: relative;
+  margin-block-end: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--siyur-border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+/* The stop's dot on the rail. */
+.siyur-plan-stop::before {
+  position: absolute;
+  inset-block-start: 11px;
+  inset-inline-start: -20px;
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--siyur-paper);
+  border-radius: 99px;
+  background: var(--siyur-ink);
+  content: '';
+}
+
+/* The wall clock is the first thing on a stop and never shrinks below the name:
+   `10:00` means ten in the morning where the traveller will be standing, and it is
+   what makes the list readable as a day rather than as a set of places. */
+.siyur-plan-stop__when {
+  margin: 0 0 3px;
+  color: var(--siyur-ink);
+  font-family: var(--siyur-mono);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+/* A stop whose place cannot be shown is still listed — the reason is a fact about an
+   absence, so it must not look like the value it stands in for. */
+.siyur-plan-stop__note {
+  margin: 0;
+  color: var(--siyur-stone);
+  font-size: 11.5px;
+  font-style: italic;
+}
+
+/* ADR-0019 co-presence: the value and its chip render as one inline run, in one
+   element, with no interaction needed. `flex-wrap` rather than `nowrap` so a long
+   name wraps *with* its chip instead of pushing it out of the panel. */
+.siyur-plan-stop .siyur-value {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.15em;
+  margin-block-start: 2px;
+}
+
+.siyur-plan-stop__name .siyur-value__text {
+  font-size: 13.5px;
+  font-weight: 700;
+}
+
+.siyur-plan-stop .siyur-value__text {
+  font-size: 12px;
+}
+
+/* Each stamped value on its own line, so a chip is unambiguously next to the value
+   it attributes and not to the one after it. */
+.siyur-plan-stop > .siyur-value {
+  display: flex;
+}
+
+/* --- A walking leg. Distance and duration each carry the leg's own ODbL stamp. --- */
+.siyur-plan-leg {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: -2px 0 8px;
+  padding: 2px 10px;
+  color: var(--siyur-ink-soft);
+  font-size: 11.5px;
+}
+
+.siyur-plan-leg::before {
+  position: absolute;
+  inset-inline-start: -17px;
+  width: 2px;
+  height: 14px;
+  background: var(--siyur-route);
+  content: '';
+}
+
+/* --- Feasibility: the verdict must be visually distinct from the plan itself. ---
+   FR-005 names the violations; the panel makes it impossible to mistake the check
+   for part of the day. Left edge, own background, own colour per outcome. */
+.siyur-plan-feasibility {
+  margin-block-start: 12px;
+  padding: 9px 11px;
+  border-inline-start: 4px solid var(--siyur-stone);
+  border-radius: 0 8px 8px 0;
+  background: var(--siyur-paper-deep);
+}
+
+.siyur-plan-feasibility[data-ok='true'] {
+  border-inline-start-color: var(--siyur-park);
+  background: #e8f0ea;
+}
+
+/* Checked and failed. */
+.siyur-plan-feasibility[data-ok='false'][data-readable='true'] {
+  border-inline-start-color: var(--siyur-route);
+  background: #fbeee6;
+}
+
+/* Never reported — a third state, and not the same news as "checked, and it fails". */
+.siyur-plan-feasibility[data-readable='false'] {
+  border-inline-start-style: dashed;
+  border-inline-start-color: var(--siyur-stone);
+}
+
+.siyur-plan-feasibility__title {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.siyur-plan-feasibility[data-ok='true'] .siyur-plan-feasibility__title {
+  color: #2f5648;
+}
+
+.siyur-plan-feasibility[data-ok='false'][data-readable='true']
+  .siyur-plan-feasibility__title {
+  color: #8c3a12;
+}
+
+/* The server's own words, verbatim and one per row — "walking_m 4200 > budget 3000"
+   is what tells the user what to change, so it gets the mono treatment that says
+   "this is a measurement", not a paraphrase. */
+.siyur-plan-violations,
+.siyur-plan-approve-failure__violations {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.siyur-plan-violation,
+.siyur-plan-approve-failure__violation {
+  margin-block-start: 4px;
+  padding: 5px 8px;
+  border: 1px solid #e0b49a;
+  border-radius: 6px;
+  background: #fff;
+  color: #8c3a12;
+  font-family: var(--siyur-mono);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+
+/* --- FR-003: a place the walking network could not reach, dropped and reported. --- */
+.siyur-plan-excluded {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.siyur-plan-excluded__item {
+  margin-block-start: 4px;
+  padding: 5px 8px;
+  border: 1px dashed var(--siyur-stone);
+  border-radius: 6px;
+  color: var(--siyur-ink-soft);
+  font-size: 11.5px;
+}
+
+/* --- The two credits. ADR-0030 A1 / ADR-0019: these are requirements. ---
+   They are captions, so they are quiet — but "quiet" here is 11px `--siyur-ink-soft`,
+   measured in Chromium at **6.85:1** on paper and **6.91:1** on the failed-verdict
+   background, not 8px grey-on-grey. An illegible caption discharges nothing. Both are
+   given room and a rule above so they read as a statement about the block they
+   follow, not as filler. */
+.siyur-plan-credit,
+.siyur-plan-verdict-credit {
+  margin: 6px 0 0;
+  color: var(--siyur-ink-soft);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+/* "Your own plan … your data, not sourced data" — sits under the date, above the
+   day, because it is a claim about everything below it. */
+.siyur-plan-credit {
+  margin: 0 0 8px;
+  padding-block-end: 6px;
+  border-block-end: 1px dotted var(--siyur-border);
+}
+
+/* "Siyur's own check of your plan" — travels with the verdict in every branch, so
+   it is indented under whatever block emitted it. */
+.siyur-plan-verdict-credit {
+  padding-block-start: 5px;
+  border-block-start: 1px dotted var(--siyur-border);
+  font-style: italic;
+}
+
+/* --- The approve gate --- */
+.siyur-plan-approve {
+  margin-block-start: 12px;
+}
+
+.siyur-plan-approve__button {
+  width: 100%;
+  min-height: 38px;
+  padding: 0.55em 1em;
+  border: 0;
+  border-radius: 999px;
+  background: var(--siyur-park);
+  color: #fff;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+/* Unattached, not merely dimmed. `renderApproveControl` binds the click listener in
+   exactly one branch, so an unapprovable button fires nothing at all — the styling
+   has to make that as obvious as it is true, or the user reads a live control.
+
+   The label stays readable while it does so: `--siyur-stone` measured 3.38:1 on this
+   background, and "which irreversible action is unavailable, and why" is exactly the
+   text a blocked user needs. `#6f6558` (the same muted ink `style.css` already uses
+   for `.siyur-value__label`) measures 4.64:1 — the dashed border and the cursor carry
+   "unavailable", not illegibility. */
+.siyur-plan-approve__button[data-approvable='false'],
+.siyur-plan-approve__button:disabled {
+  border: 1px dashed var(--siyur-stone);
+  background: var(--siyur-paper-deep);
+  color: #6f6558;
+  cursor: not-allowed;
+}
+
+/* In flight is a third state: approval is irreversible, so "working" must not look
+   like "ready". */
+.siyur-plan-approve__button[data-pending='true'] {
+  border-style: solid;
+  color: var(--siyur-ink-soft);
+  cursor: progress;
+}
+
+/* Why not — always rendered when the gate is shut, directly under the control it
+   explains, and never greyed out of readability. */
+.siyur-plan-approve__blocked {
+  margin: 6px 0 0;
+  color: var(--siyur-ink-soft);
+  font-size: 12px;
+}
+
+/* --- A refused approval, where the click happened --- */
+.siyur-plan-approve-failure {
+  margin-block-start: 8px;
+  padding: 9px 11px;
+  border: 1px solid var(--siyur-route);
+  border-radius: 8px;
+  background: #fbeee6;
+}
+
+.siyur-plan-approve-failure__message {
+  margin: 0;
+  color: #8c3a12;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+/* The successor plan id is the actionable part of a `plan_superseded` refusal —
+   selectable and mono, because a user may need to copy it. */
+.siyur-plan-approve-failure__superseded {
+  margin: 5px 0 0;
+  font-family: var(--siyur-mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+/* --- The aggregate credit (additional to the per-value chips, never a substitute) --- */
+.siyur-plan-attribution {
+  margin: 10px 0 0;
+  padding-block-start: 7px;
+  border-block-start: 1px solid var(--siyur-border);
+  color: var(--siyur-ink-soft);
+  font-size: 11px;
+}

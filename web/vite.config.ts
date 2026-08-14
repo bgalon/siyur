@@ -107,9 +107,19 @@ function devBasemapAssets(): Plugin {
 export default defineConfig({
   base: '/',
   // Dev-only same-origin proxy to the FastAPI service. The client calls `/areas`,
-  // `/sites`, `/auth`, `/me` as same-origin paths (see web/src/map/sites.ts), so
-  // without this the dev server 404s them and the map stays empty — which is
-  // exactly the symptom that reads as "the backend is broken" when it is not.
+  // `/sites`, `/auth`, `/me`, `/plans` as same-origin paths (see web/src/map/sites.ts
+  // and web/src/plan/client.ts), so without this the dev server 404s them and the map
+  // stays empty — which is exactly the symptom that reads as "the backend is broken"
+  // when it is not.
+  //
+  // **An unproxied path does not fail loudly, it fails as HTML.** `navigateFallback`
+  // answers a *navigation* GET with `index.html` and status `200`, so a missing entry
+  // here turns `GET /plans/{id}` into the app shell — `response.ok` is true, the
+  // `Content-Type` is `text/html`, and the client's `await response.json()` is the
+  // first thing that notices. (A `POST` to the same path 404s, because the fallback
+  // only applies to navigations — so a proxy hole can be invisible on one verb and
+  // visible on the other. Verified against this server on 2026-08-11.) Every path the
+  // client calls belongs in this list, added at the same time as the caller.
   //
   // Same-origin rather than CORS on purpose: the session is a cookie
   // (api/security.py), and `same_site='lax'` means a cross-origin XHR would not
@@ -120,7 +130,7 @@ export default defineConfig({
   // the bundle. Point it elsewhere with SIYUR_API_ORIGIN.
   server: {
     proxy: Object.fromEntries(
-      ['/areas', '/sites', '/auth', '/me', '/healthz'].map((path) => [
+      ['/areas', '/sites', '/auth', '/me', '/healthz', '/plans'].map((path) => [
         path,
         {
           target: process.env.SIYUR_API_ORIGIN ?? 'http://127.0.0.1:8000',

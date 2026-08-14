@@ -20,6 +20,7 @@ The harness at the top is shared with `test_api_sites.py` / `test_api_research.p
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
@@ -298,6 +299,38 @@ def test_an_empty_commons_reports_no_coverage(app: FastAPI) -> None:
         "stalest_observed_at": None,
         "refresh_available": False,
     }
+
+
+@integration
+def test_a_created_area_persists_its_local_frame(app: FastAPI, db_session: Session) -> None:
+    """``POST /areas`` must write ``timezone`` and ``country_code``, not just the polygon.
+
+    This regression exists because dropping them **failed nowhere near here and looked
+    correct the whole way down**. `resolve_area` computes the frame and `0005_user_plan`
+    backfilled every pre-existing row, so only areas created *through the API* carried a
+    NULL frame — and the symptom surfaced three modules away:
+
+    ``feasibility._check_hours`` refuses to substitute UTC for an unresolved timezone (by
+    design — a confident answer in the wrong frame is worse than a refusal), so every stop
+    returned ``hours_unknown``; that made every plan ``feasible=False``; and ``approve_plan``
+    has ``feasible IS TRUE`` in its predicate, so **every approve over every API-created
+    area answered 409 infeasible**. Every one of those refusals is individually correct,
+    which is exactly why nothing failed and no test went red.
+
+    Asserted on the **row**, not on the response: the response body carries no frame, so a
+    check on it could pass with the columns still NULL.
+    """
+    response = signed_in_client(app).post("/areas", json={"bbox": BBOX})
+    assert response.status_code == 200
+
+    area = db_session.get(Area, UUID(response.json()["area_id"]))
+    assert area is not None
+    assert area.timezone is not None, "the area was created without a timezone"
+    assert area.country_code is not None, "the area was created without a country code"
+    # Shape, not identity — the point is genericity, and pinning a specific zone here would
+    # put a place literal in a test whose subject is "any area resolves its own frame".
+    assert "/" in area.timezone, f"not an IANA zone id: {area.timezone!r}"
+    assert re.fullmatch(r"[A-Z]{2}", area.country_code), area.country_code
 
 
 @integration
