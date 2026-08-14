@@ -26,6 +26,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from api.areas import router as areas_router
 from api.auth import build_oauth
 from api.auth import router as auth_router
+from api.bundles import router as bundles_router
 from api.config import Settings
 from api.plans import router as plans_router
 from api.security import CurrentUser, SessionUser
@@ -69,6 +70,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(areas_router)
     app.include_router(sites_router)
     app.include_router(plans_router)
+    app.include_router(bundles_router)
     return app
 
 
