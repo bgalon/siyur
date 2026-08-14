@@ -1,8 +1,8 @@
 # 0030 — Attribution scope: sourced values carry a chip, the user's own composition carries a caption
 
-- Status: proposed
+- Status: accepted
 - Decision Maker(s): Ben
-- drafted-by: claude-code (Opus 5) · approved-by: _pending_ · Date: 2026-08-09
+- drafted-by: claude-code (Opus 5) · approved-by: Ben · Date: 2026-08-09 · accepted: 2026-08-11
 - Extends: **ADR-0019** (attribution is co-present with its value, not permanently visible)
 
 ## Context and Problem Statement

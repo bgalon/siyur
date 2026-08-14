@@ -1,8 +1,8 @@
 # 0025 — Schema-card amendments revealed by the plan/compile/travel design
 
-- Status: proposed
+- Status: accepted
 - Decision Maker(s): Ben
-- drafted-by: claude-code · approved-by: _pending_ · Date: 2026-08-07
+- drafted-by: claude-code · approved-by: Ben · Date: 2026-08-07 · accepted: 2026-08-11
 
 ## Context and Problem Statement
 
