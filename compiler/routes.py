@@ -57,7 +57,7 @@ parser ignores keys it does not model) so the extracted file is self-describing,
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Final, Protocol, runtime_checkable
 
@@ -121,6 +121,10 @@ NODE_PRECISION_DP: Final = 9
 #: bundled network reaches it, and recovery there would be a straight line across whatever lies
 #: between. Both directions are wrong to guess at, which is why this is a parameter.
 DEFAULT_SNAP_TOLERANCE_M: Final = 100.0
+
+#: Metres per degree of latitude. Used only to size a candidate query box in degrees; every
+#: distance that matters is measured with :func:`_metres_between`, never with this.
+_METRES_PER_DEGREE: Final = 111_320.0
 
 #: Mean Earth radius — **the same constant ``web/src/travel/recovery.ts`` uses**, so a distance
 #: measured here at compile time and one measured on the device agree instead of differing by a
@@ -420,15 +424,30 @@ def build_walk_graph(
     tree = STRtree(list(edges))
 
     unreachable: list[tuple[int, float]] = []
-    landed: list[int] = []
+    reachable: list[Mapping[int, float]] = []
     for position, anchor in enumerate(anchors):
-        index, metres = _nearest_edge(tree, edges, Point(anchor.lon, anchor.lat))
-        if metres > snap_tolerance_m:
+        point = Point(anchor.lon, anchor.lat)
+        options = _reachable_components(tree, edges, component_of, point, snap_tolerance_m)
+        if not options:
+            # Nothing within tolerance at all: report the true nearest so the message says how
+            # far off it was rather than merely that it failed.
+            _, metres = _nearest_edge(tree, edges, point)
             unreachable.append((position, metres))
         else:
-            landed.append(component_of[index])
+            reachable.append(options)
 
-    connected = not unreachable and len(set(landed)) <= 1 and (bool(landed) or len(components) == 1)
+    sizes = [len(members) for members in components]
+    serving = None if unreachable else _serving_component(reachable, sizes)
+
+    if serving is not None:
+        landed = [serving] * len(reachable)
+    else:
+        # Diagnostic only — the compile is failing, and "which component was each stop
+        # nearest" is what makes the failure readable. `min` on distance, so it names the
+        # component the stop would have snapped to under the old nearest-edge rule.
+        landed = [min(options, key=lambda c: options[c]) for options in reachable]
+
+    connected = not unreachable and (serving is not None if reachable else len(components) == 1)
 
     kept = edges
     if connected and landed:
@@ -650,6 +669,74 @@ def _quantize(lon: float, lat: float) -> _Node:
 def _endpoints(edge: LineString) -> tuple[_Node, _Node]:
     coords = edge.coords
     return _quantize(*coords[0][:2]), _quantize(*coords[-1][:2])
+
+
+def _reachable_components(
+    tree: STRtree,
+    edges: Sequence[LineString],
+    component_of: Mapping[int, int],
+    point: Point,
+    tolerance_m: float,
+) -> dict[int, float]:
+    """Every component this point can snap to within ``tolerance_m``, and how far each is.
+
+    The **nearest** edge is not the right question, and asking it was a real bug (ADR-0034).
+    A stop half a metre from an isolated twenty-metre courtyard path, with the street that
+    actually serves the day five metres away, snapped to the courtyard — a one-edge component
+    — and the day was declared unshippable. Valhalla routed the same five legs without
+    difficulty, because it was never confused about which network the traveller walks on.
+
+    So the snap is a *set* of options and the choice is made once, globally, in
+    :func:`build_walk_graph`: pick a component that serves **every** stop.
+
+    The candidate radius is converted from metres to degrees using the longitude scale at this
+    latitude, which is the tighter of the two axes, so the degree-space query over-covers in
+    latitude and never under-covers. Exact haversine then filters it back. Doing this in raw
+    degrees would shrink the tolerance by ``cos(latitude)`` — 25 % at 40° — which is the same
+    genericity trap :func:`_nearest_edge` documents.
+    """
+    scale = max(math.cos(math.radians(point.y)), 0.01)
+    radius_deg = tolerance_m / (_METRES_PER_DEGREE * scale)
+
+    within: dict[int, float] = {}
+    for index in tree.query(point.buffer(radius_deg)):
+        edge = edges[int(index)]
+        link = shortest_line(edge, point)
+        (near_lon, near_lat), _ = tuple(link.coords)
+        metres = _metres_between(near_lon, near_lat, point.x, point.y)
+        if metres > tolerance_m:
+            continue  # inside the degree box, outside the true circle
+        component = component_of[int(index)]
+        if metres < within.get(component, math.inf):
+            within[component] = metres
+    return within
+
+
+def _serving_component(
+    reachable: Sequence[Mapping[int, float]], sizes: Sequence[int]
+) -> int | None:
+    """The one component that serves every stop, or ``None`` if no single component does.
+
+    Chosen by **total snap distance**, so the day walks on the network its stops actually sit
+    on rather than whichever component happens to sort first. Ties break on the larger
+    component and then the lower index, so the choice is deterministic and a rerun of the same
+    compile produces the same bundle — which per-artifact hashing requires.
+    """
+    if not reachable:
+        return None
+    shared = set(reachable[0])
+    for candidate in reachable[1:]:
+        shared &= set(candidate)
+    if not shared:
+        return None
+    return min(
+        shared,
+        key=lambda component: (
+            sum(distances[component] for distances in reachable),
+            -sizes[component],
+            component,
+        ),
+    )
 
 
 def _nearest_edge(tree: STRtree, edges: Sequence[LineString], point: Point) -> tuple[int, float]:

@@ -383,11 +383,20 @@ def test_the_routes_frame_counts_legs_and_edges_and_reports_connected(tmp_path: 
     events, store = _run(tmp_path)
     frame = _phase(events, "routes")
 
+    # Exact equality, deliberately: this frame is a contract (`contracts/bundles.md`) and a
+    # subset assertion would let a key be dropped without anything noticing.
     assert frame == {
         "phase": "routes",
         "legs": 1,
         "walk_graph_edges": 1,
         "connected": True,
+        # The evidence behind the verdict (ADR-0034). A compile that failed on connectivity
+        # used to report only `connected: false`, so diagnosing it from outside meant
+        # reproducing the fetch by hand — which is how a snapping bug survived a live failure
+        # long enough to block every real area.
+        "component_count": 1,
+        "anchor_components": [0, 0],
+        "dropped_edges": 0,
     }
     assert WALK_GRAPH_PATH in store.paths()
 
