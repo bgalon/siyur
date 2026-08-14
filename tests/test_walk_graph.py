@@ -44,7 +44,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from shapely import LineString
+from shapely import LineString, Point, STRtree
 
 from commons import licenses
 from commons.geo import GeometryError
@@ -63,6 +63,7 @@ from compiler.routes import (
     DisconnectedWalkGraphError,
     EmptyWalkNetworkError,
     OsmnxWalkNetwork,
+    _nearest_edge,
     build_walk_graph,
     compile_routes,
     graph_components,
@@ -633,3 +634,102 @@ def test_the_real_client_routes_over_the_emitted_graph_and_not_over_an_un_noded_
     assert good["vertices"] > 2
     # …and the same linework un-noded gives the traveller a straight line through the blocks.
     assert bad["method"] == "straight_line"
+
+
+# --- ADR-0034: the snap picks a component that serves the day, not the nearest edge ---------
+
+
+def _block_grid() -> list[LineString]:
+    """A connected four-sided block. Every corner is shared, so this is one component."""
+    return [
+        LineString([(28.2200, 36.4400), (28.2260, 36.4400)]),
+        LineString([(28.2200, 36.4400), (28.2200, 36.4460)]),
+        LineString([(28.2260, 36.4400), (28.2260, 36.4460)]),
+        LineString([(28.2200, 36.4460), (28.2260, 36.4460)]),
+    ]
+
+
+#: A 20 m path that touches nothing — a courtyard, a driveway, a fenced service alley. Placed
+#: ~5 m west of the block's east side, so a stop beside it is *nearer to it* than to the street.
+_ISLAND = LineString([(28.22594, 36.44300), (28.22594, 36.44320)])
+
+
+def test_a_stop_nearest_an_island_still_joins_the_network_that_serves_the_day() -> None:
+    """The ADR-0034 regression, reproduced from a live failure.
+
+    A real compile stopped dead on `DisconnectedWalkGraphError` — `components [0, 5]` — for
+    every area tried, while **Valhalla routed all five legs of the same day without
+    difficulty**. Both cannot be right about one city, and Valhalla was right: the graph was
+    fine and the *snap* was wrong. A stop half a metre from an isolated courtyard path, with
+    the street that actually serves the day five metres further, snapped to the courtyard,
+    landed on a one-edge component, and condemned the bundle.
+
+    The gate is not weakened by this — the two tests below show it still refuses a genuine
+    gap and a genuinely unreachable stop. What changed is the question: not "what is nearest
+    to each stop" but "is there one component that serves them all".
+    """
+    stops = [Waypoint(28.2200, 36.4400), Waypoint(28.225945, 36.44310)]
+
+    graph = build_walk_graph([*_block_grid(), _ISLAND], anchors=stops)
+
+    assert graph.connected, "the day is walkable; only the snap disagreed"
+    assert len(set(graph.anchor_components)) == 1
+    assert graph.component_count == 2, "the island is still seen…"
+    assert graph.dropped_edges == 1, "…and still pruned, rather than shipped as a fragment"
+
+
+def test_the_old_nearest_edge_rule_really_did_pick_the_island() -> None:
+    """The negative control for the fix: without it, that stop lands on the island.
+
+    Asserted against the underlying snap rather than the old code, so it keeps meaning
+    something after the old code is gone: the island genuinely *is* the nearest edge, which is
+    why the previous rule failed and why "nearest" was the wrong question rather than a
+    misapplied right one.
+    """
+    edges = node_lines([*_block_grid(), _ISLAND])
+    components = graph_components(edges)
+    component_of = {index: number for number, members in enumerate(components) for index in members}
+
+    tree = STRtree(list(edges))
+    index, metres = _nearest_edge(tree, edges, Point(28.225945, 36.44310))
+
+    island_component = component_of[index]
+    assert metres < 2.0, "the island really is the closest thing to that stop"
+    assert len(components[island_component]) == 1, "and it is a one-edge component"
+
+
+def test_a_genuine_gap_between_two_networks_is_still_refused() -> None:
+    """Two real networks with a stop on each: no single component serves the day."""
+    far = LineString([(28.2400, 36.4600), (28.2460, 36.4600)])
+    stops = [Waypoint(28.2200, 36.4400), Waypoint(28.2400, 36.4600)]
+
+    graph = build_walk_graph([*_block_grid(), far], anchors=stops)
+
+    assert not graph.connected
+    assert len(set(graph.anchor_components)) > 1, "the message must name both networks"
+    with pytest.raises(DisconnectedWalkGraphError, match="do not join up"):
+        require_connected(graph)
+
+
+def test_a_stop_beyond_the_snap_tolerance_is_still_unreachable() -> None:
+    """Nothing within tolerance is a different failure from landing on the wrong island."""
+    graph = build_walk_graph(
+        _block_grid(), anchors=[Waypoint(28.2200, 36.4400), Waypoint(28.3, 36.5)]
+    )
+
+    assert not graph.connected
+    assert [position for position, _ in graph.unreachable_anchors] == [1]
+    with pytest.raises(DisconnectedWalkGraphError, match="snap tolerance"):
+        require_connected(graph)
+
+
+def test_the_serving_component_is_chosen_deterministically() -> None:
+    """Same input, same choice — a rerun of a compile must produce the same bundle bytes."""
+    lines = [*_block_grid(), _ISLAND]
+    stops = [Waypoint(28.2200, 36.4400), Waypoint(28.225945, 36.44310)]
+
+    first = build_walk_graph(lines, anchors=stops)
+    second = build_walk_graph(list(reversed(lines)), anchors=stops)
+
+    assert first.connected and second.connected
+    assert first.edge_count == second.edge_count

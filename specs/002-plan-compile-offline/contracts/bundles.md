@@ -11,7 +11,8 @@
 **Response**: `200` `text/event-stream`. Stages are **ordered** and emitted in the §5.3 order — the pipeline reads as its own spec:
 ```
 event: status    data: {"phase":"tiles","bbox":[28.216,36.440,28.232,36.451],"maxzoom":15,"bytes":4194304}
-event: status    data: {"phase":"routes","legs":4,"walk_graph_edges":812,"connected":true}
+event: status    data: {"phase":"routes","legs":4,"walk_graph_edges":812,"connected":true,
+                        "component_count":3,"anchor_components":[0,0,0,0],"dropped_edges":41}
 event: status    data: {"phase":"quarantine","values_dropped":12,
                         "withheld":[{"site_id":"c9d1…","field":"reviews",
                                      "reason":"license_forbids_redistribution"}]}
@@ -29,7 +30,7 @@ event: done      data: {"bundle_id":"bnd_01J…","size_bytes":5242880,
 - **`attribution` is regenerated per bundle**, never carried over: `ATTRIBUTION.md` names every credit the bundled licenses require — "© OpenStreetMap contributors" for any OSM-derived data **including the Valhalla legs and the walk graph** (Produced Work), and **per-article CC BY-SA credit** for every bundled story (FR-015 / SC-010; see [`narration.md`](./narration.md)).
 - **Integrity is per artifact and over the whole — one hash per path, no shared hashes.** SHA-256 on all **seven**: `tiles.pmtiles.sha256`, `routing.walk_graph_sha256`, `routing.legs_sha256`, `content.sites_sha256`, `content.narrations_sha256`, `content.itinerary_sha256`, `attribution.sha256`. Then `integrity.manifest_sha256` over the canonical manifest — verifiable **offline** at launch (FR-013 / FR-020). A hash spanning two files cannot name which one corrupted, which is why the group hashes an earlier draft used are gone.
 - **Tiles are scoped to the day**: `tiles.pmtiles.bbox` is the tight itinerary bbox **plus a stray margin**, and no more (FR-016).
-- **Walk-graph connectivity is asserted**, not assumed: `connected:false` fails the compile rather than shipping silently disconnected islands (plan.md risk 3).
+- **Walk-graph connectivity is asserted**, not assumed: `connected:false` fails the compile rather than shipping silently disconnected islands (plan.md risk 3). The frame carries the **evidence** as well as the verdict — `component_count`, `anchor_components`, `dropped_edges` — so a failed compile is diagnosable from the stream rather than by reproducing the fetch by hand. And connectivity means *"one component serves every stop"*, **not** *"each stop is near an edge"*: a stop closer to an isolated courtyard path than to the street the day walks on must not condemn the bundle (ADR-0034).
 
 **Errors**: `401` unauthenticated · `404` unknown `plan_id` **or another user's plan** · `409` plan not approved · `409` a compile is already running for this plan (idempotency guard) · in-band `event: error` for a mid-stream failure, after which nothing is persisted and no partial bundle is published.
 

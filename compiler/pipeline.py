@@ -371,6 +371,14 @@ def run_compile(
         "legs": len(legs),
         "walk_graph_edges": graph.edge_count,
         "connected": graph.connected,
+        # The evidence, not only the verdict. `WalkGraph` has carried these since T036, but
+        # only `connected` reached the stream, so a compile that failed on connectivity told
+        # an operator *that* it failed and nothing about why — and diagnosing it meant reading
+        # a traceback or reproducing the fetch by hand. Counts and integers only, so this
+        # stays inside ADR-0030 A1 (no commons-derived text in a server-computed frame).
+        "component_count": graph.component_count,
+        "anchor_components": list(graph.anchor_components),
+        "dropped_edges": graph.dropped_edges,
     }
     # The verdict is streamed *before* it is enforced: an operator watching a compile fail
     # should be told which of the two facts failed it, not left to infer it from a traceback.
