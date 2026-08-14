@@ -9,16 +9,21 @@ The consequence was not a red test. It was a *live dev stack* losing its rows mi
 while a concurrent operator debugged the disappearance as a persistence bug in code that was
 committing perfectly correctly. Silent, and pointed at the wrong file.
 
-These tests exist so that never becomes true again by accident. They are Tier 1: the
-derivation is pure string work up to the point it connects, and the two cases that matter
-most — "already disposable" and "no database named" — never connect at all.
+These tests exist so that never becomes true again by accident.
+
+Three of them are **Tier 1 and never connect**, because they exercise
+``_derive_disposable_url``, which is pure string work. That split is not tidiness: the first
+version tested the connecting function and went red in CI's Tier-1 lane for want of a
+database — a poor way for a test about *not touching databases* to behave. The fourth is
+Tier 2 and asserts the fixture actually uses the derivation, which is the only one of the
+four that would notice the hazard being reintroduced wholesale.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from tests.conftest import TEST_DB_SUFFIX, UndisposableDatabase, _disposable_url
+from tests.conftest import TEST_DB_SUFFIX, UndisposableDatabase, _derive_disposable_url
 
 
 def test_a_configured_database_is_never_the_one_tests_truncate() -> None:
@@ -27,21 +32,21 @@ def test_a_configured_database_is_never_the_one_tests_truncate() -> None:
     Asserted on the *name*, not merely on inequality, so a future change that returns some
     other database still has to return one whose name says it is disposable.
     """
-    derived = _disposable_url("postgresql+psycopg://siyur:siyur@localhost:5432/siyur")
+    derived = _derive_disposable_url("postgresql+psycopg://siyur:siyur@localhost:5432/siyur")
 
     assert derived != "postgresql+psycopg://siyur:siyur@localhost:5432/siyur"
     assert derived.endswith(f"/siyur{TEST_DB_SUFFIX}")
 
 
 def test_deriving_is_idempotent_so_a_test_database_is_used_as_given() -> None:
-    """``siyur_test`` in, ``siyur_test`` out — no ``siyur_test_test``, and no connection.
+    """``siyur_test`` in, ``siyur_test`` out — no ``siyur_test_test``.
 
     Someone who has already pointed the variable at a disposable database should not have a
     second one created underneath them.
     """
     already = "postgresql+psycopg://siyur:siyur@localhost:5432/siyur_test"
 
-    assert _disposable_url(already) == already
+    assert _derive_disposable_url(already) == already
 
 
 def test_a_url_naming_no_database_is_refused_rather_than_guessed() -> None:
@@ -51,7 +56,7 @@ def test_a_url_naming_no_database_is_refused_rather_than_guessed() -> None:
     somewhere with rows in it.
     """
     with pytest.raises(UndisposableDatabase, match="names no database"):
-        _disposable_url("postgresql+psycopg://siyur:siyur@localhost:5432/")
+        _derive_disposable_url("postgresql+psycopg://siyur:siyur@localhost:5432/")
 
 
 @pytest.mark.integration

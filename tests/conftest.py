@@ -90,6 +90,25 @@ class UndisposableDatabase(RuntimeError):
     """The configured database cannot be made disposable, so no test may truncate it."""
 
 
+def _derive_disposable_url(configured: str) -> str:
+    """The **pure** half of :func:`_disposable_url`: string work only, never connects.
+
+    Split out so the derivation is testable in Tier 1, which has no database at all
+    (``ci.yml`` job 2). Keeping it inside the connecting function meant the guardrail's own
+    unit tests needed a server — they failed in CI for want of one, which is a poor way for a
+    test about not touching databases to behave.
+    """
+    from sqlalchemy.engine import make_url
+
+    url = make_url(configured)
+    name = url.database
+    if not name:
+        raise UndisposableDatabase(f"{DATABASE_URL_ENV} names no database: {configured!r}")
+    if name.endswith(TEST_DB_SUFFIX):
+        return configured
+    return url.set(database=f"{name}{TEST_DB_SUFFIX}").render_as_string(hide_password=False)
+
+
 def _disposable_url(configured: str) -> str:
     """Derive ``<name>_test`` from ``configured``, creating it if absent (FAIL-011).
 
@@ -116,20 +135,17 @@ def _disposable_url(configured: str) -> str:
     """
     from sqlalchemy.engine import make_url
 
-    url = make_url(configured)
-    name = url.database
-    if not name:
-        raise UndisposableDatabase(f"{DATABASE_URL_ENV} names no database: {configured!r}")
-    if name.endswith(TEST_DB_SUFFIX):
+    disposable = _derive_disposable_url(configured)
+    if disposable == configured:
         return configured
 
-    target = f"{name}{TEST_DB_SUFFIX}"
+    name = make_url(configured).database
+    target = make_url(disposable).database
+    assert target is not None  # _derive_disposable_url refuses a URL naming no database
     import psycopg
     from psycopg import sql
 
-    admin = url.render_as_string(hide_password=False).replace(
-        "postgresql+psycopg://", "postgresql://"
-    )
+    admin = configured.replace("postgresql+psycopg://", "postgresql://")
     try:
         with psycopg.connect(admin, autocommit=True) as conn, conn.cursor() as cur:
             cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (target,))
@@ -145,7 +161,6 @@ def _disposable_url(configured: str) -> str:
             f"{TEST_DB_SUFFIX!r}."
         ) from exc
 
-    disposable = url.set(database=target).render_as_string(hide_password=False)
     with (
         psycopg.connect(
             disposable.replace("postgresql+psycopg://", "postgresql://"), autocommit=True
