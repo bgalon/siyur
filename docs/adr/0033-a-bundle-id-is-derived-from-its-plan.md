@@ -1,8 +1,8 @@
 # 0033 — A bundle id is derived from its plan, and there is no bundle table
 
-- Status: proposed
+- Status: accepted
 - Decision Maker(s): Ben
-- drafted-by: claude-code · approved-by: _pending_ · Date: 2026-08-14
+- drafted-by: claude-code (Opus 5) · approved-by: Ben · Date: 2026-08-14 · accepted: 2026-08-14
 
 ## Context and Problem Statement
 
