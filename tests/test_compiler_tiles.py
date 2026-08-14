@@ -42,6 +42,7 @@ from shapely import LineString, Point
 
 from commons.merge import distance_m
 from commons.models import ItineraryV1, SiteRecordV1, SourcedValue, SourceRef, TileSourceV1
+from compiler.attribution import BundleSources, render_attribution
 from compiler.manifest import Artifact
 from compiler.tiles import (
     BASE_GLYPH_RANGES,
@@ -51,9 +52,14 @@ from compiler.tiles import (
     EXTRACTOR_ENV,
     FIXTURE_ARCHIVE_ENV,
     GLYPH_LICENSE,
+    GLYPH_LICENSE_FILE,
+    GLYPHS_DIR,
+    LICENSE_TEXT_ROOT,
     MAXZOOM,
     MINZOOM,
     SPRITE_LICENSE,
+    SPRITE_LICENSE_FILE,
+    SPRITES_DIR,
     TILE_ATTRIBUTION,
     TILE_LICENSE,
     Bbox,
@@ -586,13 +592,18 @@ def test_an_asset_host_that_published_no_sprites_still_records_a_digest(
     staging: Path, archive: Path
 ) -> None:
     """A sprite the host does not publish is skipped, not fatal (icons, not every label) — so
-    the empty case has to produce a *valid* recorded digest rather than an empty string, and a
-    different one from a populated directory."""
+    the sheet-less case has to produce a *valid* recorded digest rather than an empty string,
+    and a different one from a populated directory.
+
+    What survives that case is the licence text: MIT binds the notice to the sheets whether
+    eight of them shipped or none did, and it is vendored from the repo rather than fetched,
+    so no answer from the asset host can take it away."""
     stage = _run(
         staging, archive, assets=_FakeAssets(absent_sprites=frozenset(DEFAULT_SPRITE_ASSETS))
     )
-    assert stage.sprites == ()
-    assert stage.source.sprites.sha256 == directory_digest(())
+    assert [artifact.path for artifact in stage.sprites] == [f"{SPRITES_DIR}/{SPRITE_LICENSE_FILE}"]
+    assert stage.source.sprites.sha256 == directory_digest(stage.sprites)
+    assert stage.source.sprites.sha256 != directory_digest(())
     assert stage.source.sprites.sha256 != stage.source.glyphs.sha256
     # Re-validating proves the empty-directory digest is still a legal `Sha256Hex`.
     assert TileSourceV1.model_validate(stage.source.model_dump(mode="json")) == stage.source
@@ -649,6 +660,113 @@ def test_all_names_feed_the_selection_not_only_the_presentation_language(
     stage = _run(staging, archive, sites=[_site(names={"en": "Takayama", "ja": "高山市"})])
     assert "Hani" in stage.scripts
     assert HIRAGANA_BLOCK in set(stage.ranges)
+
+
+# --------------------------------------------------------------------------------------
+# The licence texts — the two obligations `ATTRIBUTION.md` states, made true
+# --------------------------------------------------------------------------------------
+#
+# `compiler/attribution.py` asserted both of these on every generated ATTRIBUTION.md while
+# nothing in `compiler/` wrote either file: the bundle claimed compliance in the same artifact
+# that failed it, and OFL §2 makes the fonts' claim a real breach rather than an untidy one.
+# These tests are about that specific lie, so they read the claim out of the rendered
+# attribution rather than restating it — a reworded obligation cannot quietly desert its file.
+
+#: The walk graph's stamp: required by `BundleSources` and irrelevant here, so it is the
+#: plainest legal ODbL ref rather than anything the licence assertions depend on.
+WALK_GRAPH_SOURCE = SourceRef(
+    kind="osm", id="valhalla:pedestrian", license="ODbL-1.0", attribution=TILE_ATTRIBUTION
+)
+
+#: ``(bundle directory, filename, SPDX id)`` for each licence text this stage emits.
+VENDORED_LICENSES = (
+    (GLYPHS_DIR, GLYPH_LICENSE_FILE, GLYPH_LICENSE),
+    (SPRITES_DIR, SPRITE_LICENSE_FILE, SPRITE_LICENSE),
+)
+
+
+def _attribution(stage: TileStage) -> str:
+    """This bundle's ATTRIBUTION.md, whitespace-flattened so a re-wrap is not a test failure."""
+    rendered = render_attribution(
+        BundleSources(tiles=stage.source, walk_graph_source=WALK_GRAPH_SOURCE)
+    )
+    return " ".join(rendered.split())
+
+
+def test_the_licence_files_attribution_promises_are_in_the_bundle(
+    staging: Path, archive: Path
+) -> None:
+    """The defect itself: ATTRIBUTION.md named `OFL.txt` and no `OFL.txt` was ever written."""
+    stage = _run(staging, archive, sites=[_site(names={"el": "Ρόδος"})])
+    rendered = _attribution(stage)
+
+    assert "`OFL.txt` ships in the bundle beside the glyphs it covers." in rendered
+    assert (staging / GLYPHS_DIR / GLYPH_LICENSE_FILE).is_file()
+    assert "The copyright notice and the license text travel with the work." in rendered
+    assert (staging / SPRITES_DIR / SPRITE_LICENSE_FILE).is_file()
+
+
+@pytest.mark.parametrize(("directory", "filename", "license_id"), VENDORED_LICENSES)
+def test_a_bundled_licence_text_is_the_vendored_bytes_verbatim(
+    staging: Path, archive: Path, directory: str, filename: str, license_id: str
+) -> None:
+    """Verbatim, from a committed file — a reflowed or summarised licence is not the licence.
+
+    The two content assertions are the guard against a well-meaning replacement: the SIL text
+    without the Noto copyright line, or a "MIT licensed" one-liner in place of Mapzen's notice,
+    would satisfy every hash in this file and discharge neither obligation.
+    """
+    _run(staging, archive)
+    vendored = (LICENSE_TEXT_ROOT / directory / filename).read_bytes()
+
+    written = (staging / directory / filename).read_bytes()
+    assert written == vendored
+
+    text = vendored.decode("utf-8")
+    if license_id == "OFL-1.1":
+        assert "SIL OPEN FONT LICENSE Version 1.1" in text
+        assert "The Noto Project Authors" in text
+    else:
+        assert "The MIT License (MIT)" in text
+        assert "Copyright (c) 2017 Mapzen" in text
+
+
+@pytest.mark.parametrize(("directory", "filename", "_license_id"), VENDORED_LICENSES)
+def test_a_licence_text_is_hashed_and_digested_like_every_other_bundled_file(
+    staging: Path, archive: Path, directory: str, filename: str, _license_id: str
+) -> None:
+    """Not a parallel copy path: the licence is inside the ref's own directory digest.
+
+    Which means a licence text stripped out of a bundle in transit is caught by the same check
+    that catches a truncated glyph — the one file that proves compliance is not the one file
+    nothing verifies.
+    """
+    stage = _run(staging, archive, sites=[_site(names={"el": "Ρόδος"})])
+    path = f"{directory}/{filename}"
+    staged = [artifact for artifact in getattr(stage, directory) if artifact.path == path]
+    assert len(staged) == 1, f"{path} is missing from stage.{directory}"
+
+    on_disk = (staging / path).read_bytes()
+    assert staged[0].sha256 == hashlib.sha256(on_disk).hexdigest()
+    assert staged[0].size_bytes == len(on_disk)
+
+    recorded = getattr(stage.source, directory).sha256
+    assert _remeasure(staging, directory) == recorded, "an untouched bundle verifies"
+    without = tuple(a for a in getattr(stage, directory) if a.path != path)
+    assert directory_digest(without) != recorded, "the licence text is inside the digest"
+
+    (staging / path).unlink()
+    assert _remeasure(staging, directory) != recorded
+
+
+def test_a_missing_vendored_licence_text_fails_the_compile(
+    staging: Path, archive: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Loud, not skipped. Compiling without it means shipping Noto glyphs in breach of OFL §2
+    under an ATTRIBUTION.md that says otherwise, which is worse than not compiling."""
+    monkeypatch.setattr("compiler.tiles.LICENSE_TEXT_ROOT", tmp_path / "no-licenses")
+    with pytest.raises(TileError, match="licence text is missing"):
+        _run(staging, archive)
 
 
 # --------------------------------------------------------------------------------------

@@ -97,5 +97,15 @@ for flavor in light dark; do
   done
 done
 
+# The licence texts that cover what we just vendored, copied from the committed
+# originals rather than re-fetched — `compiler/tiles.py` emits these same two files
+# into every bundle, so dev and bundle layouts stay identical byte for byte. OFL §2
+# requires the licence to accompany the fonts wherever they are redistributed; these
+# dev assets are not redistributed, so this is layout parity, not the obligation
+# being discharged here. Provenance: DATA-LICENSES.md.
+echo "copying licence texts"
+cp data/licenses/glyphs/OFL.txt "$BASEMAP_DIR/glyphs/OFL.txt"
+cp data/licenses/sprites/LICENSE.md "$BASEMAP_DIR/sprites/LICENSE.md"
+
 printf '\n%s\n' "done — $(du -sh "$TILES_DIR" "$BASEMAP_DIR" | awk '{print $1" "$2}' | tr '\n' ' ')"
 echo "tile data © OpenStreetMap contributors (ODbL-1.0) · glyphs OFL-1.1 · sprites MIT"

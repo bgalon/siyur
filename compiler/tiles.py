@@ -90,6 +90,30 @@ concatenated bytes, so a renamed or dropped range file is as detectable as a mut
 Note what the recording does **not** yet buy: ``web/src/bundle/`` parses the manifest with
 these keys dropped, so nothing verifies the digests at launch. Recording precedes checking.
 
+## The licence texts ship, because ``ATTRIBUTION.md`` says they do
+
+:mod:`compiler.attribution` states two obligations on every generated ``ATTRIBUTION.md``:
+OFL-1.1's *"``OFL.txt`` ships in the bundle beside the glyphs it covers"* and MIT's *"the
+copyright notice and the license text travel with the work"*. Until 2026-08-14 nothing wrote
+either file, so the bundle asserted compliance in the same artifact that failed it — and
+OFL §2 is not a courtesy: redistributing the Noto glyphs **requires** that each copy carry
+the copyright notice and the licence.
+
+So this stage emits both, from texts committed under ``data/licenses/`` whose tree mirrors
+the bundle's (:data:`LICENSE_TEXT_ROOT`). They are written through the same :func:`_write`
+as every glyph and sheet, which is the whole point: each lands in its directory's artifact
+list and is therefore covered by that ref's :func:`directory_digest`, so a licence text
+deleted or altered in transit is as detectable as a corrupted glyph. A separate,
+unhashed copy path would have been the easier change and would have left the one file that
+proves compliance as the one file nothing verifies.
+
+Vendored rather than fetched because compliance cannot depend on a host answering: the
+asset host is allowed to 404 a glyph range (that is :attr:`TileStage.missing`), and the
+same shrug applied to a licence text would ship fonts in violation whenever the network
+blinked. Committing them also keeps Tier 1 offline. Provenance for both is recorded in
+``DATA-LICENSES.md``; ``scripts/fetch-basemap.sh`` copies the same two files into the dev
+basemap so the dev and bundle layouts stay identical.
+
 ## Seams, and what Tier 1 therefore never touches
 
 Two injection points, both mirroring :mod:`commons.routing`'s ``RoutingProvider``: the
@@ -146,7 +170,9 @@ __all__ = [
     "FIXTURE_ARCHIVE_ENV",
     "GLYPHS_DIR",
     "GLYPH_LICENSE",
+    "GLYPH_LICENSE_FILE",
     "GLYPH_RANGE_SIZE",
+    "LICENSE_TEXT_ROOT",
     "MAXZOOM",
     "MINZOOM",
     "MIN_SPAN_M",
@@ -154,6 +180,7 @@ __all__ = [
     "RETENTION_DAYS",
     "SPRITES_DIR",
     "SPRITE_LICENSE",
+    "SPRITE_LICENSE_FILE",
     "TILE_ATTRIBUTION",
     "TILE_LICENSE",
     "TILE_SOURCE_KIND",
@@ -230,6 +257,17 @@ ARCHIVE_DIR: Final = "tiles"
 GLYPHS_DIR: Final = "glyphs"
 SPRITES_DIR: Final = "sprites"
 DEFAULT_ARCHIVE_NAME: Final = "area"
+
+#: Committed third-party licence texts, in a tree that **mirrors the bundle's** — the copy of
+#: ``glyphs/OFL.txt`` lives at ``data/licenses/glyphs/OFL.txt``. Mirroring rather than mapping
+#: means "which file ships where" is readable off the directory listing and cannot drift into a
+#: lookup table that says one thing while the writer does another.
+LICENSE_TEXT_ROOT: Final = Path(__file__).resolve().parents[1] / "data" / "licenses"
+#: Named for what the obligation names. ``compiler.attribution`` promises ``OFL.txt`` by that
+#: filename, so the filename is not a free choice; the sprites' text keeps the name its
+#: upstream (tangrams/icons) gives it, which is what makes the copy traceable to its source.
+GLYPH_LICENSE_FILE: Final = "OFL.txt"
+SPRITE_LICENSE_FILE: Final = "LICENSE.md"
 
 #: The three weights the base MapLibre style asks for, matching ``scripts/fetch-basemap.sh``.
 #: The directory name is the fontstack verbatim, spaces and all, because that is the token
@@ -868,12 +906,15 @@ class TileStage:
     archive: Artifact
     #: The style artifact this stage was handed — echoed so a caller sums one list, not two.
     style: Artifact
-    #: One :class:`~compiler.manifest.Artifact` per vendored glyph range file.
+    #: One :class:`~compiler.manifest.Artifact` per vendored glyph range file, plus
+    #: ``glyphs/OFL.txt`` — the fonts' licence is a file in the glyphs directory like any
+    #: other, and is hashed and digested as one.
     glyphs: tuple[Artifact, ...]
     #: :func:`directory_digest` over :attr:`glyphs` — and the same string recorded at
     #: ``source.glyphs.sha256``. Echoed here so a caller that wants the digest without
     #: unpacking the embedded ``TileSourceV1`` has it (T035b).
     glyphs_sha256: str
+    #: One per vendored sprite sheet, plus ``sprites/LICENSE.md`` (see :attr:`glyphs`).
     sprites: tuple[Artifact, ...]
     #: :func:`directory_digest` over :attr:`sprites`; recorded at ``source.sprites.sha256``.
     sprites_sha256: str
@@ -1000,6 +1041,26 @@ def _write(staging: Path, path: str, data: bytes) -> Artifact:
     return Artifact.from_bytes(path, data)
 
 
+def _vendor_license_text(staging: Path, directory: str, filename: str) -> Artifact:
+    """Copy one committed licence text into the bundle directory it covers, and hash it.
+
+    Read from disk rather than embedded as a Python string literal: a licence pasted into
+    source is a licence someone will reflow to satisfy a line-length rule, and "verbatim" is
+    the entire obligation. A missing file raises rather than warns — the alternative is a
+    bundle that ships the assets while claiming, in ``ATTRIBUTION.md``, to ship their terms.
+    """
+    origin = LICENSE_TEXT_ROOT / directory / filename
+    try:
+        data = origin.read_bytes()
+    except OSError as exc:
+        raise TileError(
+            f"the {filename} licence text is missing from {origin}. It is committed repo data, "
+            f"so this is a broken checkout — and shipping {directory}/ without it would put the "
+            "bundle in breach of the obligation its own ATTRIBUTION.md states"
+        ) from exc
+    return _write(staging, f"{directory}/{filename}", data)
+
+
 def _vendor_glyphs(
     staging: Path,
     assets: AssetSource,
@@ -1007,7 +1068,12 @@ def _vendor_glyphs(
     ranges: Sequence[GlyphRange],
     scripts: Sequence[str],
 ) -> tuple[tuple[Artifact, ...], tuple[tuple[str, str], ...]]:
-    """Fetch and write every selected range for every fontstack; hash each file (T035b)."""
+    """Fetch and write every selected range for every fontstack; hash each file (T035b).
+
+    The returned tuple also carries ``glyphs/OFL.txt`` — appended **last**, so the range files
+    keep their fetch order — because OFL §2 requires the licence to travel with the fonts and
+    because being in this tuple is what puts it inside the glyphs :func:`directory_digest`.
+    """
     written: list[Artifact] = []
     missing: list[tuple[str, str]] = []
     covered: set[GlyphRange] = set()
@@ -1024,6 +1090,7 @@ def _vendor_glyphs(
     _refuse_uncovered_scripts(scripts, covered)
     if missing:
         _log.warning("asset host published no glyphs for %d fontstack/range pair(s)", len(missing))
+    written.append(_vendor_license_text(staging, GLYPHS_DIR, GLYPH_LICENSE_FILE))
     return tuple(written), tuple(missing)
 
 
@@ -1062,6 +1129,10 @@ def _vendor_sprites(
     the host does not publish is skipped rather than fatal. There is no sprite equivalent of
     :func:`_refuse_uncovered_scripts` because there is no per-area sprite selection — the
     sheets are :data:`DEFAULT_SPRITE_ASSETS` for every area on earth.
+
+    ``sprites/LICENSE.md`` is appended last, as ``glyphs/OFL.txt`` is, and unconditionally: MIT
+    binds the copyright notice to the sheets whether the host published eight of them or one,
+    so the licence text is not something the fetch loop gets a vote on.
     """
     written: list[Artifact] = []
     for asset in sprite_assets:
@@ -1070,4 +1141,5 @@ def _vendor_sprites(
             _log.warning("asset host published no sprite %r", asset)
             continue
         written.append(_write(staging, f"{SPRITES_DIR}/{asset}", data))
+    written.append(_vendor_license_text(staging, SPRITES_DIR, SPRITE_LICENSE_FILE))
     return tuple(written)

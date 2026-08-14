@@ -51,8 +51,8 @@
 | `tile_license` | `SPDX str` | M1 | `ODbL-1.0` (data); attribution required |
 | `attribution` | `str` | M1 | `© OpenStreetMap contributors` |
 | `style` | `{ path, sha256 }` | M1 | base MapLibre style JSON (no customization at M1) |
-| `glyphs` | `{ path, license, sha256 }` | M1 | Noto glyphs, **OFL**; `path` is a directory prefix (`glyphs/`) and `sha256` is the **directory digest** below |
-| `sprites` | `{ path, license, sha256 }` | M1 | Protomaps sprite sheets, **MIT**; same shape, same directory digest (`sprites/`) |
+| `glyphs` | `{ path, license, sha256 }` | M1 | Noto glyphs, **OFL**; `path` is a directory prefix (`glyphs/`) and `sha256` is the **directory digest** below. The directory also holds **`glyphs/OFL.txt`** — the licence text, inside the digest |
+| `sprites` | `{ path, license, sha256 }` | M1 | Protomaps sprite sheets, **MIT**; same shape, same directory digest (`sprites/`). Also holds **`sprites/LICENSE.md`**, likewise inside the digest |
 | `schema_ver` | `"TileSourceV1"` | M1 | literal |
 
 ### Directory digests — `glyphs.sha256` / `sprites.sha256`
@@ -63,6 +63,21 @@ sorted by path — the same canonicalization the manifest seal uses, and for the
 the verifier is TypeScript. Covering the *paths* as well as the bytes is what makes a renamed, added or removed range
 file detectable; a digest over concatenated bytes would not be.
 `compiler.tiles.directory_digest` is the one implementation — never hand-roll a second one.
+
+### The licence text in each directory
+
+Each of the two directories carries the licence of the assets in it: **`glyphs/OFL.txt`** (the SIL Open Font License
+1.1 with the Noto copyright notice) and **`sprites/LICENSE.md`** (the MIT notice the sheets derive from). Both are
+committed under `data/licenses/`, in a tree that mirrors these bundle paths, and are copied in by `compiler/tiles.py`
+— **vendored, never fetched**, because the asset host is allowed to 404 a glyph range and the same shrug applied to a
+licence would ship fonts in breach. They are ordinary artifacts: hashed individually and **inside their directory's
+digest**, so a licence text lost or altered in transit fails the same check a truncated glyph does.
+
+This is not decoration. Generated `ATTRIBUTION.md` states both obligations by name — OFL-1.1's *"`OFL.txt` ships in
+the bundle beside the glyphs it covers"* and MIT's *"the copyright notice and the license text travel with the work"*
+— and OFL §2 genuinely requires the licence to accompany a redistributed font. Until 2026-08-14 nothing wrote either
+file, so a bundle would have asserted compliance in the same artifact that failed it. Provenance for both texts is in
+[`/DATA-LICENSES.md`](../../DATA-LICENSES.md).
 
 *Amended 2026-08-14 (slice 002 T035b, ADR-0031): **two changes, and they are not the same change.***
 

@@ -40,6 +40,8 @@ above. Each is governed by its own terms, recorded per row in
 | `tests/fixtures/wikivoyage_rhodes.json` | Wikivoyage / Wikipedia MediaWiki API | **CC-BY-SA-4.0** — per-article *and* per-revision attribution |
 | `tests/fixtures/overture_places_*.parquet` | Overture Maps places theme | **CDLA-Permissive-2.0** |
 | `data/ne_10m_admin_0_countries.zip` | Natural Earth 1:10m admin-0 | **Public domain** — no attribution required |
+| `data/licenses/glyphs/OFL.txt` | `protomaps/basemaps-assets`, `fonts/OFL.txt` | **OFL-1.1**, verbatim — this *is* someone else's licence text; it is committed so `compiler/tiles.py` can ship it beside the Noto glyphs, as OFL §2 requires |
+| `data/licenses/sprites/LICENSE.md` | `tangrams/icons`, `LICENSE.md` | **MIT** (© 2017 Mapzen), verbatim — shipped beside the sprite sheets for the same reason |
 
 **If you reuse this repository, the data files carry their own obligations and they travel
 with the bytes.** Copying an ODbL fixture into another project brings ODbL with it. The code
