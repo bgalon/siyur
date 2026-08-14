@@ -1,7 +1,9 @@
 # 2026-08-11 — The day the repo went public, and the two things that fixed
 
-**Covers the session spanning 2026-08-09 → 08-11.** The decisions all landed on the 11th, so
-this is filed there; `devlog_debt.py` will flag 08-09 and 08-10, and they are covered here.
+**Covers: 2026-08-09 → 2026-08-11.** The decisions all landed on the 11th, so this is filed
+there; 08-09 and 08-10 are covered by this entry. *(Dates written in full so `devlog_debt.py`
+can read this line and stop re-flagging them — the declaration was here from the start, but the
+hook matched filenames only, so it kept reporting a gap that had already been filled.)*
 
 **Goal:** deliver Phase 5 (DU-05, the compile pipeline) as orchestrator. Ended up also going
 public, licensing the repository, and enabling the branch protection ADR-0005 has wanted since

@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -126,3 +127,75 @@ def test_guard_ignores_non_bash_tools() -> None:
     """Path-shaped access is settings.json's job; this hook only reads command strings."""
     payload = json.dumps({"tool_name": "Read", "tool_input": {"file_path": "/x/.env"}})
     assert _run(GUARD, payload).returncode == ALLOW
+
+
+# --- devlog_debt.py: a debt list that reports finished work gets ignored ---------------------
+
+
+def _devlog_debt_module() -> ModuleType:
+    """Import the hook by path — ``.claude/`` is not a package and is off ruff/mypy's map."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("devlog_debt", HOOKS_DIR / "devlog_debt.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_a_declared_span_covers_the_days_it_names(tmp_path: Path) -> None:
+    """``**Covers: A → B**`` discharges every date in the inclusive range.
+
+    A session spanning several days is filed under the day its decisions landed, so the
+    earlier days have no file of their own. Before this, they were reported as debt forever:
+    on 2026-08-14 a session came within one command of reconstructing 2026-08-09 and 08-10
+    from scratch, days after an entry covering both had been merged.
+    """
+    entry = tmp_path / "2026-08-11-spanning.md"
+    entry.write_text(
+        "# 2026-08-11 — a session that ran long\n\n**Covers: 2026-08-09 → 2026-08-11.**\n",
+        encoding="utf-8",
+    )
+
+    covered = _devlog_debt_module()._covered_dates(entry)
+
+    assert covered == {"2026-08-09", "2026-08-10", "2026-08-11"}
+
+
+def test_an_entry_with_no_declaration_covers_only_itself(tmp_path: Path) -> None:
+    """No ``Covers:`` line means no claim, so the filename remains the only coverage."""
+    entry = tmp_path / "2026-08-11-ordinary.md"
+    entry.write_text(
+        "# 2026-08-11 — an ordinary day\n\n**Goal:** ship a thing.\n", encoding="utf-8"
+    )
+
+    assert _devlog_debt_module()._covered_dates(entry) == set()
+
+
+def test_a_date_merely_narrated_does_not_discharge_a_debt(tmp_path: Path) -> None:
+    """Prose mentioning a date is not a claim to have covered it.
+
+    The scan is bounded to the head of the file precisely so "the outage on 2026-08-06" deep
+    in a narrative cannot silently mark that day as written up.
+    """
+    entry = tmp_path / "2026-08-11-narrative.md"
+    entry.write_text(
+        "# 2026-08-11 — a day\n\n**Goal:** x.\n\n## What happened\n\n"
+        + "filler\n" * 20
+        + "We finally understood the outage on 2026-08-06.\n",
+        encoding="utf-8",
+    )
+
+    assert _devlog_debt_module()._covered_dates(entry) == set()
+
+
+def test_a_reversed_or_absurd_span_is_refused_rather_than_trusted(tmp_path: Path) -> None:
+    """An unbounded span would discharge every debt at once, so it yields nothing.
+
+    Failing towards *reporting* debt is the safe direction: the cost of a spurious reminder is
+    a few seconds, and the cost of a silent one is a day nobody writes up.
+    """
+    entry = tmp_path / "2026-08-11-absurd.md"
+    entry.write_text("# t\n\n**Covers: 1999-01-01 → 2026-08-11.**\n", encoding="utf-8")
+
+    assert _devlog_debt_module()._covered_dates(entry) == set()
