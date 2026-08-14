@@ -283,7 +283,7 @@ def _credits(bundle: BundleSources) -> dict[str, list[str]]:
 
 
 def _add_artifacts(entries: dict[str, list[str]], bundle: BundleSources) -> None:
-    """The whole-file artifacts: basemap, glyphs, walking legs, walking network."""
+    """The whole-file artifacts: basemap, glyphs, sprites, walking legs, walking network."""
     tiles = bundle.tiles
     _add(
         entries,
@@ -294,12 +294,19 @@ def _add_artifacts(entries: dict[str, list[str]], bundle: BundleSources) -> None
         license_id=tiles.tile_license,
         attribution=tiles.attribution,
     )
-    _add(
-        entries,
-        subject=f"Map glyphs and sprites (`{tiles.glyphs.path}`)",
-        license_id=tiles.glyphs.license,
-        attribution=None,
-    )
+    # Two credits, because they are two works under two licenses: the Noto glyphs are OFL-1.1
+    # and the sprite sheets MIT (`compiler/tiles.py`). One line naming both under
+    # `glyphs.license` credited the sprites under OFL — asserting its "no standalone sale"
+    # restriction over MIT assets, in the one file that discharges the bundle's obligations.
+    # Each line reads its own ref's stamp, like every other credit here: the conflation was
+    # invisible precisely because one of the two licenses was never read from anywhere.
+    for name, asset in (("glyphs", tiles.glyphs), ("sprites", tiles.sprites)):
+        _add(
+            entries,
+            subject=f"Map {name} (`{asset.path}`)",
+            license_id=asset.license,
+            attribution=None,
+        )
     # `tiles.style` is deliberately absent: an ArtifactRef carries a path and a hash and no
     # license stamp at all, and the base style is our own generated file. Crediting it would
     # mean inventing a stamp, which is the one thing this module must not do.

@@ -13,8 +13,14 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
+      # `data/licenses/` holds third-party licence texts that ship verbatim inside every
+      # bundle (`compiler/tiles.py`). A hook that appends a newline or trims a trailing
+      # space is editing someone else's licence — the upstream SIL OFL really does carry a
+      # trailing space, and our copy has to be the copy, byte for byte.
       - id: end-of-file-fixer
+        exclude: ^data/licenses/
       - id: trailing-whitespace
+        exclude: ^data/licenses/
       - id: check-added-large-files # tripwire: no stray tiles/bundles committed
       - id: check-merge-conflict
   - repo: local

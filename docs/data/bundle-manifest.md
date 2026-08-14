@@ -73,6 +73,14 @@ artifact bytes**. A hash that spans two files cannot say *which* one corrupted, 
 this manifest has exactly one hash beside it. The whole manifest is then hashed into `integrity.manifest_sha256` and
 checked at launch — the guard against silent OPFS eviction/corruption on iOS.
 
+> **The one exception, added 2026-08-14 (T035b / ADR-0031): `tiles.pmtiles.glyphs.sha256` and
+> `tiles.pmtiles.sprites.sha256` are directory digests.** Those two refs name **prefixes** (`glyphs/`, `sprites/`), not
+> files — an area's glyph selection is derived per-area and runs to hundreds of range files — so there is no single
+> byte stream to hash. Each is a SHA-256 over the JCS listing `[[path, sha256], …]` of the directory's contents, which
+> detects a mutated, renamed, added *or* removed file. It does knowingly give up the "which one corrupted" property
+> above, and that is judged acceptable here and nowhere else: the reader is offline and cannot refetch one glyph range,
+> so naming the file changes nothing about the outcome. See [`tile-source.md`](./tile-source.md) for the definition.
+
 **The manifest hash is canonicalized by RFC 8785 (JCS) — a named standard, not a list of properties.**
 `integrity.manifest_sha256` is the SHA-256 of the manifest serialized per
 **[RFC 8785, JSON Canonicalization Scheme](https://www.rfc-editor.org/rfc/rfc8785)**, with the **`integrity` key
@@ -126,7 +134,8 @@ upload to GCS → client downloads whole archive to OPFS.
     "build_source": "protomaps-daily", "build_date": "2026-07-24",
     "tile_license": "ODbL-1.0", "attribution": "© OpenStreetMap contributors",
     "style": { "path": "style/base.json", "sha256": "77aa…" },
-    "glyphs": { "path": "glyphs/", "license": "OFL-1.1" } } },
+    "glyphs": { "path": "glyphs/", "license": "OFL-1.1", "sha256": "3d5e…" },
+    "sprites": { "path": "sprites/", "license": "MIT", "sha256": "0b71…" } } },
   "routing": { "walk_graph": "routing/walk_graph.geojson", "walk_graph_sha256": "1a7b…",
     "legs": "routing/legs.json", "legs_sha256": "5d92…" },
   "content": { "sites": "content/sites.json", "sites_sha256": "c40e…",
@@ -163,7 +172,8 @@ upload to GCS → client downloads whole archive to OPFS.
     "build_source": "protomaps-daily", "build_date": "2026-08-28",
     "tile_license": "ODbL-1.0", "attribution": "© OpenStreetMap contributors",
     "style": { "path": "style/base.json", "sha256": "…" },
-    "glyphs": { "path": "glyphs/", "license": "OFL-1.1" } } },
+    "glyphs": { "path": "glyphs/", "license": "OFL-1.1", "sha256": "…" },
+    "sprites": { "path": "sprites/", "license": "MIT", "sha256": "…" } } },
   "routing": { "walk_graph": "routing/walk_graph.geojson", "walk_graph_sha256": "…",
     "legs": "routing/legs.json", "legs_sha256": "…" },
   "content": { "sites": "content/sites.json", "sites_sha256": "…",

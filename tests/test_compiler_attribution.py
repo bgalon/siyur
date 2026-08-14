@@ -113,7 +113,8 @@ def _tile_source(**overrides: Any) -> TileSourceV1:
         "tile_license": "ODbL-1.0",
         "attribution": "© OpenStreetMap contributors",
         "style": ArtifactRef(path="style/base.json", sha256=_digest("style")),
-        "glyphs": GlyphsRef(path="glyphs/", license="OFL-1.1"),
+        "glyphs": GlyphsRef(path="glyphs/", license="OFL-1.1", sha256=_digest("glyphs")),
+        "sprites": GlyphsRef(path="sprites/", license="MIT", sha256=_digest("sprites")),
     }
     fields.update(overrides)
     return TileSourceV1(**fields)
@@ -209,6 +210,49 @@ def test_odbl_section_is_pinned_first_the_rest_alphabetical() -> None:
     cc_at = text.index("## CC-BY-SA-4.0")
     ofl_at = text.index("## OFL-1.1")  # the tiles' glyphs, always present
     assert odbl_at < cc_at < ofl_at
+
+
+# --- glyphs and sprites: two works, two licenses, two credits ------------------------------
+
+
+def _section(text: str, license_id: str) -> str:
+    """The body of one license section — so a test can assert what a license does *not* cover."""
+    marker = f"## {license_id} — "
+    rest = text[text.index(marker) + len(marker) :]
+    end = rest.find("\n## ")
+    return rest if end < 0 else rest[:end]
+
+
+def test_glyphs_and_sprites_are_credited_under_their_own_licenses() -> None:
+    """The bundled Noto glyphs are OFL-1.1 and the sprite sheets MIT (`compiler/tiles.py`), so
+    they are two credits in two sections. One combined line filed the MIT sheets under OFL and
+    stated its terms over them — a defect in the artifact that discharges the bundle's legal
+    obligations, not a wording one."""
+    text = render_attribution(_bundle())
+
+    ofl = _section(text, "OFL-1.1")
+    mit = _section(text, "MIT")
+    assert f"- Map glyphs (`{TILES.glyphs.path}`)" in ofl
+    assert f"- Map sprites (`{TILES.sprites.path}`)" in mit
+    # OFL's obligation — `OFL.txt` ships beside the glyphs it covers, and the fonts may not be
+    # sold standalone — must reach the glyphs and nothing else.
+    assert TILES.sprites.path not in ofl
+    assert TILES.glyphs.path not in mit
+
+
+def test_each_of_those_credits_reads_the_license_off_its_own_ref() -> None:
+    """Neither license string is written in `attribution.py`: re-stamping the sprites moves
+    that credit and leaves the glyphs where they were. A hardcoded license is what made the
+    conflation invisible, so the fix is only durable if nothing here restates one."""
+    tiles = _tile_source(
+        sprites=GlyphsRef(path="sprites/", license="Apache-2.0", sha256=_digest("sprites"))
+    )
+
+    text = render_attribution(_bundle(tiles=tiles))
+
+    assert f"- Map sprites (`{tiles.sprites.path}`)" in _section(text, "Apache-2.0")
+    assert f"- Map glyphs (`{tiles.glyphs.path}`)" in _section(text, "OFL-1.1")
+    assert "Map sprites" not in _section(text, "OFL-1.1")
 
 
 # --- every bundled story credited exactly once ---------------------------------------------
@@ -480,7 +524,11 @@ def test_refuses_a_license_off_the_bundleable_allowlist() -> None:
     than ship silently. Reached here through the glyphs' own `license` field, which the model
     does not itself allowlist-check — that check is this module's job."""
     bundle = _bundle(
-        tiles=_tile_source(glyphs=GlyphsRef(path="glyphs/", license="Some-Unknown-License-9.9"))
+        tiles=_tile_source(
+            glyphs=GlyphsRef(
+                path="glyphs/", license="Some-Unknown-License-9.9", sha256=_digest("glyphs")
+            )
+        )
     )
 
     with pytest.raises(AttributionRefused, match="not on the bundleable allowlist"):

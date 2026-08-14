@@ -133,7 +133,8 @@ def _tile_source(**overrides: Any) -> dict[str, Any]:
         "tile_license": "ODbL-1.0",
         "attribution": "© OpenStreetMap contributors",
         "style": {"path": "style/base.json", "sha256": _digest("style")},
-        "glyphs": {"path": "glyphs/", "license": "OFL-1.1"},
+        "glyphs": {"path": "glyphs/", "license": "OFL-1.1", "sha256": _digest("glyphs")},
+        "sprites": {"path": "sprites/", "license": "MIT", "sha256": _digest("sprites")},
     }
     tiles.update(overrides)
     return tiles
@@ -654,6 +655,38 @@ def test_hashes_must_be_64_lowercase_hex(bad: str) -> None:
 def test_bundle_paths_may_not_escape_the_bundle(path: str) -> None:
     with pytest.raises(ValidationError):
         ArtifactRef.model_validate({"path": path, "sha256": _digest("x")})
+
+
+# --- glyphs and sprites: hashed like every other bundled artifact (T035b) ---------
+
+
+@pytest.mark.parametrize("directory", ["glyphs", "sprites"])
+def test_asset_directories_may_not_be_recorded_without_a_hash(directory: str) -> None:
+    """`tile-source.md` (amended 2026-08-14): required, because an *optional* integrity field
+    re-opens the gap for every producer that omits it — and the omission's symptom is a blank
+    map in airplane mode, under a manifest that verifies."""
+    without_hash = {**_tile_source()[directory]}
+    del without_hash["sha256"]
+    with pytest.raises(ValidationError, match="sha256"):
+        TileSourceV1.model_validate(_tile_source(**{directory: without_hash}))
+
+
+@pytest.mark.parametrize("directory", ["glyphs", "sprites"])
+@pytest.mark.parametrize("bad", ["9F2C" + "0" * 60, "9f2c", ""])
+def test_asset_directory_hashes_obey_the_same_casing_rule(directory: str, bad: str) -> None:
+    with pytest.raises(ValidationError):
+        TileSourceV1.model_validate(
+            _tile_source(**{directory: {**_tile_source()[directory], "sha256": bad}})
+        )
+
+
+def test_glyphs_and_sprites_are_two_refs_because_they_are_two_licences() -> None:
+    """Both are hashed directories of the same shape, but Noto is OFL and the Protomaps sheets
+    are MIT — one shared ref would have to credit one of them wrongly."""
+    tiles = TileSourceV1.model_validate(_tile_source())
+    assert (tiles.glyphs.path, tiles.glyphs.license) == ("glyphs/", "OFL-1.1")
+    assert (tiles.sprites.path, tiles.sprites.license) == ("sprites/", "MIT")
+    assert tiles.glyphs.sha256 != tiles.sprites.sha256
 
 
 # --- bbox: EPSG:4326, and generic enough for an antimeridian area ----------------

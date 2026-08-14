@@ -82,6 +82,11 @@ _CONTENT_TYPES: Final[Mapping[str, str]] = {
     ".pbf": "application/x-protobuf",
     ".png": "image/png",
     ".pmtiles": "application/vnd.pmtiles",
+    # `glyphs/OFL.txt` — the vendored licence text a bundle ships to discharge OFL-1.1.
+    # Without this it uploads as `application/octet-stream`, which no gate rejects and
+    # nothing reads programmatically, but which offers a licence as a download rather
+    # than as something a reader can open.
+    ".txt": "text/plain; charset=utf-8",
 }
 
 #: A single byte-range spec: `bytes=0-1023`, `bytes=1024-`, or the suffix form `bytes=-512`.

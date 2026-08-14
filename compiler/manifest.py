@@ -330,6 +330,7 @@ def build_manifest(
         tiles.path,
         tiles.style.path,
         tiles.glyphs.path,
+        tiles.sprites.path,
         walk_graph.path,
         legs.path,
         sites.path,
