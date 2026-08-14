@@ -2,8 +2,8 @@
 
 Every test here is written against a bug that would otherwise ship green. The four the
 brief names — each budget breached independently, an opening-window breach, and
-``hours_unknown`` blocking rather than passing — are joined by three the implementation
-would otherwise get quietly wrong:
+``hours_unknown`` **surfacing** rather than passing silently — are joined by three the
+implementation would otherwise get quietly wrong:
 
 * **the interior of a dwell**, because a place shut for an hour in the middle of a visit is
   open at both endpoints and an endpoint check calls that feasible;
@@ -27,7 +27,7 @@ own ``planned_start``, so a verdict here is the same verdict for ever.
 from __future__ import annotations
 
 from datetime import date, time
-from typing import Any
+from typing import Any, get_args
 from uuid import UUID, uuid4
 
 import pytest
@@ -44,7 +44,13 @@ from commons.models import (
     Stop,
 )
 from commons.routing import routing_source
-from planner.feasibility import FeasibilityVerdict, _exceeds, check_feasibility
+from planner.feasibility import (
+    ADVISORY_CODES,
+    FeasibilityVerdict,
+    ViolationCode,
+    _exceeds,
+    check_feasibility,
+)
 
 #: A Friday — so ``Tu …`` is closed and ``Mo-Su …`` is open, with no reliance on "today".
 DAY = date(2026, 8, 14)
@@ -351,7 +357,97 @@ def test_a_stop_a_few_minutes_earlier_than_the_walk_allows_is_not_rolled_a_whole
     assert result.ok, "the un-walkable five minutes are the next slice's check, not a wrap"
 
 
-# ── hours_unknown blocks; it is never "probably open" ───────────────────────────────
+# ── the severity split: "we don't know" is not "we know it's shut" ──────────────────
+
+
+def test_a_stop_we_know_is_shut_blocks_and_a_stop_we_cannot_check_does_not() -> None:
+    """The whole amendment in one assertion pair, over two otherwise identical days.
+
+    ADR-0022 as amended on 2026-08-14: ``outside_opening_window`` refuses the day, because the
+    evaluator positively answered *closed*; ``hours_unknown`` warns, because it answered
+    nothing. Swap the two severities and **both halves of this test fail** — which is the
+    point of asserting them together rather than in two files.
+
+    Written against the failure that forced the change: most OSM/Overture records carry no
+    ``opening_hours`` tag at all, so blocking on the second case meant no real day was ever
+    approvable — a gate that refuses everything, which is indistinguishable from a broken one.
+    """
+    shut = site(hours="Tu 09:00-14:00")  # a Tuesday rule, and DAY is a Friday
+    unchecked = site(hours=None)
+
+    known_shut = verdict(plan([(shut.id, time(10, 0), 60)], hours=6.0), {shut.id: shut})
+    unknown = verdict(plan([(unchecked.id, time(10, 0), 60)], hours=6.0), {unchecked.id: unchecked})
+
+    assert codes(known_shut) == ["outside_opening_window"]
+    assert not known_shut.ok, "a place we KNOW is shut still refuses the day"
+    assert known_shut.violation_messages and known_shut.warning_messages == ()
+
+    assert codes(unknown) == ["hours_unknown"]
+    assert unknown.ok, "a place we cannot CHECK is a warning, not a refusal"
+    assert unknown.warning_messages and unknown.violation_messages == ()
+    assert unknown.messages == unknown.warning_messages, "nothing is lost from the combined view"
+
+
+def test_a_warning_and_a_violation_on_the_same_day_are_kept_apart() -> None:
+    """Both are reported, in one verdict, on opposite sides of the approval predicate.
+
+    The day is refused — but for the budget, not for the stop nobody could check, and the
+    two sentences must not arrive as one undifferentiated list. A partition that dropped the
+    advisory entry to "simplify" the payload would silently un-warn the traveller about the
+    one stop that might be locked.
+    """
+    unchecked = site(hours=None)
+    itinerary = plan(
+        [(unchecked.id, time(10, 0), 60), (unchecked.id, time(11, 30), 60)],
+        walking_m=500.0,
+        hours=6.0,
+        distances=[2100.0],
+    )
+
+    result = verdict(itinerary, {unchecked.id: unchecked})
+
+    assert not result.ok, "the walking budget is breached, and a budget still blocks"
+    assert [v.code for v in result.blocking] == ["walking_budget"]
+    assert [v.code for v in result.advisory] == ["hours_unknown", "hours_unknown"]
+    assert len(result.messages) == 3, "the combined view keeps every sentence"
+    assert set(result.messages) == set(result.violation_messages) | set(result.warning_messages)
+    assert [v.stop_order for v in result.advisory] == [0, 1], "per stop, never one summary line"
+
+
+def test_a_stop_the_commons_cannot_resolve_blocks_although_its_hours_are_unknown_too() -> None:
+    """The distinction the amendment does **not** blur: the missing fact is the *place*.
+
+    An unresolvable stop looks like an hours problem from inside :func:`_check_hours` — no
+    record, therefore no expression — and treating it as one would let a plan referencing a
+    place that is not in the commons reach the approval gate green.
+    """
+    missing_id = uuid4()
+    result = verdict(plan([(missing_id, time(10, 0), 60)], hours=6.0), {})
+
+    assert codes(result) == ["unknown_site"]
+    assert not result.ok
+    assert result.warning_messages == ()
+
+
+def test_every_violation_code_has_a_severity_and_only_hours_unknown_is_advisory() -> None:
+    """Mechanical, and deliberately so: a new code cannot arrive without a severity decision.
+
+    :data:`~planner.feasibility.ADVISORY_CODES` is a subset of the closed
+    :data:`~planner.feasibility.ViolationCode` set, so severity is decided by the same table
+    that declares the code — there is no second list to forget to update.
+    """
+    all_codes = set(get_args(ViolationCode))
+    assert ADVISORY_CODES <= all_codes, "an advisory code that is not a violation code"
+    assert set(ADVISORY_CODES) == {"hours_unknown"}
+    assert all_codes - set(ADVISORY_CODES) == {
+        "walking_budget",
+        "time_budget",
+        "outside_opening_window",
+        "unknown_site",
+    }
+
+
+# ── hours_unknown warns; it is still never "probably open" ──────────────────────────
 
 
 @pytest.mark.parametrize(
@@ -379,21 +475,26 @@ def test_a_stop_a_few_minutes_earlier_than_the_walk_allows_is_not_rolled_a_whole
         pytest.param("nonsense((", COUNTRY, "unparseable", id="unparseable"),
     ],
 )
-def test_hours_that_cannot_be_evaluated_block_rather_than_pass_silently(
+def test_hours_that_cannot_be_evaluated_warn_by_name_rather_than_pass_silently(
     hours: str | None, country_code: str | None, reason: str
 ) -> None:
-    """Every ``hours_unknown`` route out of the evaluator is a violation, not a shrug.
+    """Every ``hours_unknown`` route out of the evaluator is *named*, and none of them blocks.
 
-    The stop is inside every budget and would otherwise be feasible; the *only* thing
-    standing between it and an approval is that the checker refuses to guess.
+    The two halves are one test on purpose. "It warns" alone would pass against a checker
+    that had quietly stopped evaluating hours at all; "it is named, with the evaluator's own
+    reason" is what proves the refusal to guess is still happening — the evaluator
+    (`commons/opening_hours.py`) is unchanged and still fails closed, and this is the planner
+    declining to turn its honest "I don't know" into a refusal of the whole day.
     """
     unknown = site(hours=hours)
     itinerary = plan([(unknown.id, time(10, 0), 60)], hours=6.0)
 
     result = verdict(itinerary, {unknown.id: unknown}, country_code=country_code)
 
-    assert not result.ok, "hours_unknown is not 'probably open'"
-    assert codes(result) == ["hours_unknown"]
+    assert result.ok, "hours_unknown warns; it does not refuse the day"
+    assert codes(result) == ["hours_unknown"], "and it is still raised, not swallowed"
+    assert result.warning_messages == result.messages
+    assert result.violation_messages == ()
     assert reason in result.messages[0], "the machine-readable reason reaches the traveller"
     if hours is not None:
         assert hours not in result.messages[0], "the tag itself is ODbL and stays out (ADR-0030)"
@@ -431,7 +532,10 @@ def test_no_violation_message_carries_the_opening_hours_expression(
 
     result = verdict(itinerary, {tagged.id: tagged}, country_code=country_code)
 
-    assert not result.ok, "the fixture is meant to produce a violation to inspect"
+    # Both severities are inspected: the rule is about what a server-composed sentence may
+    # contain, and a warning reaches the DOM by exactly the same uncaptioned path a violation
+    # does. Two of these fixtures now warn rather than block, which changes nothing here.
+    assert result.messages, "the fixture is meant to produce a message to inspect"
     for message in result.messages:
         assert hours not in message
         for fragment in ("09:00-14:00", "13:00-17:00", "nonsense", "PH off"):
@@ -443,7 +547,15 @@ def test_an_area_with_no_local_frame_yields_hours_unknown_never_a_default_clock(
     """``area.timezone`` is nullable for rows that predate it; ``None`` means unresolved.
 
     Substituting UTC would answer every window check confidently in the wrong frame — the
-    failure mode that is invisible precisely where it matters.
+    failure mode that is invisible precisely where it matters. The honest answer is "we could
+    not check", which is an ``hours_unknown`` warning like any other: the day is planned and
+    approvable, and every stop on it says so.
+
+    **This assertion is a decision, not a side effect of the code path** (see
+    :func:`~planner.feasibility._check_hours`). ``no_timezone`` is the strongest candidate for
+    staying blocking — it means every check on the day was skipped, and it is *our* data that
+    is missing — and it is advisory anyway, because blocking it would hand the user an
+    unapprovable day they have no way to fix. Flip it and this test is what says so out loud.
     """
     always = site()
     itinerary = plan([(always.id, time(10, 0), 60)], hours=6.0)
@@ -452,6 +564,7 @@ def test_an_area_with_no_local_frame_yields_hours_unknown_never_a_default_clock(
 
     assert codes(result) == ["hours_unknown"]
     assert "no_timezone" in result.messages[0]
+    assert result.ok and result.warning_messages == result.messages
 
 
 # ── a stop the commons cannot resolve ───────────────────────────────────────────────

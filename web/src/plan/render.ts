@@ -43,6 +43,12 @@
  * collapsed — and never parsed: an opening-window breach names the window, and the
  * expression itself belongs to the stop's chipped `opening_hours`.
  *
+ * **{@link renderWarnings} is the same kind of sentence and is covered by the same
+ * caption**, which is why it is emitted *inside* `renderFeasibility` rather than beside
+ * it. "Stop 2's hours cannot be evaluated" is server-computed prose about the user's
+ * composition exactly as a violation is; it carries no `SourceRef` and no chip, and it must
+ * not drift out from under the caption by being rendered from the panel directly.
+ *
  * Point 2 is the same ADR's reading of "value" and is likewise recorded, not decided
  * here — `../travel/render.ts` flagged it first.
  *
@@ -107,7 +113,7 @@ export interface PlanReviewModel {
 export const EMPTY_PLAN_MODEL: PlanReviewModel = {
   planId: null,
   itinerary: { kind: 'absent' },
-  feasibility: { ok: false, violations: [], checked_at: null, readable: false },
+  feasibility: { ok: false, violations: [], warnings: [], checked_at: null, readable: false },
   approval: { state: null, approved_at: null, superseded_by: null },
   sites: new Map(),
   excluded: [],
@@ -219,6 +225,21 @@ const FRAME_BLOCK: Record<Exclude<ItineraryFrame['kind'], 'itinerary'>, string> 
  */
 export function feasibilityPasses(feasibility: Feasibility): boolean {
   return feasibility.readable && feasibility.ok && feasibility.violations.length === 0
+}
+
+/**
+ * Warnings, deliberately **not** part of {@link feasibilityPasses}.
+ *
+ * A day whose only remark is "we could not check these opening hours" passes and is
+ * approvable (ADR-0022, amended 2026-08-14) — most OSM records carry no `opening_hours`,
+ * so treating that as a blocker refuses every real day. The accepted cost is that a
+ * traveller can approve a day containing places that may be shut, which is precisely why
+ * {@link renderWarnings} states them **per stop, in the server's own words**, rather than
+ * summarising them into one reassuring line. This function exists so the distinction has a
+ * name at the point of use: if a caller ever wants to gate on warnings, it has to say so.
+ */
+export function hasWarnings(feasibility: Feasibility): boolean {
+  return feasibility.warnings.length > 0
 }
 
 /**
@@ -406,7 +427,52 @@ export function createVerdictCaption(): HTMLElement {
  * ({@link feasibilityPasses}). A body claiming `ok:true` while naming breaches would
  * otherwise print "this day fits your budgets" *and* drop the one string saying what to
  * fix — the reassurance and the omission being the same mistake twice.
+ *
+ * A passing day may still carry warnings, and then both are rendered: "this fits your
+ * budgets" *and* "these are the places nobody could check". Neither statement weakens the
+ * other, and printing only the first is how a traveller ends up at a locked door having
+ * been told everything was fine.
  */
+/**
+ * The advisory half of the verdict: stops whose opening hours could not be checked.
+ *
+ * **Its own list, its own heading, its own classes** — never appended to
+ * `.siyur-plan-violations`. The two say different things ("this is why you cannot approve"
+ * versus "this is what to watch for on a day you can approve"), and a query for one must
+ * never return the other, exactly as `.siyur-plan-approve-failure__violation` is kept
+ * separate from `.siyur-plan-violation` for the same reason.
+ *
+ * One row per stop, verbatim: the server names the stop order, and the whole point of the
+ * warn-don't-block ruling is that the traveller sees *which* places to check. Collapsing
+ * them to "some opening hours are unknown" would trade the one actionable fact for a
+ * tidier panel. `textContent`, never `innerHTML`.
+ */
+export function renderWarnings(feasibility: Feasibility): HTMLElement | null {
+  if (!hasWarnings(feasibility)) return null
+  const section = document.createElement('section')
+  section.className = 'siyur-plan-warnings'
+  section.dataset.warnings = String(feasibility.warnings.length)
+  const n = feasibility.warnings.length
+  section.append(
+    line(
+      'siyur-plan-warnings__title',
+      n === 1
+        ? '1 thing to check before you go — this does not block approval:'
+        : `${n} things to check before you go — these do not block approval:`,
+    ),
+  )
+  const list = document.createElement('ul')
+  list.className = 'siyur-plan-warning-list'
+  for (const warning of feasibility.warnings) {
+    const item = document.createElement('li')
+    item.className = 'siyur-plan-warning'
+    item.textContent = warning
+    list.append(item)
+  }
+  section.append(list)
+  return section
+}
+
 export function renderFeasibility(feasibility: Feasibility): HTMLElement {
   const section = document.createElement('section')
   section.className = 'siyur-plan-feasibility'
@@ -414,8 +480,14 @@ export function renderFeasibility(feasibility: Feasibility): HTMLElement {
   section.dataset.ok = String(passes)
   section.dataset.readable = String(feasibility.readable)
 
+  // Emitted in every branch, like the caption: an unreadable or refused verdict does not
+  // make "we could not check stop 2's hours" untrue, and dropping the warnings there would
+  // hide them in exactly the branches where the reviewer has the least information.
+  const warnings = renderWarnings(feasibility)
+
   if (!feasibility.readable) {
     section.append(line('siyur-plan-feasibility__title', 'Feasibility was not reported.'))
+    if (warnings) section.append(warnings)
     section.append(createVerdictCaption())
     return section
   }
@@ -423,6 +495,7 @@ export function renderFeasibility(feasibility: Feasibility): HTMLElement {
     section.append(
       line('siyur-plan-feasibility__title', 'This day fits your time and walking budgets.'),
     )
+    if (warnings) section.append(warnings)
     section.append(createVerdictCaption())
     return section
   }
@@ -448,6 +521,7 @@ export function renderFeasibility(feasibility: Feasibility): HTMLElement {
     list.append(item)
   }
   section.append(list)
+  if (warnings) section.append(warnings)
   section.append(createVerdictCaption())
   return section
 }

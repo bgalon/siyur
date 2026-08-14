@@ -29,7 +29,9 @@ event: status       data: {"phase":"propose_itinerary","tier":"opus","stops":5}
 event: status       data: {"phase":"route","provider":"valhalla","legs":4,"excluded":[{"site_id":"…","reason":"unroutable"}]}
 event: itinerary    data: { /* the proposed ItineraryV1 — stops, legs, timeline, budgets */ }
 event: feasibility  data: {"ok":false,"violations":["walking_m 4200 > budget 3000",
-                                                    "stop 2 is outside its opening window"]}
+                                                    "stop 2 is outside its opening window"],
+                                       "warnings":["stop 3 hours cannot be evaluated
+                                                    (no_expression), so it may be shut …"]}
 event: done         data: {"plan_id":"7be2…-uuid","state":"proposed"}
 ```
 
@@ -38,6 +40,7 @@ event: done         data: {"plan_id":"7be2…-uuid","state":"proposed"}
 - **Every value shown on a stop is the commons record's own `SourcedValue`**, inherited unchanged with its `source` + `license` + `bundleable` stamp. The planner **introduces no unstamped value**; an unstamped value is refused at the boundary, not rendered (FR-008 / SC-004, continuous with slice 001 FR-003).
 - **Legs carry their own provenance**: `RouteLegV1.source` is derived-from-OSM (`ODbL-1.0`, "© OpenStreetMap contributors") — routing over OSM is a Produced Work, so ODbL attribution renders wherever a leg does.
 - **Feasibility is deterministic and always emitted**, `ok` true or false. `violations[]` names the specific budget or opening window breached (FR-005). A day with too little in it yields a **shorter honest plan** or `candidates: 0` with an explicit "not enough here" — **never padding** (edge case).
+- **`violations[]` blocks; `warnings[]` does not** (**ADR-0022, amended 2026-08-14**). `ok` is the approval predicate and is false **iff `violations[]` is non-empty**. `warnings[]` is the advisory half — today, one entry per stop whose `opening_hours` could not be evaluated — and `{"ok": true, "warnings": [...]}` is the **normal** answer, not a contradiction: most OSM/Overture records carry no `opening_hours` at all (1 of 25 in the fixture set; every stop of a live 6-stop day), so blocking on "we do not know" means no real day is ever approvable. **"We know it is shut" still blocks**: `outside_opening_window` is a violation. A stop the commons cannot resolve (`unknown_site`) also still blocks — what is missing there is the place, not its hours. The accepted cost is that a traveller can approve a day containing places that may be shut, which is why each warning **names its stop** and is rendered per stop rather than aggregated. A client that has never heard of `warnings` sees an unchanged `violations`/`ok` pair.
 - **A violation never embeds commons-derived text** (ADR-0030 A1). It names the breach and the **stop order** — `"stop 2 is outside its opening window"`, never `"… outside opening window Tu 09:00-14:00"`. The `opening_hours` expression is ODbL-licensed commons text; quoting it inside a server-composed sentence puts it on a surface with no attribution stamp in frame. The client joins the verdict to the stop by `order` and renders the stop's own `opening_hours` through the attribution funnel, where it carries its chip. An earlier draft of A1 permitted the quotation *conditionally* on that chip being rendered — withdrawn, because the condition fails in exactly the branch where the itinerary is unreadable and the verdict is all that renders.
 - **The plan is persisted `proposed` and stops there.** No compile, no downstream work, no bundle (FR-006). The pause is a durable `user_plan` row, so it survives process restart (SC-003).
 - **Itineraries are private.** Written to `user_plan` scoped to `user.sub`, **never** into the shared commons (FR-007).
@@ -50,11 +53,14 @@ event: done         data: {"plan_id":"7be2…-uuid","state":"proposed"}
 ```jsonc
 {
   "plan": { /* ItineraryV1 verbatim, per the card */ },
-  "feasibility": { "ok": true, "violations": [], "checked_at": "2026-08-07T09:12:00Z" },
+  "feasibility": { "ok": true, "violations": [], "warnings": [], "checked_at": "2026-08-07T09:12:00Z" },
   // ↑ `ok`/`violations`/`checked_at` map to user_plan.feasible / .violations /
   //   .feasibility_checked_at. `checked_at` is UTC and is set ONLY when feasibility
   //   runs — never from `updated_at`, which bumps on any write and would report a
   //   time the check did not happen.
+  //   `violations` and `warnings` are BOTH stored in the one `violations` jsonb column
+  //   as severity-stamped entries and split apart on read, so the two lists here are
+  //   the row's own record of which was which — never re-derived from the wording.
   "approval": { "state": "proposed", "approved_at": null, "superseded_by": null },
   "attribution": ["© OpenStreetMap contributors"]   // union across the plan's values and legs
 }

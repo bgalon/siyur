@@ -45,6 +45,7 @@ from commons.merge import merge_records
 from commons.models import ItineraryV1, SiteRecordV1
 from commons.repository import (
     RefusalReason,
+    _split_verdict,
     claim_plan_for_compile,
     finish_compile,
     load_plan,
@@ -333,7 +334,7 @@ def test_the_stream_proposes_a_day_from_the_commons_and_pauses_it_proposed(
     (done,) = named(proposed, "done")
     assert done["state"] == "proposed"
     (verdict,) = named(proposed, "feasibility")
-    assert verdict == {"ok": True, "violations": []}
+    assert verdict == {"ok": True, "violations": [], "warnings": []}
 
 
 @integration
@@ -423,6 +424,7 @@ def test_get_returns_the_plan_its_verdict_and_its_approval_state(
     assert ItineraryV1.model_validate(body["plan"]).schema_ver == "ItineraryV1"
     assert body["feasibility"]["ok"] is True
     assert body["feasibility"]["violations"] == []
+    assert body["feasibility"]["warnings"] == [], "these fixtures are open every day"
     assert body["feasibility"]["checked_at"] is not None, "checked_at is set when the check ran"
     assert body["approval"] == {"state": "proposed", "approved_at": None, "superseded_by": None}
 
@@ -665,6 +667,31 @@ def test_the_wire_error_codes_are_the_repositorys_own_spellings() -> None:
     assert set(get_args(RefusalReason)) == wire | {"not_found"}
 
 
+def test_a_row_written_before_the_severity_split_reads_back_as_all_blocking() -> None:
+    """Tier 1 over the column reader: the old shape is a bare string, and it *meant* blocking.
+
+    ``user_plan.violations`` held a plain array of strings until 2026-08-14, and every entry
+    in one of those rows was a refusal by construction. Reading them as warnings would
+    retroactively approve days that were refused when they were written. An entry whose
+    severity is unreadable — no flag, a string where a bool belongs — resolves the same way,
+    which is the only safe direction for a gate to fail.
+    """
+    assert _split_verdict(["walking_m 4200 > budget 3000"]) == (
+        ("walking_m 4200 > budget 3000",),
+        (),
+    )
+    assert _split_verdict(
+        [{"message": "a", "blocking": True}, {"message": "b", "blocking": False}]
+    ) == (("a",), ("b",))
+    assert _split_verdict([{"message": "no flag"}, {"message": "junk", "blocking": "no"}]) == (
+        ("no flag", "junk"),
+        (),
+    )
+    # Never a half-value: a null, a number or an object with no message is dropped outright.
+    assert _split_verdict([None, 7, {"blocking": False}, {"message": 3}]) == ((), ())
+    assert _split_verdict(None) == ((), ())
+
+
 @integration
 def test_an_unknown_plan_id_is_404_on_both_read_and_approve(client: TestClient) -> None:
     unknown = uuid4()
@@ -710,8 +737,10 @@ def test_a_frameless_area_reaches_the_traveller_as_hours_unknown_not_as_a_guess(
 ) -> None:
     """``timezone IS NULL`` is *unresolved*; substituting UTC would answer in the wrong frame.
 
-    The plan is still proposed and still readable — it simply cannot be approved, which is the
-    honest outcome for a day nothing can check the opening windows of.
+    ADR-0022 as amended 2026-08-14: the traveller is **told, per stop**, that nothing could
+    check these windows — and is then allowed to decide. Refusing the day instead would be
+    refusing every day over every area whose frame has not been resolved, which is a gate
+    nobody can pass rather than a protection anybody gets.
     """
     frameless = seed_area(db_session, "google-sub-a", timezone=None, country_code=None)
     client = signed_in_client(plan_app(engine=db_engine, reply=reply_of(*sites)))
@@ -719,9 +748,82 @@ def test_a_frameless_area_reaches_the_traveller_as_hours_unknown_not_as_a_guess(
     frames = stream_plan(client, propose_body(frameless))
 
     (verdict,) = named(frames, "feasibility")
-    assert verdict["ok"] is False
-    assert all("hours cannot be evaluated" in message for message in verdict["violations"])
-    assert client.post(f"/plans/{plan_id_of(frames)}/approve").status_code == 409
+    assert verdict["ok"] is True
+    assert verdict["violations"] == [], "not knowing is not a breach"
+    assert len(verdict["warnings"]) == len(sites), "one warning per stop, never one summary"
+    assert all("no_timezone" in message for message in verdict["warnings"])
+    assert client.post(f"/plans/{plan_id_of(frames)}/approve").status_code == 200
+
+
+@integration
+def test_a_warning_survives_the_round_trip_as_a_warning_and_never_as_a_violation(
+    db_engine: Engine, db_session: Session, area_id: UUID
+) -> None:
+    """The persistence half of the split, read back through a **fresh** request.
+
+    ``user_plan.violations`` is one ``jsonb`` column holding both severities, so the read-back
+    path is exactly where a warning could quietly become a violation — and a plan reporting
+    ``ok: true`` beside a list headed "violations" is the contradiction that would put the
+    panel and the approval gate in disagreement about one row. Written against the row, not
+    the stream: the stream can be right while the column is wrong.
+    """
+    untagged = seed_sites(
+        db_session,
+        (
+            site("Upper Fortress", lon=28.2247, hours=None),
+            site("Closed Museum", lon=28.2251, hours=TUESDAYS_ONLY),
+        ),
+    )
+    client = signed_in_client(plan_app(engine=db_engine, reply=reply_of(*untagged)))
+
+    frames = stream_plan(client, propose_body(area_id))
+    (streamed,) = named(frames, "feasibility")
+    plan_id = plan_id_of(frames)
+    body = client.get(f"/plans/{plan_id}").json()["feasibility"]
+
+    assert streamed["violations"] and streamed["warnings"], "the fixture mixes both severities"
+    assert body["ok"] is False, "the Tuesday-only stop still blocks"
+    assert body["violations"] == streamed["violations"]
+    assert body["warnings"] == streamed["warnings"]
+    assert set(body["violations"]).isdisjoint(body["warnings"])
+
+    # And the row itself, read by a session that never saw the request.
+    stored = load_plan(db_session, UUID(plan_id), user_id="google-sub-a")
+    assert stored is not None
+    assert stored.violations == tuple(streamed["violations"])
+    assert stored.warnings == tuple(streamed["warnings"])
+
+
+@integration
+def test_a_day_whose_only_problem_is_unknown_hours_can_be_approved(
+    db_engine: Engine, db_session: Session, area_id: UUID
+) -> None:
+    """The measured case: 1 of 25 fixture records carries hours, so this *is* the normal day.
+
+    The approval gate is unchanged — ``approve_plan`` still requires ``feasible IS TRUE`` and
+    the post-approval `CHECK` still makes an infeasible approval impossible. What changed is
+    what makes a plan feasible, and the proof is that the row comes back ``approved`` with its
+    warnings intact rather than emptied to justify the approval.
+    """
+    untagged = seed_sites(
+        db_session,
+        (
+            site("Upper Fortress", lon=28.2247, hours=None),
+            site("Museum of the Citadel", lon=28.2251, hours=None),
+        ),
+    )
+    client = signed_in_client(plan_app(engine=db_engine, reply=reply_of(*untagged)))
+
+    frames = stream_plan(client, propose_body(area_id))
+    plan_id = plan_id_of(frames)
+    approved = client.post(f"/plans/{plan_id}/approve")
+
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["state"] == "approved"
+    detail = client.get(f"/plans/{plan_id}").json()
+    assert detail["feasibility"]["ok"] is True
+    assert len(detail["feasibility"]["warnings"]) == len(untagged), "the warnings are kept"
+    assert detail["feasibility"]["violations"] == []
 
 
 @integration

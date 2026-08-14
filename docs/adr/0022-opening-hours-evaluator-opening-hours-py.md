@@ -40,7 +40,7 @@ Chosen: **`opening-hours-py`**, wrapped behind a narrow `commons/opening_hours.p
 
 **It fails closed three ways:**
 
-1. An expression the library refuses to parse is **never guessed** — the stop is marked **`hours_unknown`**, which **blocks a silent feasibility pass** and surfaces as a **named conflict** per FR-005. *(Holds.)*
+1. An expression the library refuses to parse is **never guessed** — the stop is marked **`hours_unknown`**, which **blocks a silent feasibility pass** and surfaces as a **named conflict** per FR-005. *(Holds — and note what it says: it blocks a silent **pass**, not the approval. **A12** rules that the named conflict is an advisory warning rather than a refusal.)*
 2. ~~**`SH`-bearing expressions**, and any form the parser rejects, are **rejected loudly with the raw string shown** — never approximated, never smoothed over.~~ **✎ The library does not do this.** `"Mo-Su 10:00-18:00; SH off"` parses clean, `warnings == []`, `validate()` returns `True`, and it evaluates as though the `SH` clause were absent. **`commons/opening_hours.py` (T014) must detect the `SH` token itself** and force `hours_unknown`. The obvious implementation — `try: OpeningHours(...) except ParserError` — **never fires**, so T015's rejection table would pass against a wrapper that does nothing while a school-holiday closure evaluates as open in production.
 3. **`PH` is trusted only where the area's country is in the embedded holiday database**; elsewhere PH-bearing rules degrade to **`hours_unknown`**, never to "open". *(Holds — but only under amendment A1.)* **Coverage is 122 countries**: probing all 676 two-letter codes, 554 raise `UnknownCountryError`. Absent include **`IL`**, `IN`, `TH`, `MY`, `PK`, `AE`, `SA`, `QA`, `JO`, `LB`, `IQ`, `IR`, `PS`, `ET`, `TZ`, `SN`, `CI`, `DZ` — most of the Middle East, South and Southeast Asia, and much of Africa; roughly 127 assigned codes in total. `UnknownCountryError` is raised **at construction**, before any evaluation, and for **every** expression rather than only PH-bearing ones — so the wrapper must route it to `hours_unknown` and **must never retry without a country** (see A1).
 
@@ -113,6 +113,96 @@ Both `auto_*` flags **default to `True`**, and with `auto_country=True` an uncov
   Setting it `False` makes coordinates inert for solar work and silently degrades every sun-event expression to a generic day — while looking like hardening. It does **not** override the caller's timezone (Rhodes coords with `America/New_York` yields the same instant, differently expressed). *This amendment exists because the coordinator directed `auto_timezone=False` and the implementer refused it with the measurement above. The measurement belongs in the ADR so the directive cannot be re-issued.*
 
 - **A11 — sun events are refused OUTRIGHT, and coordinates do not rescue them.** `sunrise-sunset` with no `coords` falls back to a generic day, so at **Reykjavik in winter** it reports **open** at 08:00, 09:00, 16:00, 17:00 and 18:00 while the sun is down. With `auto_timezone` pinned off (A6/A10) coordinates are inert for solar work, so a sun expression cannot be answered correctly *at all*: **any sun-bearing expression yields `hours_unknown`**, with or without a location. Accepting one with coordinates would return the generic window dressed as the sun. Together with A2 this makes the rule general — *any* expression whose evaluation depends on context the caller did not supply is `hours_unknown`, not a guess.
+
+### Amendment A12 (2026-08-14) — `hours_unknown` warns the traveller; it no longer blocks approval
+
+**This ADR reached `main` ratified on 2026-08-14 (commit `8f08a5e`; the header records
+`accepted: 2026-08-11`, the day Ben approved it) and is amended the same day it landed.** Said
+plainly rather than buried, because an ADR amended within hours of ratification is a fact about
+how it was reviewed, and the amendment is worth less if the timing is hidden. Not a discovery about the
+library: a discovery about what the fail-closed posture *does* to a real day, made the first
+time this ran end to end over real data. Struck nothing above — every measurement holds; what
+changes is which layer acts on one of them.
+
+**The measurement.** A live pass over **599 Overture/OSM candidates** produced a 6-stop day with
+5 routed legs and `feasibility.ok=false` carrying a `no_expression` violation on **every single
+stop**, because most OSM/Overture records carry no `opening_hours` tag at all. In the committed
+fixture set **exactly 1 of 25 records has hours**. Under the original posture, therefore, **no
+real day can ever be approved** — the gate refuses everything, which protects nobody and is
+indistinguishable from a broken checker.
+
+**The ruling.** The distinction that matters is **"we do not know" versus "we know it is shut"**:
+
+| Outcome | Before | Now |
+|---|---|---|
+| `outside_opening_window` — the evaluator answered **closed** | blocks | **blocks** (unchanged) |
+| `hours_unknown` — the evaluator answered **nothing** | blocks | **warns**: named per stop, `warnings[]` on the wire, outside `feasible` |
+| `unknown_site` — the stop resolves to no commons record | blocks | **blocks** (unchanged) |
+| budget breaches | block | **block** (unchanged) |
+
+**The `no_timezone` case is advisory too, and that was decided rather than inherited.** When
+`area.timezone IS NULL` every stop on the day yields `hours_unknown` / `no_timezone` — one
+systemic gap rather than N independent unknowns, and it is *our* data that is missing, so the
+traveller cannot resolve it at all. It is therefore the strongest candidate for an exception,
+and it does not get one: it is the purest case of "we do not know"; blocking would reinstate
+the defect this amendment removes for a whole class of areas at once, handing the user an
+unapprovable day with no available fix; and expressing the exception would need either a sixth
+`ViolationCode` (a contract change — the web renders an affordance per kind) or a per-instance
+severity flag, which the implementation deliberately makes inexpressible so that one code
+cannot mean two things at two call sites. What makes that affordable is that `POST /areas` now
+persists the frame, so a `NULL` frame is a **legacy row rather than a live bug** — rare, and
+repaired by re-resolving the area rather than by refusing the day. Pinned by
+`tests/test_feasibility.py::test_an_area_with_no_local_frame_yields_hours_unknown_never_a_default_clock`,
+whose docstring says it is a decision.
+
+**Rows written before this amendment fail closed.** `user_plan.violations` entries from before
+the split are bare strings with no severity, and they are read back as **all blocking**: a
+legacy row cannot be asked what the checker meant, so it stays unapprovable until the next
+proposal re-checks it, rather than having its old unknowns silently promoted into an approvable
+day. The amendment un-blocks days judged under the new rule; it does not retroactively re-judge
+days judged under the old one.
+
+**The original posture was right for *evaluation* and wrong for *approval*.** The three
+fail-closed routes above (§"The honest scope statement", A1, A2, A8, A11) are all about what
+`commons/opening_hours.py` may *conclude*, and every one of them stands: the evaluator still
+refuses to guess, `hours_unknown` is still a first-class third outcome, `auto_country`/
+`auto_timezone` are still pinned off, and nothing is ever defaulted to open. **`commons/
+opening_hours.py` does not change under this amendment.** What changed is what
+`planner/feasibility.py` *does* with an honest "I don't know" — and turning a refusal to guess
+into a refusal to travel was a decision the evaluator never made and should not have implied.
+
+**The accepted cost, stated plainly: a traveller can now approve a day containing places that
+may be shut.** That is a real regression in protection and it is bought deliberately, because
+the alternative is a product nobody can use. It is also why the warning must be **visible per
+stop** rather than aggregated into one line — "some opening hours are unknown" tells a
+traveller nothing they can act on; "stop 3's hours could not be checked" tells them which door
+to phone ahead about. `planner/feasibility.py` keeps one `Violation` per stop with its own
+`stop_order`, the API carries them as `warnings[]`, and `web/src/plan/render.ts` renders them
+one row each under their own heading — never folded into the violations list, never counted
+into the "N conflicts to resolve" line, and never disabling approve.
+
+**Confirmation owed (delivered with this amendment):**
+
+- `tests/test_feasibility.py::test_a_stop_we_know_is_shut_blocks_and_a_stop_we_cannot_check_does_not`
+  — both halves in one test over two otherwise identical days, so swapping the severities fails
+  it twice.
+- `tests/test_api_plans.py::test_a_day_whose_only_problem_is_unknown_hours_can_be_approved`
+  (`200`, over real PostGIS) and
+  `::test_a_warning_survives_the_round_trip_as_a_warning_and_never_as_a_violation` — the
+  persistence half: `user_plan.violations` is `jsonb` and now holds severity-stamped entries, so
+  **no migration is required**, and a reloaded plan must not report `ok=true` beside a list
+  headed "violations".
+- `web/test/plan.test.ts` — warnings render distinctly and approve stays wired.
+
+**One owed confirmation below is withdrawn by this amendment.** The Confirmation section asks
+`evals/test_structural.py` for "no itinerary is approvable with an unresolved hours conflict".
+That assertion is now **false by design** and must not be written; it was never implemented, so
+nothing is being deleted. Its replacement is the pair above: a *closed* stop blocks, an
+*unknown* one warns — which is the property that was actually worth guarding.
+
+**What this does not touch.** `approve_plan`'s predicate still includes `feasible IS TRUE` and
+the post-approval `CHECK` still makes an infeasible approval impossible in the database. The
+gate is exactly as strong; the definition of *feasible* is what moved.
 
 ### Consequences
 

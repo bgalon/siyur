@@ -295,6 +295,13 @@ class PlanStore(Protocol):
     holding the proposal in memory until the check finished — and the pause is durable
     precisely so it survives the process (SC-003).
 
+    ``record_feasibility`` takes the two severities as **two arguments** rather than one list
+    with a flag per entry: the split is already made by
+    :class:`~planner.feasibility.Violation` before it gets here, and passing it as structure
+    means a store implementation cannot file a warning as a violation by mis-reading a field.
+    ``warnings`` has no default for the same reason — a store that silently dropped them would
+    still satisfy the protocol, and the row would then contradict the frame the client saw.
+
     ``commons.repository.create_plan`` / ``record_feasibility`` are the implementations;
     the API adapts them by binding the session and the auth subject, which is also where the
     transaction boundary stays (the repository flushes, it does not commit).
@@ -303,7 +310,12 @@ class PlanStore(Protocol):
     def create(self, itinerary: ItineraryV1) -> PlanRow: ...
 
     def record_feasibility(
-        self, plan_id: UUID, *, feasible: bool, violations: Sequence[str]
+        self,
+        plan_id: UUID,
+        *,
+        feasible: bool,
+        violations: Sequence[str],
+        warnings: Sequence[str],
     ) -> PlanRow | None: ...
 
 
@@ -451,13 +463,34 @@ def run_plan(
     # The verdict is *returned*, never attached: `ItineraryV1` is `extra="forbid"` and
     # ADR-0025 ruling 3 puts `feasible` + `violations` on the row. This is the one place
     # that carries it from the checker to the row.
-    violations = verdict.messages if itinerary.stops else (EMPTY_DAY_VIOLATION, *verdict.messages)
-    recorded = store.record_feasibility(created.id, feasible=not violations, violations=violations)
+    #
+    # The two severities stay apart the whole way down (ADR-0022 as amended 2026-08-14):
+    # `violations` is what `feasible` is computed from and what the approval gate reads;
+    # `warnings` travels beside it and changes nothing about approvability. The empty-day
+    # refusal joins the *blocking* list, because "there is no day here" is not an advisory.
+    #
+    # `feasible` is written as `not violations` rather than as `verdict.ok`, and the two are
+    # deliberately not the same expression: `verdict.ok` cannot see the empty-day refusal,
+    # which is not a `Violation` at all. Deriving the flag from the very list being stored
+    # makes "the row says feasible" and "the row's blocking list is empty" one fact rather
+    # than two that could disagree — for a day with stops it is exactly `verdict.ok`.
+    violations = (
+        verdict.violation_messages
+        if itinerary.stops
+        else (EMPTY_DAY_VIOLATION, *verdict.violation_messages)
+    )
+    warnings = verdict.warning_messages
+    recorded = store.record_feasibility(
+        created.id, feasible=not violations, violations=violations, warnings=warnings
+    )
     if recorded is None:
         raise PlanNotRecorded(
             f"the feasibility verdict for plan {created.id} matched no row: the plan was "
             "superseded, approved or removed while it was being checked"
         )
 
-    yield Event("feasibility", {"ok": not violations, "violations": list(violations)})
+    yield Event(
+        "feasibility",
+        {"ok": not violations, "violations": list(violations), "warnings": list(warnings)},
+    )
     yield Event("done", {"plan_id": str(recorded.id), "state": recorded.status})

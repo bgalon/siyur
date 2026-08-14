@@ -378,8 +378,17 @@ class UserPlan(Base):
     #: :meth:`~commons.models.ItineraryV1.canonical_sha256`, never a second canonicaliser.
     itinerary_hash: Mapped[str] = mapped_column(Text, nullable=False)
     feasible: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    #: The **named** violations of FR-005; a JSON array of strings.
-    violations: Mapped[list[str]] = mapped_column(
+    #: Everything the feasibility check found, **severity stamped** — a JSON array of
+    #: ``{"message": str, "blocking": bool}``. The blocking entries are the named violations
+    #: of FR-005 and are what ``feasible`` is computed from; the advisory ones reach the wire
+    #: as ``warnings[]`` (ADR-0022 A12). One column, because ``jsonb`` holds the objects
+    #: without a schema change; the **name** stays ``violations`` precisely because renaming
+    #: it would need an ``ask``-gated migration for no behavioural gain.
+    #:
+    #: Rows written before A12 hold **bare strings** and are read back as all-blocking.
+    #: :func:`commons.repository._split_verdict` owns both shapes — never index into this
+    #: column expecting one of them.
+    violations: Mapped[list[dict[str, Any]]] = mapped_column(
         JSONB, nullable=False, server_default=text("'[]'::jsonb"), default=list
     )
     #: UTC; set **only** when feasibility runs — never from ``updated_at``, which bumps on

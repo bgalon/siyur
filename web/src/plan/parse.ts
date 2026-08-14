@@ -8,7 +8,11 @@
  *    `ok:false, readable:false` — never `ok:true` by omission and never "no violations,
  *    so fine". A verdict that says `ok:true` while *naming* violations contradicts
  *    itself and is read as not-ok, with the violations kept. Approval is gated on this
- *    value, and the only safe direction for a gate to fail is shut.
+ *    value, and the only safe direction for a gate to fail is shut. **`warnings` are
+ *    outside that rule entirely**: `ok:true` beside a full `warnings[]` is the contract's
+ *    normal answer (ADR-0022, amended 2026-08-14), so folding them into the same check
+ *    would re-block every day the amendment exists to unblock. A server that has not been
+ *    updated simply sends no `warnings`, which reads as `[]` and changes nothing.
  * 2. **An unknown `approval.state` stays unknown.** The seven states are a closed set;
  *    an eighth is narrowed to `null` and reported as unrecognised, rather than mapped
  *    onto whichever known state looks closest.
@@ -93,15 +97,21 @@ export function sanitisePlanStatus(raw: unknown): PlanStatusFrame | null {
  * what is wrong, and the server would then answer `409` anyway. Believing `violations`
  * costs a user a re-plan. Nothing is discarded: both fields are kept, so the panel still
  * shows the server's own words.
+ *
+ * **`warnings` take no part in that rule and never touch `ok`.** They are read with the
+ * same filter and kept in their own list; an absent `warnings` is `[]`, which is what an
+ * older server sends and is indistinguishable from a day with nothing to warn about —
+ * correctly, since neither is a reason to refuse anything.
  */
 export function sanitiseFeasibility(raw: unknown): Feasibility {
   const body = isRecord(raw) ? raw : {}
-  const violations = Array.isArray(body.violations)
-    ? body.violations.filter((v): v is string => str(v) !== null)
-    : []
+  const strings = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter((entry): entry is string => str(entry) !== null) : []
+  const violations = strings(body.violations)
   return {
     ok: body.ok === true && violations.length === 0,
     violations,
+    warnings: strings(body.warnings),
     checked_at: str(body.checked_at),
     // Keyed to `ok`, the one field the contract always sends.
     readable: typeof body.ok === 'boolean',
