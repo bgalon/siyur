@@ -23,8 +23,9 @@ import json
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
@@ -36,6 +37,7 @@ from geoalchemy2.shape import from_shape
 from shapely.geometry import box, mapping
 from shapely.geometry.base import BaseGeometry
 from sqlalchemy import Engine, create_engine, select
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Session, sessionmaker
 
 from api.app import create_app
@@ -43,7 +45,7 @@ from api.config import Settings
 from commons.db import SRID, Area
 from commons.merge import merge_records
 from commons.models import SourceRef
-from commons.repository import sites_within, upsert_sites
+from commons.repository import LIST_LIMIT_MAX, list_areas, sites_within, upsert_sites
 from planner.nodes.resolve_area import AreaCandidate
 from tests.test_planner_research import OVERPASS_JSON, osm, overture
 
@@ -162,6 +164,32 @@ def record_research(session: Session, polygon: BaseGeometry, sub: str = "google-
     session.commit()
 
 
+class ListRecordingSession:
+    """A stand-in ``Session`` that records the ``SELECT`` a list read emits and returns none.
+
+    The list endpoints' privacy boundary is a ``WHERE`` clause, and a ``WHERE`` clause is not
+    observable in a response: a read that fetched every row and filtered them in Python would
+    answer ``{"areas": []}`` for a second user *and would have read the first user's rows on
+    the way*. `test_hitl_gate.py::test_every_plan_statement_filters_on_user_id` makes the same
+    argument about the gate's transitions; this is that harness, shaped for a read that ends
+    in ``.all()``.
+
+    Shared with `test_api_plans.py` — one recorder, so both list reads are asserted the same
+    way rather than each growing its own almost-identical double.
+    """
+
+    def __init__(self) -> None:
+        self.statements: list[Any] = []
+
+    def execute(self, statement: Any, *args: Any, **kwargs: Any) -> Any:
+        self.statements.append(statement)
+        return SimpleNamespace(all=lambda: [])
+
+    def compiled(self, index: int = 0) -> Any:
+        """The compiled statement — ``str()`` for the text, ``.params`` for bound values."""
+        return self.statements[index].compile(dialect=postgresql.dialect())  # type: ignore[no-untyped-call]
+
+
 @dataclass
 class FakeLookup:
     """A :class:`DivisionsLookup` / :class:`Geocoder` double — offline, deterministic."""
@@ -196,6 +224,56 @@ def test_post_areas_is_401_unauthenticated() -> None:
 def test_research_is_401_unauthenticated() -> None:
     response = TestClient(build_app()).post(f"/areas/{uuid4()}/research", json={})
     assert response.status_code == 401
+
+
+def test_get_areas_is_401_unauthenticated() -> None:
+    """The list is personal data, so it is behind the same door as the write path."""
+    assert TestClient(build_app()).get("/areas").status_code == 401
+
+
+def test_the_area_list_query_is_scoped_to_the_caller_and_bounded() -> None:
+    """PRD §13 #4 asserted on the **SQL**, because a response cannot show a missing ``WHERE``.
+
+    A list read is where an unscoped query stops being one leaked row and becomes the table:
+    an implementation that selected every area and filtered in Python would return the same
+    ``[]`` for a second user that a correct one does, having read everyone's rows to get
+    there. So the scope is checked where it lives — and so is the ``LIMIT``, since an
+    unbounded list is the other failure this read is not allowed to have.
+    """
+    session = ListRecordingSession()
+    assert list_areas(session, created_by="google-sub-a") == ()  # type: ignore[arg-type]
+
+    assert len(session.statements) == 1, "a list read that emits no SQL asserts nothing"
+    compiled = session.compiled()
+    assert "area.created_by = " in str(compiled), str(compiled)
+    assert compiled.params["created_by_1"] == "google-sub-a", compiled.params
+    assert "LIMIT" in str(compiled), str(compiled)
+    assert "ORDER BY area.created_at DESC" in str(compiled), str(compiled)
+    # The ring itself is never transferred: PostGIS returns four ordinates. A selected
+    # geometry column compiles to `ST_AsEWKB(area.polygon)`, so its absence is the check —
+    # `area.polygon` alone appears inside the `ST_XMin(...)` calls and proves nothing.
+    assert "ST_AsEWKB" not in str(compiled), str(compiled)
+    assert "ST_XMin(area.polygon)" in str(compiled), str(compiled)
+
+
+def test_the_area_list_limit_is_capped_at_the_request_boundary() -> None:
+    """Out of range is a ``422``, never a silently different page than the one asked for."""
+    client = signed_in_client(build_app())
+    assert client.get("/areas", params={"limit": 0}).status_code == 422
+    assert client.get("/areas", params={"limit": -1}).status_code == 422
+    assert client.get("/areas", params={"limit": LIST_LIMIT_MAX + 1}).status_code == 422
+    assert client.get("/areas", params={"limit": "all"}).status_code == 422
+
+
+def test_a_limit_inside_the_range_reaches_storage() -> None:
+    """The control for the ``422``s above: an in-range limit is *not* refused at the boundary.
+
+    It goes on to fail against the dead engine, which is what proves the refusals are the
+    limit rule rather than the request being rejected wholesale.
+    """
+    client = signed_in_client(build_app())
+    with pytest.raises(Exception, match="(?i)connect|operational"):
+        client.get("/areas", params={"limit": LIST_LIMIT_MAX})
 
 
 def test_no_delimitation_at_all_is_422() -> None:
@@ -420,6 +498,113 @@ def test_a_completed_research_pass_is_what_makes_an_area_covered(
     second = client.post("/areas", json={"bbox": NOWHERE_BBOX}).json()
     assert second["coverage"]["known_site_count"] == 0, "the empty area really is empty"
     assert (second["coverage"]["covered"], second["coverage"]["refresh_available"]) == (True, True)
+
+
+# ── Tier 2: GET /areas — the app remembers where you asked about ─────────────
+
+
+def seed_areas(session: Session, sub: str, count: int, *, name: str | None = None) -> list[UUID]:
+    """``count`` areas for ``sub`` with **explicitly staggered** ``created_at``, oldest first.
+
+    Stated rather than left to the insert clock: "newest first" is only testable against an
+    order the test itself fixed, and two rows written in one transaction can land in the same
+    microsecond.
+    """
+    base = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
+    written: list[UUID] = []
+    for index in range(count):
+        area = Area(
+            polygon=from_shape(box(28.0 + index, 36.0, 28.5 + index, 36.5), srid=SRID),
+            name=None if name is None else f"{name} {index}",
+            created_by=sub,
+            created_at=base + timedelta(minutes=index),
+        )
+        session.add(area)
+        session.flush()
+        written.append(area.id)
+    session.commit()
+    return written
+
+
+@integration
+def test_the_area_list_is_the_callers_own_newest_first(app: FastAPI, db_session: Session) -> None:
+    """Phase A: an ``area_id`` that only exists in one response is an area you cannot revisit."""
+    oldest, middle, newest = seed_areas(db_session, "google-sub-a", 3, name="Somewhere")
+
+    body = signed_in_client(app).get("/areas").json()
+
+    assert [UUID(entry["area_id"]) for entry in body["areas"]] == [newest, middle, oldest]
+    first = body["areas"][0]
+    assert first["name"] == "Somewhere 2"
+    # lon first, and the bbox is the row's own extent — computed by PostGIS, not by the client.
+    assert first["bbox"] == [
+        pytest.approx(30.0),
+        pytest.approx(36.0),
+        pytest.approx(30.5),
+        pytest.approx(36.5),
+    ]
+    assert datetime.fromisoformat(first["created_at"]).tzinfo is not None
+    assert first["researched_at"] is None, "delimited, never researched"
+    assert set(first) == {"area_id", "name", "bbox", "created_at", "researched_at"}
+
+
+@integration
+def test_an_area_the_list_names_can_be_opened_and_researched(
+    app: FastAPI, db_session: Session
+) -> None:
+    """The journey the list exists for: come back, find the area, use its id — and see it move.
+
+    ``researched_at`` is the field that distinguishes an abandoned delimitation from one with
+    a commons behind it, so it is asserted **after** a real pass rather than only as a null.
+    """
+    client = signed_in_client(app)
+    area_id = client.post("/areas", json={"bbox": NOWHERE_BBOX}).json()["area_id"]
+
+    listed = client.get("/areas").json()["areas"]
+    assert [entry["area_id"] for entry in listed] == [area_id]
+    assert listed[0]["researched_at"] is None
+
+    assert client.post(f"/areas/{area_id}/research", json={}).status_code == 200
+
+    after = client.get("/areas").json()["areas"][0]
+    assert after["researched_at"] is not None, "a committed pass shows up in the list"
+
+
+@integration
+def test_a_second_user_never_sees_the_first_users_areas(app: FastAPI, db_session: Session) -> None:
+    """The privacy boundary, over the wire — and the list must be *empty*, not merely a 404.
+
+    Paired with ``test_the_area_list_query_is_scoped_to_the_caller_and_bounded``, which
+    asserts the filter is in the ``WHERE`` rather than applied after the read.
+    """
+    seed_areas(db_session, "google-sub-a", 2)
+    mine = seed_areas(db_session, "google-sub-intruder", 1)
+
+    intruder = signed_in_client(app, sub="google-sub-intruder")
+    body = intruder.get("/areas").json()
+
+    assert [UUID(entry["area_id"]) for entry in body["areas"]] == mine
+
+
+@integration
+def test_a_user_with_no_areas_gets_an_empty_list_and_a_200(app: FastAPI) -> None:
+    """Empty is a success. A ``404`` here would make a first run indistinguishable from a fault."""
+    response = signed_in_client(app).get("/areas")
+    assert response.status_code == 200
+    assert response.json() == {"areas": []}
+
+
+@integration
+def test_the_area_list_returns_at_most_the_limit_and_takes_the_newest(
+    app: FastAPI, db_session: Session
+) -> None:
+    ids = seed_areas(db_session, "google-sub-a", 4)
+    client = signed_in_client(app)
+
+    listed = client.get("/areas", params={"limit": 2}).json()["areas"]
+
+    assert [UUID(entry["area_id"]) for entry in listed] == list(reversed(ids))[:2]
+    assert len(client.get("/areas").json()["areas"]) == 4, "the default is not the cap"
 
 
 @integration
