@@ -42,10 +42,10 @@ import logging
 import threading
 from collections.abc import Iterator, Mapping, Sequence
 from datetime import UTC, date, datetime
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from geoalchemy2.shape import from_shape, to_shape
 from pydantic import BaseModel, ConfigDict
@@ -66,7 +66,16 @@ from api.deps import (
 from api.security import CurrentUser
 from commons.db import Area
 from commons.merge import MergeResult
-from commons.repository import Coverage, UpsertReport, coverage, upsert_sites
+from commons.repository import (
+    LIST_LIMIT_DEFAULT,
+    LIST_LIMIT_MAX,
+    AreaSummary,
+    Coverage,
+    UpsertReport,
+    coverage,
+    list_areas,
+    upsert_sites,
+)
 from planner.nodes.resolve_area import (
     AreaCandidate,
     AreaInvalid,
@@ -76,7 +85,15 @@ from planner.nodes.resolve_area import (
 )
 from planner.pipeline import Event, run_research
 
-__all__ = ["AreaRequestBody", "AreaResponse", "CoverageResponse", "ResearchRequestBody", "router"]
+__all__ = [
+    "AreaListResponse",
+    "AreaRequestBody",
+    "AreaResponse",
+    "AreaSummaryBody",
+    "CoverageResponse",
+    "ResearchRequestBody",
+    "router",
+]
 
 _log = logging.getLogger(__name__)
 
@@ -130,6 +147,39 @@ class AreaResponse(BaseModel):
     #: The **resolved** geometry as GeoJSON, EPSG:4326.
     polygon: dict[str, Any]
     coverage: CoverageResponse
+
+
+class AreaSummaryBody(BaseModel):
+    """One entry of ``GET /areas`` — the bbox, never the resolved ring.
+
+    A division polygon runs to tens of thousands of vertices (:func:`_candidate` drops one for
+    the same reason), and a client that wants to go back to an area needs somewhere to fly the
+    map, not the geometry. ``POST /areas`` still returns the polygon it resolved.
+
+    **``known_site_count`` is deliberately absent.** Coverage is a PostGIS count per polygon,
+    so putting it here turns one list into N spatial queries; it stays on ``POST /areas``,
+    which computes it once for the area actually being opened.
+    """
+
+    area_id: UUID
+    #: The free-text name the user asked for; ``None`` when they drew a ring or sent a bbox.
+    name: str | None
+    #: ``[minLon, minLat, maxLon, maxLat]``, EPSG:4326 — **lon first**, computed by PostGIS.
+    bbox: tuple[float, float, float, float]
+    created_at: datetime
+    #: When a research pass over this area last committed; ``None`` = delimited, never
+    #: researched. This is the field that distinguishes "an area I made and abandoned" from
+    #: "an area with a commons behind it", which is the whole reason the list is worth having.
+    researched_at: datetime | None
+
+
+class AreaListResponse(BaseModel):
+    """``GET /areas`` ``200`` — newest first; an account with no areas is ``{"areas": []}``.
+
+    Empty is a success, not a ``404``. See :class:`api.plans.PlanListResponse`.
+    """
+
+    areas: list[AreaSummaryBody]
 
 
 class ResearchRequestBody(BaseModel):
@@ -307,6 +357,37 @@ def _research_frames(
 
 
 # ── endpoints ─────────────────────────────────────────────────────────────────────
+
+
+#: ``?limit=`` — mirrors `api/plans.py`'s, deliberately the same range on both list reads.
+LimitQuery = Annotated[int, Query(ge=1, le=LIST_LIMIT_MAX)]
+
+
+def _summary(area: AreaSummary) -> AreaSummaryBody:
+    return AreaSummaryBody(
+        area_id=area.id,
+        name=area.name,
+        bbox=area.bbox,
+        created_at=area.created_at,
+        researched_at=area.researched_at,
+    )
+
+
+@router.get("", response_model=AreaListResponse, summary="The caller's areas, newest first")
+def list_the_callers_areas(
+    user: CurrentUser, session: SessionDep, limit: LimitQuery = LIST_LIMIT_DEFAULT
+) -> AreaListResponse:
+    """The areas this subject has delimited, most recent first.
+
+    Areas are personal (see this module's docstring point 1) — *where I asked about* is not
+    commons data — so the read is scoped to ``created_by`` in
+    :func:`~commons.repository.list_areas`' ``WHERE``, exactly like :func:`_load_area`. It
+    exists so an area can be revisited without re-delimiting it, which today is the only way
+    back: the ``area_id`` lives in the ``POST /areas`` response and nowhere else.
+    """
+    return AreaListResponse(
+        areas=[_summary(area) for area in list_areas(session, created_by=user.sub, limit=limit)]
+    )
 
 
 @router.post("", response_model=AreaResponse, summary="Delimit, resolve and check coverage")

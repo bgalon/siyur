@@ -82,7 +82,7 @@ from uuid import UUID, uuid4
 from geoalchemy2 import Geography
 from pydantic import ValidationError
 from shapely.geometry.base import BaseGeometry
-from sqlalchemy import ColumnElement, Row, Select, func, insert, select, update
+from sqlalchemy import ColumnElement, Row, Select, case, func, insert, select, update
 from sqlalchemy import cast as sql_cast
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
@@ -116,13 +116,17 @@ from commons.models import ItineraryV1, SiteRecordV1, SourceRef
 __all__ = [
     "COVERED_FRACTION",
     "EDITABLE_STATUSES",
+    "LIST_LIMIT_DEFAULT",
+    "LIST_LIMIT_MAX",
     "STALE_COMPILE_TIMEOUT",
     "ApprovalOutcome",
+    "AreaSummary",
     "Coverage",
     "CommonsWriteRefused",
     "PlanApproved",
     "PlanRecord",
     "PlanRefused",
+    "PlanSummary",
     "RefusalReason",
     "UpsertReport",
     "approve_plan",
@@ -131,6 +135,8 @@ __all__ = [
     "coverage",
     "create_plan",
     "finish_compile",
+    "list_areas",
+    "list_plans",
     "load_plan",
     "load_site",
     "reap_stale_compiles",
@@ -561,6 +567,102 @@ def attribution_for(sites: Iterable[SiteRecordV1]) -> tuple[str, ...]:
     )
 
 
+# ── the caller's own rows: the two list reads (`GET /areas`, `GET /plans`) ─────────
+#
+# Both are **per-user** and both are **bounded**. The scope is the PRD §13 #4 boundary and
+# needs no further defence; the bound is the less obvious half, so it is stated here: a list
+# read whose result set grows with the account is a query that works for every account that
+# exists today and for none of the ones that will. :data:`LIST_LIMIT_MAX` is applied to the
+# SQL rather than left to the caller, so "unbounded" is unreachable from any call site
+# regardless of what the request boundary validated.
+
+#: Rows a list read returns when the caller does not say. Small enough to render on a phone
+#: without paging, which is the surface these two exist for.
+LIST_LIMIT_DEFAULT: Final[int] = 50
+
+#: The hard cap. Above this a list is not a list, it is an export — and the read a client
+#: would actually want then is a keyset cursor over ``(created_at, id)``, which the total
+#: ordering below already makes possible. Until that exists the cap is what stops one
+#: request from streaming an account's entire history into a phone.
+LIST_LIMIT_MAX: Final[int] = 200
+
+
+def _bounded(limit: int) -> int:
+    """``limit`` clamped into ``1…LIST_LIMIT_MAX``.
+
+    Clamped rather than refused: the request boundary validates the range and answers ``422``
+    (`api/plans.py`, `api/areas.py`), so by the time a value reaches here it is either already
+    in range or came from a non-HTTP caller for whom raising would be the less useful answer.
+    Either way the query is bounded, which is the property this module owes.
+    """
+    return max(1, min(limit, LIST_LIMIT_MAX))
+
+
+@dataclass(frozen=True, slots=True)
+class AreaSummary:
+    """One ``area`` row as a list entry — deliberately **without its polygon**.
+
+    A resolved division polygon runs to tens of thousands of vertices
+    (`api/areas.py::_candidate` says so for the same reason), so fifty of them is a
+    multi-megabyte response to answer "which areas have I delimited". The bbox is computed by
+    PostGIS (:func:`list_areas`) and is what a client needs to fly the map back there;
+    ``POST /areas`` remains the way to get the geometry itself.
+    """
+
+    id: UUID
+    #: The free-text name the user asked for, when they asked by name; ``None`` otherwise.
+    name: str | None
+    #: ``(minLon, minLat, maxLon, maxLat)``, EPSG:4326 — **lon first** (`docs/data/area.md`).
+    bbox: tuple[float, float, float, float]
+    created_at: datetime
+    #: When a research pass over this area last **committed**; ``None`` = delimited only.
+    researched_at: datetime | None
+
+
+def list_areas(
+    session: Session, *, created_by: str, limit: int = LIST_LIMIT_DEFAULT
+) -> tuple[AreaSummary, ...]:
+    """The caller's areas, newest first — the ``GET /areas`` read.
+
+    ``created_by`` is a required keyword for the same reason every ``user_plan`` read takes
+    one: there is no unscoped variant to reach for, so a list endpoint cannot be written that
+    enumerates another subject's delimitations.
+
+    The bbox is four ``ST_*Min``/``ST_*Max`` calls **in the database**, never
+    ``to_shape(row.polygon).bounds`` in Python: the point of a summary is not to transfer the
+    geometry, and shipping every ring back to compute four floats from it would undo that.
+
+    Ordered ``created_at DESC, id DESC``. The tiebreak is not decoration — it makes the order
+    *total*, so two rows written in the same transaction cannot swap places between requests,
+    and a keyset cursor over the same pair stays available when this needs to page.
+    """
+    rows = session.execute(
+        select(
+            Area.id,
+            Area.name,
+            func.ST_XMin(Area.polygon).label("min_lon"),
+            func.ST_YMin(Area.polygon).label("min_lat"),
+            func.ST_XMax(Area.polygon).label("max_lon"),
+            func.ST_YMax(Area.polygon).label("max_lat"),
+            Area.created_at,
+            Area.researched_at,
+        )
+        .where(Area.created_by == created_by)
+        .order_by(Area.created_at.desc(), Area.id.desc())
+        .limit(_bounded(limit))
+    ).all()
+    return tuple(
+        AreaSummary(
+            id=row.id,
+            name=row.name,
+            bbox=(row.min_lon, row.min_lat, row.max_lon, row.max_lat),
+            created_at=_utc_required(row.created_at),
+            researched_at=_utc(row.researched_at),
+        )
+        for row in rows
+    )
+
+
 # ── the HITL gate (T022 · ADR-0023 · data-model §6) ────────────────────────────────
 #
 # A different table and a different posture from everything above: `user_plan` is personal
@@ -679,6 +781,11 @@ ApprovalOutcome = PlanApproved | PlanRefused
 def _utc(value: datetime | None) -> datetime | None:
     """Normalise a ``timestamptz`` read back into UTC, so callers never compare offsets."""
     return None if value is None else value.astimezone(UTC)
+
+
+def _utc_required(value: datetime) -> datetime:
+    """:func:`_utc` for a ``NOT NULL`` column — same normalisation, no ``None`` in the type."""
+    return value.astimezone(UTC)
 
 
 def _verdict_entries(violations: Sequence[str], warnings: Sequence[str]) -> list[dict[str, Any]]:
@@ -815,6 +922,101 @@ def load_plan(session: Session, plan_id: UUID, *, user_id: str) -> PlanRecord | 
             error,
         )
         return None
+
+
+@dataclass(frozen=True, slots=True)
+class PlanSummary:
+    """One ``user_plan`` row as a list entry — **without the itinerary**.
+
+    The sibling of :class:`AreaSummary`, and omitted for the same reason: an ``ItineraryV1``
+    carries every stop's :class:`~commons.models.SourcedValue` with its stamp, so fifty of
+    them is a large response and fifty pydantic validations to answer "what have I planned".
+    The two derived fields a list actually needs — the day and how many stops are in it — are
+    read out of the ``jsonb`` **in the database** instead (:func:`list_plans`).
+    """
+
+    id: UUID
+    area_id: UUID
+    #: ``ItineraryV1.date`` — the calendar day planned for, in the area's local frame.
+    #: ``None`` only when the stored blob's ``date`` is missing or unparseable, which no
+    #: write path here can produce; see :func:`list_plans` for why that is not an exception.
+    date: date | None
+    status: PlanStatus
+    feasible: bool
+    stop_count: int
+    created_at: datetime
+    approved_at: datetime | None
+    superseded_by: UUID | None
+
+
+def _stored_day(value: Any) -> date | None:
+    """``itinerary->>'date'`` as a :class:`~datetime.date`; ``None`` when it is not one."""
+    if not isinstance(value, str):
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def list_plans(
+    session: Session, *, user_id: str, limit: int = LIST_LIMIT_DEFAULT
+) -> tuple[PlanSummary, ...]:
+    """The caller's plans, newest first — the ``GET /plans`` read.
+
+    ``user_id`` is a required keyword and lands in the ``WHERE``, exactly as in
+    :func:`load_plan`: this is the endpoint where a missing scope would enumerate every plan
+    on the service at once, so it is the one place the boundary is cheapest to break and
+    dearest to lose.
+
+    **``date`` and ``stop_count`` are computed by Postgres, not by loading the blob.** That is
+    what makes the read a summary rather than a full ``GET /plans/{id}`` per row. Two
+    consequences are handled rather than assumed:
+
+    * ``jsonb_array_length`` raises on a value that is not an array, which would take the
+      *whole list* down over one malformed row — so ``stops`` is type-checked in SQL first and
+      an unreadable one counts ``0``. Same posture as :func:`load_plan` dropping an invalid
+      itinerary: one bad row is never allowed to become a broken page.
+    * an unparseable ``date`` reads back as ``None`` rather than raising, for the same reason.
+      Neither case is reachable from :func:`create_plan` or :func:`supersede_plan`, both of
+      which serialise a validated :class:`~commons.models.ItineraryV1`.
+
+    Ordered ``created_at DESC, id DESC`` — total, for the reasons in :func:`list_areas`.
+    """
+    stops = UserPlan.itinerary["stops"]
+    rows = session.execute(
+        select(
+            UserPlan.id,
+            UserPlan.area_id,
+            UserPlan.itinerary["date"].astext.label("day"),
+            UserPlan.status,
+            UserPlan.feasible,
+            case(
+                (func.jsonb_typeof(stops) == "array", func.jsonb_array_length(stops)),
+                else_=0,
+            ).label("stop_count"),
+            UserPlan.created_at,
+            UserPlan.approved_at,
+            UserPlan.superseded_by,
+        )
+        .where(UserPlan.user_id == user_id)
+        .order_by(UserPlan.created_at.desc(), UserPlan.id.desc())
+        .limit(_bounded(limit))
+    ).all()
+    return tuple(
+        PlanSummary(
+            id=row.id,
+            area_id=row.area_id,
+            date=_stored_day(row.day),
+            status=row.status,
+            feasible=row.feasible,
+            stop_count=row.stop_count,
+            created_at=_utc_required(row.created_at),
+            approved_at=_utc(row.approved_at),
+            superseded_by=row.superseded_by,
+        )
+        for row in rows
+    )
 
 
 def create_plan(session: Session, itinerary: ItineraryV1, *, revision: int = 1) -> PlanRecord:

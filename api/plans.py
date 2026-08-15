@@ -55,7 +55,7 @@ from datetime import datetime, time
 from typing import Annotated, Any, Final
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse, StreamingResponse
 from geoalchemy2.shape import to_shape
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -69,12 +69,16 @@ from api.security import CurrentUser
 from commons.llm import LiteLLMRouter, ModelRouter
 from commons.models import Budgets, ItineraryV1, SiteRecordV1
 from commons.repository import (
+    LIST_LIMIT_DEFAULT,
+    LIST_LIMIT_MAX,
     PlanApproved,
     PlanRecord,
     PlanRefused,
+    PlanSummary,
     approve_plan,
     attribution_for,
     create_plan,
+    list_plans,
     load_plan,
     load_site,
     record_feasibility,
@@ -90,6 +94,8 @@ __all__ = [
     "BudgetsBody",
     "FeasibilityBody",
     "PlanDetailResponse",
+    "PlanListResponse",
+    "PlanSummaryBody",
     "ProposeRequestBody",
     "router",
 ]
@@ -227,6 +233,45 @@ class PlanDetailResponse(BaseModel):
     #: Union across the plan's stops' commons records and its legs' stamps — derived from the
     #: stamps, never composed here (`contracts/sites.md`'s rule, applied to a plan).
     attribution: list[str]
+
+
+class PlanSummaryBody(BaseModel):
+    """One entry of ``GET /plans`` — enough to choose a plan, never the plan itself.
+
+    The itinerary is deliberately absent: a list is how a traveller *finds* a day, and
+    ``GET /plans/{plan_id}`` is how they read it. Shipping every ``ItineraryV1`` here would
+    make the cheapest screen in the app the most expensive response it serves — and would put
+    every stop's commons-derived value on a surface that renders no attribution (ADR-0019:
+    attribution is co-present with its value), which is a licence problem and not only a size
+    one. ``stop_count`` is the one derived number a chooser needs, and it carries no
+    commons-derived text.
+    """
+
+    plan_id: UUID
+    area_id: UUID
+    #: ``ItineraryV1.date``. Nullable in the type only — no write path can store a plan
+    #: without one — so a row whose ``jsonb`` has been mangled outside the application still
+    #: lists rather than turning the whole page into a ``500``.
+    date: date_type | None
+    #: ADR-0023's seven states, verbatim; see :class:`ApprovalBody`.
+    state: str
+    feasible: bool
+    stop_count: int
+    created_at: datetime
+    approved_at: datetime | None
+    superseded_by: UUID | None
+
+
+class PlanListResponse(BaseModel):
+    """``GET /plans`` ``200`` — newest first, and **empty is a success**.
+
+    A caller with no plans gets ``{"plans": []}`` and ``200``, never a ``404``: "you have not
+    planned anything yet" is an answer, and making it share a status code with "something
+    broke" is how a first-run screen ends up rendering an error at the one moment the product
+    has to be welcoming.
+    """
+
+    plans: list[PlanSummaryBody]
 
 
 class ApproveResponse(BaseModel):
@@ -523,6 +568,45 @@ def propose_plan(
         _plan_frames(session, body.area_id, first, stream),
         media_type=SSE_MEDIA_TYPE,
         headers=SSE_HEADERS,
+    )
+
+
+#: ``?limit=`` — the range is the request boundary's, so an out-of-range value is a ``422``
+#: rather than a silently clamped page. The clamp still exists one layer down
+#: (:func:`~commons.repository._bounded`), because the query is what must be bounded.
+LimitQuery = Annotated[int, Query(ge=1, le=LIST_LIMIT_MAX)]
+
+
+def _summary(plan: PlanSummary) -> PlanSummaryBody:
+    return PlanSummaryBody(
+        plan_id=plan.id,
+        area_id=plan.area_id,
+        date=plan.date,
+        # Passed through from the row, like `ApprovalBody.state`: no DB→API mapping layer
+        # exists for the seven states and none is introduced here.
+        state=plan.status,
+        feasible=plan.feasible,
+        stop_count=plan.stop_count,
+        created_at=plan.created_at,
+        approved_at=plan.approved_at,
+        superseded_by=plan.superseded_by,
+    )
+
+
+@router.get("", response_model=PlanListResponse, summary="The caller's plans, newest first")
+def list_the_callers_plans(
+    user: CurrentUser, session: SessionDep, limit: LimitQuery = LIST_LIMIT_DEFAULT
+) -> PlanListResponse:
+    """The app's memory: every plan this subject has made, most recent first.
+
+    Without this endpoint a ``plan_id`` exists only in the response that created it, so
+    closing the tab loses the day permanently (`docs/design/usable-m1-plan.md` Phase A). The
+    scope is :func:`~commons.repository.list_plans`' ``WHERE user_id``, not a filter applied
+    to a wider read — a list is where an unscoped query stops being one leaked row and becomes
+    the whole table.
+    """
+    return PlanListResponse(
+        plans=[_summary(plan) for plan in list_plans(session, user_id=user.sub, limit=limit)]
     )
 
 

@@ -44,16 +44,23 @@ from commons.db import SRID, Area, UserPlan
 from commons.merge import merge_records
 from commons.models import ItineraryV1, SiteRecordV1
 from commons.repository import (
+    LIST_LIMIT_MAX,
     RefusalReason,
     _split_verdict,
     claim_plan_for_compile,
     finish_compile,
+    list_plans,
     load_plan,
     supersede_plan,
     upsert_sites,
 )
 from commons.routing import MAX_WALKING_SPEED_KMH, MIN_WALKING_SPEED_KMH
-from tests.test_api_areas import build_app, parse_sse, signed_in_client
+from tests.test_api_areas import (
+    ListRecordingSession,
+    build_app,
+    parse_sse,
+    signed_in_client,
+)
 from tests.test_planner_pipeline import (
     COUNTRY,
     DAY,
@@ -180,8 +187,42 @@ def test_every_plan_endpoint_is_401_unauthenticated() -> None:
     client = TestClient(plan_app())
     plan_id = uuid4()
     assert client.post("/plans", json=propose_body(uuid4())).status_code == 401
+    assert client.get("/plans").status_code == 401
     assert client.get(f"/plans/{plan_id}").status_code == 401
     assert client.post(f"/plans/{plan_id}/approve").status_code == 401
+
+
+def test_the_plan_list_query_is_scoped_to_the_caller_and_bounded() -> None:
+    """PRD §13 #4 asserted on the SQL — the same argument as `test_hitl_gate.py`'s.
+
+    A ``404`` can be produced by a handler that read another subject's row and then compared;
+    an empty list can be produced by a read that fetched **every plan on the service** and
+    filtered in Python. Neither is visible in a response, so the ``WHERE`` is what is checked.
+    """
+    session = ListRecordingSession()
+    assert list_plans(session, user_id="google-sub-a") == ()  # type: ignore[arg-type]
+
+    assert len(session.statements) == 1, "a list read that emits no SQL asserts nothing"
+    compiled = session.compiled()
+    assert "user_plan.user_id = " in str(compiled), str(compiled)
+    assert compiled.params["user_id_1"] == "google-sub-a", compiled.params
+    assert "LIMIT" in str(compiled), str(compiled)
+    assert "ORDER BY user_plan.created_at DESC" in str(compiled), str(compiled)
+    # The itinerary blob is never selected — the two derived fields are computed in Postgres.
+    selected = str(compiled).split("FROM")[0]
+    assert "jsonb_array_length" in selected, selected
+    assert " user_plan.itinerary \n" not in selected, selected
+
+
+def test_the_plan_list_limit_is_capped_at_the_request_boundary(
+    offline_client: TestClient,
+) -> None:
+    """An out-of-range ``limit`` is a ``422``; an in-range one reaches storage (the control)."""
+    assert offline_client.get("/plans", params={"limit": 0}).status_code == 422
+    assert offline_client.get("/plans", params={"limit": LIST_LIMIT_MAX + 1}).status_code == 422
+    assert offline_client.get("/plans", params={"limit": "lots"}).status_code == 422
+    with pytest.raises(Exception, match="(?i)connect|operational"):
+        offline_client.get("/plans", params={"limit": LIST_LIMIT_MAX})
 
 
 @pytest.mark.parametrize(
@@ -410,6 +451,137 @@ def test_a_proposal_already_running_for_the_area_is_409(client: TestClient, area
     stream_plan(client, propose_body(area_id))
     assert _claim(area_id) is True, "the finished proposal never released its claim"
     _release(area_id)
+
+
+# --- GET /plans: the app's memory ----------------------------------------------
+
+
+@integration
+def test_the_list_carries_what_it_takes_to_choose_a_plan_without_the_plan(
+    client: TestClient, proposed: Frames, sites: tuple[SiteRecordV1, ...], area_id: UUID
+) -> None:
+    """Phase A: a plan whose id lives only in the response that made it is unreachable.
+
+    The itinerary is deliberately **not** in this body — a chooser needs the day, the state
+    and how many stops, and every stop's commons-derived value would render here with no
+    attribution beside it (ADR-0019).
+    """
+    (entry,) = client.get("/plans").json()["plans"]
+
+    assert entry["plan_id"] == plan_id_of(proposed)
+    assert UUID(entry["area_id"]) == area_id
+    assert entry["date"] == DAY.isoformat()
+    assert entry["state"] == "proposed", "ADR-0023's states, verbatim"
+    assert entry["feasible"] is True
+    assert entry["stop_count"] == len(sites)
+    assert datetime.fromisoformat(entry["created_at"]).tzinfo is not None
+    assert entry["approved_at"] is None and entry["superseded_by"] is None
+    assert set(entry) == {
+        "plan_id",
+        "area_id",
+        "date",
+        "state",
+        "feasible",
+        "stop_count",
+        "created_at",
+        "approved_at",
+        "superseded_by",
+    }
+
+
+@integration
+def test_the_list_is_newest_first_and_the_stop_count_is_the_rows_own(
+    db_engine: Engine, sites: tuple[SiteRecordV1, ...], area_id: UUID
+) -> None:
+    """Two real proposals of **different lengths**, so the count cannot pass by coincidence.
+
+    The model is pointed at one site for the first day and at all three for the second, which
+    is the only honest way to get two lengths: the count is read off each row's own stored
+    itinerary, so two days of equal length could not tell a per-row count from a constant.
+    """
+    one_stop = signed_in_client(plan_app(engine=db_engine, reply=reply_of(sites[0])))
+    every_stop = signed_in_client(plan_app(engine=db_engine, reply=reply_of(*sites)))
+
+    first = plan_id_of(stream_plan(one_stop, propose_body(area_id)))
+    second = plan_id_of(stream_plan(every_stop, propose_body(area_id)))
+
+    listed = signed_in_client(plan_app(engine=db_engine)).get("/plans").json()["plans"]
+
+    assert [entry["plan_id"] for entry in listed] == [second, first], "newest first"
+    assert [entry["stop_count"] for entry in listed] == [len(sites), 1]
+
+
+@integration
+def test_the_list_reports_the_approval_and_the_supersede_chain(
+    client: TestClient, db_session: Session, proposed: Frames
+) -> None:
+    """The two fields an "edit a plan" surface navigates by, read off the row.
+
+    ``superseded_by`` is what makes a revision chain followable from a list — without it the
+    successor is a second, unexplained entry and the older one looks merely stale.
+    """
+    plan_id = UUID(plan_id_of(proposed))
+    approved_at = client.post(f"/plans/{plan_id}/approve").json()["approved_at"]
+
+    listed = {UUID(entry["plan_id"]): entry for entry in client.get("/plans").json()["plans"]}
+    assert listed[plan_id]["state"] == "approved"
+    assert listed[plan_id]["approved_at"] == approved_at
+
+    prior = load_plan(db_session, plan_id, user_id="google-sub-a")
+    assert prior is not None
+    successor = supersede_plan(
+        db_session,
+        plan_id,
+        user_id="google-sub-a",
+        itinerary=prior.itinerary.model_copy(update={"id": uuid4()}),
+    )
+    assert successor is not None
+    db_session.commit()
+
+    after = {UUID(entry["plan_id"]): entry for entry in client.get("/plans").json()["plans"]}
+    assert after[plan_id]["state"] == "superseded"
+    assert UUID(after[plan_id]["superseded_by"]) == successor.id
+    assert after[plan_id]["approved_at"] == approved_at, "a superseded plan keeps its history"
+    assert after[successor.id]["superseded_by"] is None
+
+
+@integration
+def test_a_second_user_never_sees_the_first_users_plans(
+    app: FastAPI, client: TestClient, proposed: Frames
+) -> None:
+    """The list must be **empty** for the intruder — and empty because of the ``WHERE``.
+
+    The SQL half of this claim is Tier 1
+    (``test_the_plan_list_query_is_scoped_to_the_caller_and_bounded``): a read that fetched
+    every plan and filtered afterwards would satisfy this assertion having already read them.
+    """
+    assert client.get("/plans").json()["plans"], "the owner's plan exists to be leaked"
+
+    intruder = signed_in_client(app, sub="google-sub-intruder")
+    response = intruder.get("/plans")
+
+    assert response.status_code == 200
+    assert response.json() == {"plans": []}
+
+
+@integration
+def test_a_user_with_no_plans_gets_an_empty_list_and_a_200(client: TestClient) -> None:
+    """Empty is a success — the web lane renders a first-run state from exactly this body."""
+    response = client.get("/plans")
+    assert response.status_code == 200
+    assert response.json() == {"plans": []}
+
+
+@integration
+def test_the_plan_list_returns_at_most_the_limit_and_takes_the_newest(
+    client: TestClient, area_id: UUID
+) -> None:
+    ids = [plan_id_of(stream_plan(client, propose_body(area_id))) for _ in range(3)]
+
+    listed = client.get("/plans", params={"limit": 2}).json()["plans"]
+
+    assert [entry["plan_id"] for entry in listed] == list(reversed(ids))[:2]
+    assert len(client.get("/plans").json()["plans"]) == 3, "the default is not the cap"
 
 
 # --- GET /plans/{plan_id} ------------------------------------------------------

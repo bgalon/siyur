@@ -47,6 +47,40 @@ event: done         data: {"plan_id":"7be2…-uuid","state":"proposed"}
 
 **Errors**: `401` unauthenticated · `404` unknown `area_id`, or an area belonging to another user · `422` missing/invalid `budgets` (non-positive `walking_m`/`hours`) or unparseable `day_start` · `409` a proposal is already running for this area (idempotency guard, mirroring `POST /areas/{id}/research`).
 
+## GET /plans — the caller's plans, newest first
+
+Added by **Phase A of `docs/design/usable-m1-plan.md`**, and the reason it exists is worth stating: until it did, a `plan_id` existed only in the `POST /plans` stream that created it. Closing the tab made the day unreachable — the plan row was durable (SC-003) and nothing could find it. Two of the product's four journeys ("tour an existing plan", "edit a plan") are blocked on this before any UI question arises.
+
+**Request**: `GET /plans?limit=50`.
+
+**Response `200`**:
+```jsonc
+{
+  "plans": [
+    {
+      "plan_id": "7be2…-uuid",
+      "area_id": "3a11…-uuid",
+      "date": "2026-09-01",                       // ItineraryV1.date — the day planned for
+      "state": "approved",                        // ADR-0023's seven states, verbatim
+      "feasible": true,
+      "stop_count": 6,
+      "created_at": "2026-08-15T09:12:00+00:00",
+      "approved_at": "2026-08-15T09:14:00+00:00", // null until the gate is passed
+      "superseded_by": "9af0…-uuid"               // null unless an edit replaced this revision
+    }
+  ]
+}
+```
+
+- **`state` is the same closed set as `approval.state` below** — `proposing` | `proposed` | `approved` | `superseded` | `compiling` | `compiled` | `failed`, exposed verbatim with no DB→API mapping layer. One vocabulary for the list and the detail read, for the reason the detail section gives.
+- **Row-scoped to the auth subject** (`WHERE user_id`), and asserted **on the emitted SQL** (`tests/test_api_plans.py`, mirroring `test_hitl_gate.py::test_every_plan_statement_filters_on_user_id`): a list is where a missing scope stops being one leaked row and becomes the whole table, and an implementation that read every plan and filtered in Python would return the same empty list a correct one does — having read them all first.
+- **The itinerary is not in this body.** A list is how a traveller *finds* a day; `GET /plans/{plan_id}` is how they read it. Shipping every `ItineraryV1` here would also put every stop's commons-derived value on a surface that renders no attribution (ADR-0019), which is a licence problem before it is a size one. `stop_count` is the one derived number a chooser needs, and it carries no commons text. It and `date` are computed **in Postgres** from the `jsonb`, so the blob is never transferred; a row whose `stops` is not an array counts `0` rather than taking the whole page down, on `load_plan`'s never-a-half-record rule.
+- **Ordered `created_at DESC, id DESC`** — total, so two rows written in one transaction cannot swap places between requests and a keyset cursor over the same pair stays available when this needs to page.
+- **`limit`** defaults to **50**, capped at **200** (`commons.repository.LIST_LIMIT_DEFAULT` / `LIST_LIMIT_MAX`); outside `1…200` is a `422`. There is deliberately no unbounded variant: the cap is applied to the query as well as validated on the request. **There is no `offset`/cursor yet** — an account with more than 200 plans cannot reach the oldest ones from this endpoint, which is a stated limit rather than an oversight, and the ordering above is what a cursor will key on.
+- **Empty is a success**: `200` `{"plans": []}`, never a `404`. The web lane renders a first-run state from exactly this body, and "you have not planned anything" must not share a status code with "something broke".
+- **Timestamps are offset-bearing ISO-8601 in UTC** (`…+00:00`, pydantic's rendering) — the same spelling `approved_at` already has on `GET /plans/{plan_id}` and `POST /plans/{id}/approve`, not a `Z` suffix. Deviating here would make two endpoints disagree about one column.
+- **Errors**: `401` unauthenticated · `422` a `limit` outside the range.
+
 ## GET /plans/{plan_id} — the plan and its approval state
 
 **Response `200`**:
@@ -87,6 +121,7 @@ Empty body. Transitions `proposed → approved`, the only transition that unlock
 - A proposal within budget streams `feasibility.ok=true`; one over budget streams the named violation and its `approve` returns `409` (`tests/test_feasibility.py`).
 - Approve twice ⇒ one `approved_at`, one approval, one compilable plan; the approval survives a process restart (`tests/test_hitl_gate.py`, SC-003).
 - `GET`/`approve` on a plan owned by another subject ⇒ `404`, byte-identical to the unknown-id response.
+- `GET /plans` lists the caller's plans newest-first with `state`/`date`/`stop_count` read off each row; a second subject's list is **empty**, asserted alongside a Tier-1 check that `user_plan.user_id` is in the `WHERE`; an account with no plans gets `200 {"plans": []}`; `limit` is honoured and out-of-range is `422` (`tests/test_api_plans.py`).
 - Every `Stop.site_id` resolves to a commons record and every displayed value carries a `source`; a synthetic unstamped value is refused, not streamed (provenance-completeness eval → SC-004).
 - Trajectory eval: emitted `phase` sequence is a `superset` of `… → curate → propose_itinerary` (mocked model, no API key).
 

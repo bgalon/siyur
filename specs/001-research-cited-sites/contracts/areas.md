@@ -39,6 +39,35 @@ Resolve a user-delimited area to a polygon and report existing commons coverage 
 - **Genericity**: `name`/`bbox`/`polygon` are user input; no place is hardcoded (FR-001). Rhodes is only the demo default.
 - **Errors**: `401` unauthenticated · `422` neither name nor geometry given / invalid geometry · `404` name not resolvable (with disambiguation candidates when Nominatim returns several).
 
+## GET /areas — the caller's own areas, newest first
+
+Added by **Phase A of `docs/design/usable-m1-plan.md`**. Without it an `area_id` exists only in the `POST /areas` response that minted it, so an area cannot be revisited without re-delimiting it — the same "the app has no memory" gap as `GET /plans` (`specs/002-plan-compile-offline/contracts/plans.md`).
+
+**Request**: `GET /areas?limit=50`.
+
+**Response `200`**:
+```jsonc
+{
+  "areas": [
+    {
+      "area_id": "…-uuid",
+      "name": "Rhodes medieval old town",     // the free text asked for; null for a bbox/drawn ring
+      "bbox": [28.216, 36.440, 28.232, 36.451], // [minLon,minLat,maxLon,maxLat] EPSG:4326 — lon first
+      "created_at": "2026-08-15T09:12:00+00:00",
+      "researched_at": "2026-08-15T09:20:00+00:00"  // null = delimited, never researched
+    }
+  ]
+}
+```
+
+- **Scoped to `created_by`** (ADR-0015, PRD §13 #4): another subject's areas are not in the list, and the filter is in the `WHERE` — asserted on the emitted SQL (`tests/test_api_areas.py`), because an empty list is exactly what a read that fetched everything and filtered afterwards would also return.
+- **Ordered `created_at DESC, id DESC`.** The tiebreak makes the order total, so a keyset cursor over the same pair is available when this needs to page.
+- **`bbox`, never the polygon.** A resolved division ring can carry tens of thousands of vertices; the four ordinates come from PostGIS (`ST_XMin`/`ST_YMin`/`ST_XMax`/`ST_YMax`), and `POST /areas` still returns the geometry it resolved.
+- **`known_site_count` is deliberately absent.** Coverage is a PostGIS count per polygon, so including it would make one list N spatial queries. Coverage stays on `POST /areas`, which computes it for the area actually being opened.
+- **`limit`** defaults to **50** and is capped at **200** (`commons.repository.LIST_LIMIT_DEFAULT` / `LIST_LIMIT_MAX`); outside `1…200` is a `422`. The cap is also applied to the query itself, so no call site can produce an unbounded read.
+- **Empty is a success**: a caller with no areas gets `200` `{"areas": []}`, never a `404`. "Nothing here yet" and "something broke" must not share a status code.
+- **Errors**: `401` unauthenticated · `422` a `limit` outside the range.
+
 ## Contract tests (T2 component — over real PostGIS)
 
 - Authenticated `POST /areas` with the Rhodes bbox returns a polygon and `known_site_count` = the `ST_Within` count (fixture-seeded).
@@ -46,3 +75,4 @@ Resolve a user-delimited area to a polygon and report existing commons coverage 
 - `POST` a polygon **much larger than** the researched one ⇒ `covered=false`, `researched_fraction` small, `known_site_count > 0` (the ADR-0018 regression).
 - Unauthenticated ⇒ `401` (backs the auth half of `test_commons_write_shared`, ADR-0008).
 - Invalid/empty geometry ⇒ `422`.
+- `GET /areas` lists the caller's areas newest-first with the row's bbox, and flips `researched_at` from null once a pass commits; a second subject's list is **empty**, asserted alongside a Tier-1 check that `area.created_by` is in the `WHERE`.
