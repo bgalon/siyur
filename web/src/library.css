@@ -1,0 +1,369 @@
+/* "Your plans" (`src/plan/library.ts`) and the area-disambiguation picker
+   (`src/map/areas.ts::buildDisambiguation`), mounted by `main.ts`.
+
+   Its own file rather than more of `plan.css`, for a reason worth stating: the UX audit
+   (2026-08-14) found `plan.css` shipping 11.5–12.5px body text against a spec floor of
+   ≥14px, and 11 of its 12 controls under the 44px tap-target floor. Phase B fixes those.
+   Nothing in *this* file may add to that count, so the two live apart and
+   `test/plan-list.test.ts` scans this file mechanically:
+
+     - every `font-size` here is **≥14px**  (ux-handoff README § Typography: "scale to
+       ≥14px at real 375–430px widths");
+     - every control declares `min-block-size: 44px` — a phone thumb does not aim;
+     - **logical properties only** (`margin-inline-start`, never `margin-left`). RTL is
+       deferred to M2/M3 and is not implemented here, but the audit found zero physical
+       direction properties against 35 logical ones and keeping that record costs nothing;
+     - no fixed inline size that could overflow a 375px viewport, and `overflow-wrap:
+       anywhere` wherever a plan UUID is rendered — a 36-character unbroken token is the
+       one thing on these surfaces that can push a layout sideways.
+
+   Verified at 390 × 844 and 375 × 667 in Chromium, not at desktop. */
+
+/* --- "Your plans" ------------------------------------------------------------
+   A disclosure rather than an always-open list: the plan panel is capped at 40vh on a
+   phone and a reviewed day is the longest thing this app renders, so the list must be
+   able to get out of the way of the plan it just opened. */
+.siyur-library {
+  margin-block-end: 12px;
+  padding-block-end: 10px;
+  border-block-end: 1px solid var(--siyur-border);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.siyur-library__toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  inline-size: 100%;
+  min-block-size: 44px; /* tap-target floor — not decoration */
+  padding-inline: 12px;
+  padding-block: 6px;
+  border: 1px solid var(--siyur-border);
+  border-radius: 10px;
+  background: var(--siyur-paper-deep);
+  color: var(--siyur-ink);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  text-align: start;
+  cursor: pointer;
+}
+
+/* The disclosure arrow is generated, not a character in the label: the label text is
+   asserted verbatim in tests, and a glyph baked into it would make those assertions
+   about typography instead of about the state. */
+.siyur-library__toggle::after {
+  content: '▾';
+  color: var(--siyur-stone);
+  font-size: 14px;
+}
+
+.siyur-library[data-open='true'] .siyur-library__toggle::after {
+  content: '▴';
+}
+
+/* An unloadable list must not look like a quiet one. */
+.siyur-library[data-state='error'] .siyur-library__toggle {
+  border-color: var(--siyur-route);
+  color: var(--siyur-route);
+}
+
+.siyur-library__body {
+  padding-block-start: 8px;
+}
+
+.siyur-library__status {
+  margin-block: 0;
+  color: var(--siyur-ink-soft);
+  font-size: 14px;
+}
+
+.siyur-library__failure {
+  padding-inline: 12px;
+  padding-block: 10px;
+  border-inline-start: 3px solid var(--siyur-route);
+  border-radius: 8px;
+  background: var(--siyur-paper-deep);
+}
+
+.siyur-library__failure-message {
+  margin-block: 0;
+  color: var(--siyur-route);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.siyur-library__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-block: 0;
+  padding-inline-start: 0;
+  list-style: none;
+}
+
+.siyur-library__row {
+  padding-inline: 10px;
+  padding-block: 8px;
+  border: 1px solid var(--siyur-border);
+  border-radius: 10px;
+  background: #fff;
+}
+
+/* The row currently open on the panel below, marked so the list explains what changed. */
+.siyur-library__row[data-selected='true'] {
+  border-color: var(--siyur-ink);
+  box-shadow: inset 3px 0 0 0 var(--siyur-route);
+}
+
+/* A superseded plan looks superseded: it is still openable — that is how you reach its
+   successor — but it does not compete with a live one for attention. */
+.siyur-library__row[data-plan-state='superseded'] {
+  background: var(--siyur-paper-deep);
+  opacity: 0.72;
+}
+
+.siyur-library__row[data-plan-state='superseded'] .siyur-library__date {
+  text-decoration: line-through;
+}
+
+.siyur-library__row[data-plan-state='failed'] {
+  border-color: var(--siyur-route);
+}
+
+/* The whole row is the control. `min-inline-size: 0` on a flex child is what stops a long
+   area name from refusing to wrap and widening the panel past the viewport. */
+.siyur-library__open {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  inline-size: 100%;
+  min-inline-size: 0;
+  min-block-size: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  text-align: start;
+  cursor: pointer;
+}
+
+.siyur-library__date {
+  font-family: var(--siyur-mono);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.siyur-library__state {
+  padding-inline: 8px;
+  padding-block: 2px;
+  border: 1px solid var(--siyur-stone);
+  border-radius: 99px;
+  background: var(--siyur-paper-deep);
+  font-size: 14px;
+}
+
+.siyur-library__row[data-plan-state='approved'] .siyur-library__state,
+.siyur-library__row[data-plan-state='compiled'] .siyur-library__state {
+  border-color: var(--siyur-park);
+  color: var(--siyur-park);
+}
+
+.siyur-library__row[data-plan-state='failed'] .siyur-library__state,
+.siyur-library__row[data-plan-state='unknown'] .siyur-library__state {
+  border-color: var(--siyur-route);
+  color: var(--siyur-route);
+}
+
+.siyur-library__stops,
+.siyur-library__area {
+  min-inline-size: 0;
+  color: var(--siyur-ink-soft);
+  font-size: 14px;
+  overflow-wrap: anywhere; /* a user-typed area name is arbitrary text */
+}
+
+.siyur-library__flag {
+  margin-block: 4px 0;
+  color: var(--siyur-route);
+  font-size: 14px;
+}
+
+/* A plan UUID is a 36-character unbroken token — the one string on this surface that can
+   push the layout past a 375px viewport if it is allowed to stay on one line. */
+.siyur-library__superseded {
+  margin-block: 4px 0;
+  color: var(--siyur-ink-soft);
+  font-family: var(--siyur-mono);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+/* There is deliberately no rule for a "created at" line: `created_at` and `approved_at`
+   are UTC audit instants and are rendered nowhere (see `plan/library.ts` § two clocks).
+   Recency comes from the server's newest-first order, which needs no clock and no style. */
+
+.siyur-library__credit {
+  margin-block: 10px 0;
+  color: var(--siyur-ink-soft);
+  font-size: 14px;
+}
+
+/* --- The area-disambiguation picker -----------------------------------------
+   Its own layer, above the plan panel (z-index 3). Measured at 390 × 844: mounted inside
+   the bottom sheet (z-index 2) the plan panel covered the picker's own heading, which is
+   the audit's occlusion finding happening to a new surface. `:empty` collapses the host
+   when nothing is being disambiguated, so it reserves no space and swallows no taps. */
+.siyur-disambiguation-host {
+  position: fixed;
+  z-index: 4;
+  inset-inline: 8px;
+  /* 36px, not 8px: the ODbL attribution control is a 24px strip on the bottom edge, and
+     covering it is a **licence** failure rather than a layout one (Constitution Article V,
+     and the audit's one compliance finding). Measured at 390 × 844 —
+     `document.elementFromPoint` over the attribution's centre returns `.siyur-sheet`
+     before this surface exists and after it, never `.siyur-disambiguation`. Un-occluding
+     it from the *sheet* is Phase B's; not adding a second occluder is this file's. */
+  inset-block-end: 36px;
+  max-block-size: 74vh;
+  overflow-y: auto;
+  font-family: 'Work Sans', system-ui, sans-serif;
+}
+
+.siyur-disambiguation-host:empty {
+  display: none;
+}
+
+.siyur-disambiguation {
+  margin-block-end: 0;
+  padding-inline: 12px;
+  padding-block: 12px;
+  border: 1px solid var(--siyur-border);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: var(--siyur-shadow);
+  font-family: 'Work Sans', system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.siyur-disambiguation__title {
+  margin-block: 0 4px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.siyur-disambiguation__detail {
+  margin-block: 0 8px;
+  color: var(--siyur-ink-soft);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+/* Capped and scrollable: twenty candidates is a normal answer, and twenty rows would
+   otherwise push the sheet past its own 55vh and take the map with it. */
+.siyur-disambiguation__list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-block-size: 46vh;
+  overflow-y: auto;
+  margin-block: 0;
+  padding-inline-start: 0;
+  list-style: none;
+}
+
+.siyur-disambiguation__item {
+  min-inline-size: 0;
+}
+
+.siyur-disambiguation__pick {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  inline-size: 100%;
+  min-inline-size: 0;
+  min-block-size: 44px;
+  padding-inline: 10px;
+  padding-block: 6px;
+  border: 1px solid var(--siyur-border);
+  border-radius: 10px;
+  background: var(--siyur-paper);
+  color: var(--siyur-ink);
+  font: inherit;
+  font-size: 14px;
+  text-align: start;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+/* The name and its provenance chip stack rather than compete for one line.
+   `.siyur-chip` is `white-space: nowrap` and an ODbL stamp carries "© OpenStreetMap
+   contributors", so as flex siblings the chip took the row and squeezed `.siyur-value`
+   (which caps itself at `max-width: 100%`) to a few pixels — with `overflow-wrap` set,
+   the place name then broke **one character per line**. Only visible in a real browser;
+   jsdom has no layout. Same failure `.siyur-marker__name` records in `style.css`. */
+.siyur-disambiguation__pick .siyur-value {
+  flex-wrap: wrap;
+  inline-size: 100%;
+  max-inline-size: 100%;
+  gap: 4px;
+}
+
+.siyur-disambiguation__pick .siyur-value__text {
+  min-inline-size: 0;
+  /* `break-word`, not `anywhere`: a long name wraps between words and only splits a word
+     that genuinely cannot fit — the per-character break above is what `anywhere` does to
+     a narrow box. */
+  overflow-wrap: break-word;
+}
+
+.siyur-disambiguation__confidence {
+  color: var(--siyur-stone);
+  font-family: var(--siyur-mono);
+  font-size: 14px;
+  letter-spacing: 0.08em;
+}
+
+/* An option that cannot be chosen is shown, and shown as unchoosable. Hiding it would
+   shorten a list of twenty into a list of eleven without saying so. */
+.siyur-disambiguation__item[data-candidate='unstamped'],
+.siyur-disambiguation__item[data-candidate='unusable'] {
+  padding-inline: 10px;
+  padding-block: 6px;
+  border: 1px dashed var(--siyur-stone);
+  border-radius: 10px;
+}
+
+.siyur-disambiguation__note {
+  margin-block: 0;
+  color: var(--siyur-ink-soft);
+  font-size: 14px;
+}
+
+.siyur-disambiguation__caption {
+  margin-block: 8px 0;
+  color: var(--siyur-ink-soft);
+  font-size: 14px;
+}
+
+.siyur-disambiguation__dismiss {
+  inline-size: 100%;
+  min-block-size: 44px;
+  margin-block-start: 8px;
+  padding-inline: 12px;
+  border: 1px solid var(--siyur-border);
+  border-radius: 99px;
+  background: var(--siyur-paper-deep);
+  color: var(--siyur-ink);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}

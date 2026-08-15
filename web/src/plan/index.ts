@@ -23,6 +23,38 @@ export {
   type StreamPlanOptions,
 } from './client'
 export {
+  EMPTY_LIBRARY_MODEL,
+  PlanLibrarySurface,
+  areaLabel,
+  createLibraryCredit,
+  describeListFailure,
+  libraryHeadline,
+  mountPlanLibrary,
+  renderPlanLibrary,
+  renderPlanRow,
+  stateLabel,
+  type LibraryState,
+  type PlanLibraryModel,
+  type PlanLibraryOptions,
+  type PlanLibrarySources,
+  type PlanRowOptions,
+} from './library'
+export {
+  DEFAULT_AREAS_ENDPOINT as DEFAULT_AREA_LIST_ENDPOINT,
+  ListResponseError,
+  fetchAreaList,
+  fetchPlanList,
+  indexAreas,
+  listBbox,
+  sanitiseAreaList,
+  sanitiseAreaSummary,
+  sanitisePlanList,
+  sanitisePlanSummary,
+  type AreaSummary,
+  type ListFetchOptions,
+  type PlanSummary,
+} from './list'
+export {
   DEFAULT_DAY_START,
   DEFAULT_HOURS,
   DEFAULT_WALKING_M,

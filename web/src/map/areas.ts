@@ -19,8 +19,9 @@
  * could not read renders as "not covered", never as a guess.
  */
 
-import { sanitiseAreaResolution } from './guards'
-import type { AreaResolution, GeoPolygon } from './types'
+import { renderSourcedValue } from './attribution-chip'
+import { isSourceRef, sanitiseAreaResolution } from './guards'
+import type { AreaResolution, GeoPolygon, SourceRef } from './types'
 
 /** Default same-origin endpoint; override for a split API host. */
 export const DEFAULT_AREAS_ENDPOINT = '/areas'
@@ -33,12 +34,94 @@ export class AreaRequestError extends Error {
   }
 }
 
+/**
+ * The `404` that **is** an answer: the name matched several places and the server sent
+ * them all (`contracts/areas.md` — *"404 name not resolvable (with disambiguation
+ * candidates when Nominatim returns several)"*).
+ *
+ * Until Phase A this status was kept and the body thrown away, so a search that took 61 s
+ * to return twenty usable answers reported "not found" while the answers sat in the
+ * response. That is what this class exists to stop: the candidates travel with the error.
+ */
+export class AreaNotResolvedError extends AreaRequestError {
+  constructor(
+    /** The server's own sentence about why the name did not resolve. */
+    readonly detail: string | null,
+    readonly candidates: readonly AreaCandidate[],
+  ) {
+    super(404, detail ?? 'POST /areas could not resolve that name')
+    this.name = 'AreaNotResolvedError'
+  }
+}
+
 /** Thrown when the body parsed but carried no `area_id` to act on. */
 export class AreaResponseError extends Error {
   constructor(message = 'POST /areas returned no usable area_id') {
     super(message)
     this.name = 'AreaResponseError'
   }
+}
+
+/* --------------------------------------------------- disambiguation (404) --- */
+
+/**
+ * One place the searched name could have meant (`api/areas.py::_candidate`).
+ *
+ * The server sends **bounds, not the ring** — a division polygon runs to tens of thousands
+ * of vertices and the client re-delimits by bbox anyway. Every field is nullable here
+ * because the client narrows before it renders: an option it cannot read is reported as
+ * unreadable, never repaired into a plausible one.
+ */
+export interface AreaCandidate {
+  /** The division's own name. Commons-derived, so it renders **only** with its stamp. */
+  readonly name: string | null
+  /** The resolver's own match score. Not sourced data — see {@link buildDisambiguation}. */
+  readonly confidence: number | null
+  /** `[minLon, minLat, maxLon, maxLat]`, EPSG:4326 — what picking this option re-sends. */
+  readonly bbox: readonly [number, number, number, number] | null
+  readonly source: SourceRef | null
+}
+
+/** An EPSG:4326 extent with actual area, else `null`. A degenerate bbox is a `422`. */
+function candidateBbox(raw: unknown): readonly [number, number, number, number] | null {
+  if (!Array.isArray(raw) || raw.length !== 4) return null
+  const values = raw as unknown[]
+  if (!values.every((n): n is number => typeof n === 'number' && Number.isFinite(n))) return null
+  const [minLon, minLat, maxLon, maxLat] = values as [number, number, number, number]
+  if (minLon < -180 || maxLon > 180 || minLat < -90 || maxLat > 90) return null
+  return maxLon > minLon && maxLat > minLat ? [minLon, minLat, maxLon, maxLat] : null
+}
+
+/**
+ * Narrow the candidate list from a `404` body.
+ *
+ * **Order is the server's**, and is never re-sorted by confidence. The server returned
+ * twenty options *because it could not decide*; re-ranking them would be this client
+ * quietly making the decision it declined to make.
+ *
+ * Nothing is dropped either. A candidate whose name or extent could not be read is kept
+ * and rendered as unpickable with the reason stated — silently shortening a list of
+ * twenty to a list of eleven is the same class of bug as discarding it entirely.
+ */
+export function sanitiseAreaCandidates(raw: unknown): readonly AreaCandidate[] {
+  if (!Array.isArray(raw)) return []
+  const out: AreaCandidate[] = []
+  for (const row of raw) {
+    if (typeof row !== 'object' || row === null || Array.isArray(row)) continue
+    const record = row as Record<string, unknown>
+    const name = typeof record.name === 'string' && record.name.trim() !== '' ? record.name : null
+    const confidence =
+      typeof record.confidence === 'number' && Number.isFinite(record.confidence)
+        ? record.confidence
+        : null
+    out.push({
+      name,
+      confidence,
+      bbox: candidateBbox(record.bbox),
+      source: isSourceRef(record.source) ? record.source : null,
+    })
+  }
+  return out
 }
 
 /* ----------------------------------------------------------------- fetch --- */
@@ -82,11 +165,42 @@ export async function resolveArea(options: ResolveAreaOptions): Promise<AreaReso
     body: JSON.stringify(area),
     ...(signal ? { signal } : {}),
   })
-  if (!response.ok) throw new AreaRequestError(response.status)
+  if (!response.ok) {
+    // **The body of a `404` is the answer, not noise.** It carries `{message, candidates}`
+    // — up to twenty places the name could have meant. Keeping only `response.status`
+    // here was the whole defect: the user was told "not found" while the answer was in
+    // the response they had already waited for.
+    if (response.status === 404) {
+      const body = await readJsonBody(response)
+      const record =
+        typeof body === 'object' && body !== null && !Array.isArray(body)
+          ? (body as Record<string, unknown>)
+          : {}
+      const candidates = sanitiseAreaCandidates(record.candidates)
+      if (candidates.length > 0) {
+        throw new AreaNotResolvedError(
+          typeof record.message === 'string' && record.message.trim() !== ''
+            ? record.message
+            : null,
+          candidates,
+        )
+      }
+    }
+    throw new AreaRequestError(response.status)
+  }
 
-  const resolution = sanitiseAreaResolution(await response.json())
+  const resolution = sanitiseAreaResolution(await readJsonBody(response))
   if (!resolution) throw new AreaResponseError()
   return resolution
+}
+
+/** `JSON.parse` answering `undefined` instead of throwing on a body that is not JSON. */
+async function readJsonBody(response: Response): Promise<unknown> {
+  try {
+    return (await response.json()) as unknown
+  } catch {
+    return undefined
+  }
 }
 
 /** The research endpoint for a resolved area (`contracts/research.md`). */
@@ -217,6 +331,189 @@ export function buildCoverageCard(
   root.append(action)
 
   return root
+}
+
+/* --------------------------------------------------- the disambiguation UI --- */
+
+export interface DisambiguationOptions {
+  /**
+   * Called **only** from a candidate's own button. Receives that candidate's bbox
+   * verbatim, which the caller re-sends as `POST /areas { bbox }`.
+   */
+  readonly onPick?: (candidate: AreaCandidate) => void | Promise<void>
+  readonly onDismiss?: () => void
+}
+
+/**
+ * The list of places the searched name could have meant.
+ *
+ * **Nothing is chosen for the user.** No candidate is auto-picked, not even the one with
+ * the highest confidence, and the list is not re-ordered by it: the server returned twenty
+ * *because it could not decide*, and deciding on its behalf is how someone ends up
+ * delimiting the wrong city and researching it for forty seconds before noticing.
+ * `onPick` is referenced in exactly one place in this function — inside a button's click
+ * listener — so that is structural rather than a review discipline.
+ *
+ * **A name is a commons-derived value and renders through `renderSourcedValue` or not at
+ * all** (ADR-0019). A candidate whose name carries no source stamp therefore shows no
+ * name — and gets **no pick button either**, because a button that says nothing but
+ * "somewhere" is the same wrong-city risk in a different shape. The reason is stated, as
+ * `../plan/render.ts::renderPlanStop` states it for a stop whose place cannot be shown.
+ *
+ * **`confidence` is the resolver's own score, not sourced data**, so it carries no chip
+ * and gets a caption instead — the same ruling ADR-0030 A1 makes for a server-computed
+ * feasibility verdict. It is rendered because it helps a person choose, and rendered
+ * verbatim because rounding someone else's score is inventing one.
+ */
+export function buildDisambiguation(
+  candidates: readonly AreaCandidate[],
+  detail: string | null,
+  options: DisambiguationOptions = {},
+): HTMLElement {
+  const root = document.createElement('section')
+  root.className = 'siyur-disambiguation'
+  root.dataset.candidates = String(candidates.length)
+  root.setAttribute('role', 'group')
+
+  appendLine(
+    root,
+    'siyur-disambiguation__title',
+    candidates.length === 1
+      ? 'One place matches that name. Is this the one?'
+      : `${candidates.length} places match that name. Which one did you mean?`,
+  )
+  // The server's own sentence, verbatim and `textContent`-only — never a template.
+  if (detail) appendLine(root, 'siyur-disambiguation__detail', detail)
+
+  const list = document.createElement('ul')
+  list.className = 'siyur-disambiguation__list'
+
+  for (const [index, candidate] of candidates.entries()) {
+    const item = document.createElement('li')
+    item.className = 'siyur-disambiguation__item'
+    // The server's own position in its own list, so a test can prove nothing re-ranked it.
+    item.dataset.rank = String(index)
+    if (candidate.confidence !== null) item.dataset.confidence = String(candidate.confidence)
+
+    const named =
+      candidate.name !== null && candidate.source !== null
+        ? renderSourcedValue(
+            { value: candidate.name, source: candidate.source },
+            { className: 'siyur-disambiguation__name' },
+          )
+        : null
+
+    const pickable = named !== null && candidate.bbox !== null
+    item.dataset.candidate = named === null ? 'unstamped' : pickable ? 'pickable' : 'unusable'
+
+    if (pickable) {
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.className = 'siyur-disambiguation__pick'
+      button.dataset.rank = String(index)
+      button.append(named)
+      if (candidate.confidence !== null) {
+        const score = document.createElement('span')
+        score.className = 'siyur-disambiguation__confidence'
+        score.textContent = `MATCH ${candidate.confidence}`
+        button.append(score)
+      }
+      const { onPick } = options
+      if (onPick) {
+        // ⬇︎ THE ONLY call site. An area is re-delimited on a tap and on nothing else.
+        button.addEventListener('click', () => {
+          void onPick(candidate)
+        })
+      }
+      item.append(button)
+    } else if (named === null) {
+      // FR-008 / SC-004 again: no stamp, no value — and with no name on screen there is
+      // nothing here a person could knowingly choose, so there is no control to choose it.
+      appendLine(
+        item,
+        'siyur-disambiguation__note',
+        'This suggestion carries no source stamp, so its name is not shown and it cannot ' +
+          'be chosen.',
+      )
+    } else {
+      item.append(named)
+      appendLine(
+        item,
+        'siyur-disambiguation__note',
+        'This suggestion came with no usable extent, so it cannot be opened.',
+      )
+    }
+    list.append(item)
+  }
+  root.append(list)
+
+  // The caption for the match scores — computed by the resolver, about the user's own
+  // search. Not a chip: there is no `SourceRef` on a ranking to build one from.
+  const caption = document.createElement('p')
+  caption.className = 'siyur-disambiguation__caption'
+  caption.dataset.scoreSource = 'server-computed'
+  caption.textContent =
+    'The match scores are the area resolver’s own ranking of your search — a computed ' +
+    'result, not sourced data, so they carry no source stamp. Each name carries its own.'
+  root.append(caption)
+
+  const { onDismiss } = options
+  if (onDismiss) {
+    const dismiss = document.createElement('button')
+    dismiss.type = 'button'
+    dismiss.className = 'siyur-disambiguation__dismiss'
+    dismiss.dataset.action = 'dismiss'
+    dismiss.textContent = 'None of these — search again'
+    dismiss.addEventListener('click', () => {
+      onDismiss()
+    })
+    root.append(dismiss)
+  }
+
+  return root
+}
+
+/**
+ * The mounted picker: one list at a time, cleared as soon as a search succeeds.
+ *
+ * Stale candidates are worse than none — a list left on screen from the previous search
+ * is an invitation to delimit the wrong place — so {@link DisambiguationSurface.clear} is
+ * what the caller runs on every successful resolve.
+ */
+export class DisambiguationSurface {
+  private panel: HTMLElement | null = null
+
+  constructor(
+    private readonly container: HTMLElement,
+    private readonly options: DisambiguationOptions = {},
+  ) {}
+
+  /** The mounted panel, or `null` when nothing is being disambiguated. */
+  get element(): HTMLElement | null {
+    return this.panel
+  }
+
+  /** Show the candidates carried by an {@link AreaNotResolvedError}. */
+  show(error: AreaNotResolvedError): HTMLElement {
+    this.clear()
+    const panel = buildDisambiguation(error.candidates, error.detail, this.options)
+    this.container.append(panel)
+    this.panel = panel
+    return panel
+  }
+
+  clear(): void {
+    this.panel?.remove()
+    this.panel = null
+  }
+}
+
+/** Create a {@link DisambiguationSurface} bound to `container`. */
+export function mountDisambiguation(
+  container: HTMLElement,
+  options: DisambiguationOptions = {},
+): DisambiguationSurface {
+  return new DisambiguationSurface(container, options)
 }
 
 /* ------------------------------------------------------------ controller --- */
