@@ -77,7 +77,17 @@ services:
     healthcheck:
       # Readiness is `/status` answering, never a sleep — the build time varies with the
       # extract and a fixed wait is either wrong or wasteful.
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8002/status || exit 1"]
+      # `curl`, not `wget`: the digest-pinned image ships curl and python3 and has **no
+      # wget**, so this check exited 1 forever with `/bin/sh: 1: wget: not found` while the
+      # service answered `/status` 200 and routed correctly. The container that reported
+      # `healthy` for days predates the ADR-0007 digest pin — pinning the image is what
+      # exposed a check written against a different one.
+      #
+      # The inverse of FAIL-010, and worth naming as such: there the healthcheck was green
+      # for a service that could not route anywhere useful; here it was red for one that
+      # works. A healthcheck is another control that can be wrong in either direction, and
+      # only routing a real request tells you which.
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8002/status || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 60
