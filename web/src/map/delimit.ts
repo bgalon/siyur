@@ -30,6 +30,7 @@
  */
 
 import type { AreaRequest } from './areas'
+import { ElapsedTimer, type ElapsedOptions } from './elapsed'
 import type { BboxSource } from './sites'
 
 /** `[minLon, minLat, maxLon, maxLat]`, EPSG:4326 — the `POST /areas` bbox form. */
@@ -67,7 +68,7 @@ export function isUsableBbox(bbox: Bbox): boolean {
 
 /* ------------------------------------------------------------- control --- */
 
-export interface DelimitControlOptions {
+export interface DelimitControlOptions extends ElapsedOptions {
   /** The live map bounds. Read at click time — never captured at mount. */
   readonly getBounds: () => BboxSource
   /** Called with the user's delimited area; the caller does `POST /areas`. */
@@ -83,6 +84,16 @@ const COPY = {
   viewport: 'Use this view',
   viewportTitle: 'Delimit the area currently shown on the map',
   degenerate: 'Zoom or pan the map first — this view has no extent to research.',
+  /**
+   * **The two delimit paths cost wildly different amounts, and the control says so.**
+   * `resolve_area.py` measures an unwindowed name search at 73 s (61.6 s end to end in
+   * the audit) against 0.18 s for a bbox, because matching a name is inherently a full
+   * visit of the Overture divisions theme. Before this line the reachable path
+   * "appeared to do nothing for a minute"; a user who is told a minute is normal waits,
+   * and one who is told nothing taps again.
+   */
+  searching: 'Searching for that name. This can take up to a minute.',
+  delimiting: 'Reading the area shown on the map…',
 } as const
 
 /**
@@ -99,6 +110,11 @@ export class DelimitControl {
   private readonly submit: HTMLButtonElement
   private readonly viewport: HTMLButtonElement
   private readonly hint: HTMLParagraphElement
+  /** What is running and for how long — its own line, so a hint cannot overwrite it. */
+  private readonly busy: HTMLParagraphElement
+  private readonly busyLabel: HTMLSpanElement
+  private readonly busyElapsed: HTMLSpanElement
+  private readonly elapsed: ElapsedTimer
 
   constructor(
     private readonly container: HTMLElement,
@@ -143,7 +159,23 @@ export class DelimitControl {
     this.hint.className = 'siyur-delimit__hint'
     this.hint.hidden = true
 
-    this.root.append(this.form, this.viewport, this.hint)
+    // `role="status"` (an implicit `aria-live="polite"`), so the wait is announced once
+    // rather than re-announced on every one-second tick — the elapsed span is a child of
+    // an already-live region, and a live region inside a live region stutters.
+    this.busy = document.createElement('p')
+    this.busy.className = 'siyur-delimit__busy'
+    this.busy.setAttribute('role', 'status')
+    this.busy.hidden = true
+    this.busyLabel = document.createElement('span')
+    this.busyElapsed = document.createElement('span')
+    this.busyElapsed.className = 'siyur-delimit__elapsed'
+    this.busyElapsed.setAttribute('aria-hidden', 'true')
+    this.busy.append(this.busyLabel, this.busyElapsed)
+    this.elapsed = new ElapsedTimer((text) => {
+      this.busyElapsed.textContent = text
+    }, options)
+
+    this.root.append(this.form, this.viewport, this.hint, this.busy)
     this.container.append(this.root)
 
     this.form.addEventListener('submit', this.onSubmit)
@@ -184,7 +216,9 @@ export class DelimitControl {
   /** Hand the delimited area to the caller, guarding against a double-submit. */
   private async emit(area: AreaRequest): Promise<void> {
     if (this.root.dataset.busy === 'true') return
-    this.setBusy(true)
+    // Which request is running decides what the busy line says, and the two answers are
+    // 0.18 s and a minute apart — see `COPY.searching`.
+    this.setBusy(true, area.name !== undefined ? COPY.searching : COPY.delimiting)
     this.showHint(null)
     try {
       await this.options.onDelimit(area)
@@ -195,10 +229,31 @@ export class DelimitControl {
     }
   }
 
-  private setBusy(busy: boolean): void {
+  /**
+   * Disable both controls and say what is running.
+   *
+   * Disabling alone was already here and was not enough: at 390 px a disabled pill at
+   * 55% opacity, with no label change and no counter, reads as a control that did
+   * nothing rather than one that is doing something slow.
+   */
+  private setBusy(busy: boolean, label?: string): void {
     this.root.dataset.busy = String(busy)
     this.submit.disabled = busy
     this.viewport.disabled = busy
+    this.submit.setAttribute('aria-busy', String(busy))
+    this.viewport.setAttribute('aria-busy', String(busy))
+    if (busy) {
+      this.busyLabel.textContent = label ?? ''
+      this.busy.hidden = false
+      this.elapsed.start()
+      return
+    }
+    this.elapsed.stop()
+    // The line goes when the answer arrives: whatever happened next — a resolved area, a
+    // candidate list, a stated failure — is now the thing on screen to read.
+    this.busy.hidden = true
+    this.busyLabel.textContent = ''
+    this.busyElapsed.textContent = ''
   }
 
   private showHint(text: string | null): void {
@@ -209,6 +264,9 @@ export class DelimitControl {
   destroy(): void {
     this.form.removeEventListener('submit', this.onSubmit)
     this.viewport.removeEventListener('click', this.onViewportClick)
+    // A ticking interval on a removed control keeps the surface alive and repaints a
+    // detached node once a second, forever.
+    this.elapsed.stop()
     this.root.remove()
   }
 }

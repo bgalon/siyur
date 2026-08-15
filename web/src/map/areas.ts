@@ -299,13 +299,33 @@ export function buildCoverageCard(
     'siyur-coverage__title',
     covered ? 'Already in the commons' : 'Not researched yet',
   )
+  /**
+   * **The count is read in BOTH branches (UX-09).**
+   *
+   * The uncovered branch used to be the hardcoded string "No cited places here yet",
+   * and the audit caught it saying exactly that about an area the server had just
+   * reported `known_site_count: 958` for. The product's core asset, denied to the user
+   * by a literal — and `covered` is *not* "we hold sites here": it is "this area has
+   * been researched" (`commons/repository.py::coverage`, ADR-0018), so the two
+   * genuinely differ and the honest answer needs both facts, not one of them.
+   *
+   * Three states, then, not two — and the zero case keeps its own sentence, because
+   * "0 cited places" is a number where "none yet" is an answer.
+   */
+  const count = coverage.known_site_count
+  const places = `${count} cited place${count === 1 ? '' : 's'}`
   appendLine(
     root,
     'siyur-coverage__count',
     covered
-      ? `${coverage.known_site_count} cited place${coverage.known_site_count === 1 ? '' : 's'} already researched here`
-      : 'No cited places here yet',
+      ? `${places} already researched here`
+      : count > 0
+        ? `${places} already in the commons here, from earlier research nearby — but this ` +
+          `area itself has not been researched yet.`
+        : 'No cited places here yet',
   )
+  // The raw number, so a caller (or a test) reads the value rather than the sentence.
+  root.dataset.knownSiteCount = String(count)
 
   const staleness = describeStaleness(coverage.stalest_observed_at, options.now?.())
   if (staleness) {
@@ -318,14 +338,42 @@ export function buildCoverageCard(
   action.type = 'button'
   action.className = 'siyur-coverage__action'
   action.dataset.action = covered ? 'refresh' : 'research'
+  action.dataset.pending = 'false'
   action.textContent = covered ? 'Refresh this area →' : 'Start researching →'
   action.disabled = covered && !coverage.refresh_available
 
   const { requestResearch } = options
   if (requestResearch) {
-    // ⬇︎ THE ONLY call site. Research runs on a user gesture and nowhere else.
+    /**
+     * **In flight is a state, and the button carries it (UX-08).**
+     *
+     * A pass runs for tens of seconds to minutes and the control stayed enabled for all
+     * of it, so a user who saw nothing happen tapped again and queued a second pass
+     * behind a single-worker API. The `409` guard in `api/areas.py` is the last line of
+     * defence against that, not the first — and it is process-local, so it is not even a
+     * reliable one.
+     *
+     * `restore` remembers the button's *original* disabled state rather than assuming
+     * `false`: a covered area with `refresh_available: false` mounts already disabled,
+     * and re-enabling it on the way out would offer a refresh the server just refused.
+     */
+    const label = action.textContent
+    const restore = action.disabled
     action.addEventListener('click', () => {
-      void requestResearch({ area_id: resolution.area_id, force_refresh: covered })
+      if (action.dataset.pending === 'true') return
+      action.dataset.pending = 'true'
+      action.disabled = true
+      action.setAttribute('aria-busy', 'true')
+      action.textContent = covered ? 'Refreshing…' : 'Researching…'
+      // ⬇︎ THE ONLY call site. Research runs on a user gesture and nowhere else.
+      void Promise.resolve(
+        requestResearch({ area_id: resolution.area_id, force_refresh: covered }),
+      ).finally(() => {
+        action.dataset.pending = 'false'
+        action.disabled = restore
+        action.setAttribute('aria-busy', 'false')
+        action.textContent = label
+      })
     })
   }
   root.append(action)

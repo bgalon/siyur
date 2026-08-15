@@ -194,9 +194,25 @@ export interface Approvability {
   readonly reason: string | null
 }
 
+/**
+ * What a day that is **still being produced** says, everywhere it says anything.
+ *
+ * One constant, referenced by {@link STATE_BLOCK}, {@link approvability}, the panel's
+ * empty-frame line and {@link renderFeasibility}, because the audit's emblematic defect
+ * was those places disagreeing: the review element carried `data-plan-state="proposing"`
+ * while rendering **"No day has been proposed yet."** The attribute the tests assert was
+ * right and the sentence the human reads was the opposite of the truth. The copy already
+ * existed here and simply was not reached on that path.
+ *
+ * An absent itinerary is not the same fact as an unfinished one, and the difference is
+ * the whole of what the user wants to know: one means *ask for a day*, the other means
+ * *wait*.
+ */
+const PROPOSING = 'This day is still being produced.'
+
 /** Why each non-`proposed` state blocks approval. Total over the closed enum. */
 const STATE_BLOCK: Record<PlanState, string | null> = {
-  proposing: 'This day is still being produced.',
+  proposing: PROPOSING,
   proposed: null,
   approved: 'This day is already approved.',
   superseded: 'A newer proposal has replaced this one — approve that plan instead.',
@@ -209,6 +225,26 @@ const FRAME_BLOCK: Record<Exclude<ItineraryFrame['kind'], 'itinerary'>, string> 
   empty: 'There is not enough in the commons here to fill this day, so nothing was planned.',
   unreadable: 'The proposed day could not be read, so there is nothing to approve.',
   absent: 'No day has been proposed yet.',
+}
+
+/** Is a proposal in flight for this model? */
+function isProposing(model: PlanReviewModel): boolean {
+  return model.approval.state === 'proposing'
+}
+
+/**
+ * The sentence for a model carrying no itinerary — the one the audit caught lying.
+ *
+ * `absent` + `proposing` is *"still being produced"*, not *"none has been proposed"*.
+ * The other two kinds keep their own wording in every state: an `empty` or `unreadable`
+ * frame arrived **from the server**, so it is a fact about the answer and not about
+ * whether the answer is finished.
+ */
+function frameBlock(
+  model: PlanReviewModel,
+  kind: Exclude<ItineraryFrame['kind'], 'itinerary'>,
+): string {
+  return kind === 'absent' && isProposing(model) ? PROPOSING : FRAME_BLOCK[kind]
 }
 
 /**
@@ -251,9 +287,14 @@ export function hasWarnings(feasibility: Feasibility): boolean {
  * not `ok` true.
  */
 export function approvability(model: PlanReviewModel): Approvability {
+  // **A proposal in flight outranks every other reason**, and in particular outranks
+  // "this day has not been saved yet" — which is true while the stream is open (there is
+  // no plan id yet) and reads as a dead end rather than as *wait a moment*. The
+  // state a user can do nothing about, but which will resolve on its own, is the news.
+  if (isProposing(model)) return { approvable: false, reason: PROPOSING }
   if (!model.planId) return { approvable: false, reason: 'This day has not been saved yet.' }
   if (model.itinerary.kind !== 'itinerary') {
-    return { approvable: false, reason: FRAME_BLOCK[model.itinerary.kind] }
+    return { approvable: false, reason: frameBlock(model, model.itinerary.kind) }
   }
   if (!model.feasibility.readable) {
     return {
@@ -473,7 +514,23 @@ export function renderWarnings(feasibility: Feasibility): HTMLElement | null {
   return section
 }
 
-export function renderFeasibility(feasibility: Feasibility): HTMLElement {
+export interface FeasibilityRenderOptions {
+  /**
+   * A proposal is still streaming.
+   *
+   * Only the **unreadable** branch changes, and only its tense: "Feasibility was not
+   * reported" is a verdict about a finished answer, and saying it over a stream that has
+   * not reached its `feasibility` frame yet is the same defect as the panel's old
+   * "No day has been proposed yet" — an in-flight state described in the past tense.
+   * A verdict that *has* arrived is rendered identically either way.
+   */
+  readonly proposing?: boolean
+}
+
+export function renderFeasibility(
+  feasibility: Feasibility,
+  options: FeasibilityRenderOptions = {},
+): HTMLElement {
   const section = document.createElement('section')
   section.className = 'siyur-plan-feasibility'
   const passes = feasibilityPasses(feasibility)
@@ -486,7 +543,15 @@ export function renderFeasibility(feasibility: Feasibility): HTMLElement {
   const warnings = renderWarnings(feasibility)
 
   if (!feasibility.readable) {
-    section.append(line('siyur-plan-feasibility__title', 'Feasibility was not reported.'))
+    section.dataset.verdict = options.proposing ? 'pending' : 'unreported'
+    section.append(
+      line(
+        'siyur-plan-feasibility__title',
+        options.proposing
+          ? 'Feasibility has not been checked yet — this day is still being produced.'
+          : 'Feasibility was not reported.',
+      ),
+    )
     if (warnings) section.append(warnings)
     section.append(createVerdictCaption())
     return section
@@ -635,7 +700,13 @@ export function renderPlanPanel(
     }
     root.append(list)
   } else {
-    root.append(line('siyur-plan__empty', FRAME_BLOCK[model.itinerary.kind]))
+    const kind = model.itinerary.kind
+    const empty = line('siyur-plan__empty', frameBlock(model, kind))
+    // The *reason* there is no day, as data — so a test asserts the branch and a
+    // stylesheet can treat "still working" differently from "nothing here", which is
+    // what `plan.css`'s `[data-plan-state='proposing']` rule does.
+    empty.dataset.reason = isProposing(model) && kind === 'absent' ? 'proposing' : kind
+    root.append(empty)
     if (model.candidates === 0) {
       // SC-006's sibling: an area with nothing in it says so. Nothing is ever padded.
       root.append(
@@ -644,7 +715,7 @@ export function renderPlanPanel(
     }
   }
 
-  root.append(renderFeasibility(model.feasibility))
+  root.append(renderFeasibility(model.feasibility, { proposing: isProposing(model) }))
 
   if (model.excluded.length > 0) {
     // FR-003: a place the walking network cannot reach is dropped and reported —
