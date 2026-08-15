@@ -158,21 +158,83 @@ jobs:
           fi
           exit "$code"
 
-  # ── Job 5 · e2e-airplane (Playwright, Chromium) — THE MERGE GATE ───────────
-  # Green stub. The airplane-mode flow (load online → wait for SW + OPFS whole-
-  # archive download → setOffline(true) → reload → assert tiles render from OPFS
-  # with ZERO network calls; test-strategy.md §"Tier 3") needs the web PWA +
-  # a compiled bundle, which land at the web scaffold / DU-06. Stubbed until then.
+  # ── Job 5 · e2e (Playwright, Chromium) — THE MERGE GATE ────────────────────
+  # **No longer a stub.** This job was three `echo` lines from DU-00 until DU-06a,
+  # so for nine deliverable units "the merge gate" gated nothing — which is exactly
+  # how the product reached `main` unusable on a phone (FAIL-012).
+  #
+  # It runs **`viewport.spec.ts` only** — DU-06a's rendered-viewport gate at
+  # 375/390/430 (+1440 for the ODbL attribution). It lands RED on purpose: the known
+  # failures carry `test.fail()`, so CI is green while the defects stand and goes
+  # **red the moment a fix lands without deleting its marker**.
+  #
+  # `airplane.spec.ts` is deliberately NOT run here yet — a scope decision, not a
+  # quality one. That suite belongs to **DU-06/T056**, which owns it and will have a
+  # real bundle to gate on; switching it on is deleting the filename below.
+  #
+  # It is NOT excluded for flakiness. One combined local run did fail on `the app
+  # shell survives an offline reload at all`, but the cause was found and it is not
+  # the suite: `reuseExistingServer: !process.env.CI` means a local run reuses a
+  # preview server that a concurrent `pnpm build` has just rewritten `dist/` under.
+  # Killing the stale server made it green, and the full suite then passed 3 of 3
+  # clean CI-mode runs (23 tests, ~13 s). **CI never hits this** — it sets
+  # `reuseExistingServer: false` and builds fresh. Recorded because "we thought it
+  # was flaky" is exactly the kind of unexamined belief that keeps a gate stubbed.
+  #
+  # Chromium only (ADR-0002 makes the offline runtime Chromium-first).
+  # Job key and display name both unchanged: all seven checks are REQUIRED on `main`
+  # by name, so renaming either would present branch protection with a missing check.
   e2e-airplane:
     name: "5 · e2e-airplane (merge gate)"
     runs-on: ubuntu-latest
+    # `webServer.timeout` alone is 180 s, and this job builds before it tests. A
+    # required check with no ceiling is how a hung runner becomes a blocked repo.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: no web PWA yet (green stub)
-        run: |
-          echo "Airplane-mode E2E (Playwright/Chromium) is the release merge gate."
-          echo "It needs the web PWA + compiled bundle (web scaffold / DU-06)."
-          echo "Green stub — the merge gate exists before the offline runtime does."
+      # pnpm before setup-node so `cache: pnpm` can find it (same order as jobs 1-2).
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm -C web install --frozen-lockfile
+      # The browser download is ~150 MB and dwarfs the suite itself, which runs in
+      # ~11 s locally and 16 s here. Cached on the resolved Playwright version
+      # because a slow gate is a gate people learn to ignore.
+      #
+      # **Measured: 55 s end to end** (install + browser restore + `vite build` via
+      # playwright.config.ts's `webServer` + 20 tests), so this job does sit inside
+      # the 7 s–1 m 40 s band the other six hold. Recorded from the first green run
+      # rather than predicted — AGENTS.md uses that band as the triage heuristic for
+      # red checks, and a guessed number degrades the rule for everyone reading it.
+      # Re-measure if the cache is ever removed; the browser restore is the variable.
+      - name: resolve Playwright version
+        id: pw
+        run: echo "version=$(pnpm -C web exec playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        id: pw-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+      - name: install Chromium (+ system deps)
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: pnpm -C web exec playwright install --with-deps chromium
+      # A cache hit restores the browser but not the apt libraries it links against.
+      - name: install system deps only (cached browser)
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        run: pnpm -C web exec playwright install-deps chromium
+      - name: playwright (DU-06a viewport gate)
+        run: pnpm -C web exec playwright test viewport.spec.ts
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: web/test-results/
+          retention-days: 7
 
   # ── Job 6 · security (Semgrep + gitleaks + pip-audit + slopsquatting) ──────
   security:

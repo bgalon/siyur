@@ -234,7 +234,10 @@ body {
   gap: 8px;
   flex: 1 1 240px;
   min-width: 0;
-  padding: 6px 8px 6px 14px;
+  /* The extra inline-start room is for the ⌕ glyph, so it must follow the text
+     direction — a 4-value shorthand would pin it to the left in RTL. */
+  padding-block: 6px;
+  padding-inline: 14px 8px;
   border: 1px solid var(--siyur-border);
   border-radius: 99px;
   background: #fff;
