@@ -31,6 +31,8 @@ Four ADRs from the design review (+ ADR-0005 workflow) adjust this plan — no m
 | DU-03 | Merge (2–3 sources) | M1 | U3, U4 | `U3-merge-provenance` |
 | DU-04 | Plan (no variants) | M1 | U3, U5 | `U5-hitl-gate` |
 | DU-05 | Compile → bundle | M1 | U4, U5 | `U5-compile-moment`, `U4-valhalla` |
+| DU-06a | Rendered-viewport gate (**lands red**) | M1 | U2 | `U2-green-tests-blind-to-pixels` |
+| DU-06b | Usable on a phone | M1 | U0, U5 | `U2-the-assertion-that-was-three-lines` |
 | DU-06 | Offline render (airplane-mode) | M1 | U0, U5 | `U0-airplane-mode` |
 | DU-07+ | schematic map · Plan B/C · narration+quarantine · dynamic timeline · resumable · commons-at-scale | M2 | U3, U5 | *(sketch)* |
 | … | i18n + RTL (Hebrew) · 3-area validation (incl. unrehearsed + non-Latin) · recovery · iOS · GCP deploy | M3 | U0, U5 | *(sketch)* |
@@ -85,6 +87,18 @@ The discovery spike (`tech-design.md` §7) precedes DU-00 and hardens the schema
 - **Demo:** approve → compile verification checklist goes green → bundle downloads.
 - **EARS:** "compile a bundle whose manifest passes integrity checks; report size before download."
 - **Tests:** T1 manifest hash + quarantine filter; T2 compiler contract test (rebuild, verify hashes, assert no `bundleable=false`) + Valhalla/fake-gcs integration. **Artifacts:** route-leg + bundle-manifest schema cards, ADRs (routing engine = Valhalla; tile source = Protomaps), ATTRIBUTION pipeline, `exhibit/U5-compile-moment`, `exhibit/U4-valhalla`.
+
+### DU-06a · Rendered-viewport gate — **lands red** *(added 2026-08-15)*
+- **Scope:** a Playwright assertion suite over **real layout** at 375×667 / 390×844 / 430×932 (plus 1440×900 for the attribution): reachability via `elementFromPoint`, tap targets ≥ 44 px, type floor ≥ 14 px (chips ≥ 11 px, allowlisted explicitly), no horizontal overflow, ODbL attribution unoccluded. Plus a source scan holding the stylesheets to logical direction properties.
+- **Demo:** the suite runs on `main` and **names the defects** — `Use this view` painted under `Plan a day`, 11 of 13 controls under the tap floor, five clipped out of the plan panel's own scroller, the ODbL credit under the sheet at every width including desktop.
+- **EARS:** "WHERE the viewport is 375–430 px, every interactive element SHALL be reachable, ≥ 44 px, and legible."
+- **Why it is its own DU, before the fixes:** every DU-06b fix is verified by this suite, so landing it afterwards would make it a suite nobody has ever seen fail. The known failures ship as `test.fail()` — CI green on a red gate — and each turns **red the moment a fix lands without deleting its marker**. This is FAIL-014's lesson applied in advance: *a check nobody has watched fail is not yet a control.* **Artifacts:** `web/test/e2e/viewport.spec.ts`, `web/test/css-logical.test.ts`, CI job 5 promoted from an `echo` stub to a real gate, FAIL-012's guardrail, `exhibit/U2-green-tests-blind-to-pixels`.
+
+### DU-06b · Usable on a phone *(added 2026-08-15)*
+- **Scope:** the phone pass over DU-01…DU-05 (F-01…F-07) — the flow column below 760 px (ADR-0035), tap targets and type floor, the sheet off the attribution, search-glyph contrast, the coverage card reading `known_site_count` in both branches, honest pending/empty states, a visible signed-out state.
+- **Demo:** **a human completes delimit → research → read a site → plan a day → approve at 390 px**, recorded as a GIF. Not "the suite is green" — that phrase is what produced the audit.
+- **EARS:** "WHILE on a 390 px viewport, a user SHALL complete the research-and-plan journey without a desktop, devtools, or a remembered UUID."
+- **Tests:** each task deletes a named `test.fail()` from DU-06a; nothing is "done" on description. **Artifacts:** ADR-0035, `exhibit/U2-the-assertion-that-was-three-lines`.
 
 ### DU-06 · Offline render — **M1 done**
 - **Scope:** PWA reads the bundle from OPFS; the full offline experience (map, itinerary, timeline, narration, off-route recovery).
