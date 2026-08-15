@@ -1,12 +1,15 @@
 import 'maplibre-gl/dist/maplibre-gl.css'
 import './style.css'
 import './plan.css'
+import './library.css'
 import { registerSW } from 'virtual:pwa-register'
 import {
+  AreaNotResolvedError,
   boundsOfPolygon,
   createMapWithAttribution,
   mountAreaReuse,
   mountDelimitControl,
+  mountDisambiguation,
   mountResearchProgress,
   mountSitesLayer,
   resolveAndApply,
@@ -19,8 +22,11 @@ import {
 import {
   EMPTY_PLAN_MODEL,
   approvePlan,
+  fetchAreaList,
   fetchPlan,
+  fetchPlanList,
   mountPlanForm,
+  mountPlanLibrary,
   mountPlanReview,
   streamPlan,
   type ProposeRequest,
@@ -100,6 +106,20 @@ if (container) {
   progressHost.className = 'siyur-sheet__body'
   sheet.append(grip, coverageHost, progressHost)
 
+  /**
+   * The disambiguation picker gets its **own layer**, not a row in the sheet.
+   *
+   * Measured at 390 × 844 with it inside the sheet: the plan panel (z-index 3, a top band
+   * of `58px + 40vh`) covered the picker's own question. That is the audit's occlusion
+   * finding happening to a brand-new surface — and a list of twenty places you cannot read
+   * the heading of is no better than the `console.warn` it replaces. `library.css` gives
+   * this host `position: fixed` above the panel, and `:empty` collapses it to nothing when
+   * no search is being disambiguated, so it costs no space and swallows no taps.
+   */
+  const disambiguationHost = document.createElement('div')
+  disambiguationHost.className = 'siyur-disambiguation-host'
+  document.body.append(disambiguationHost)
+
   // --- Phase 2 (ux-handoff § Screens 3 "Plan the day"): the request form and the
   // review panel. Its own panel rather than a third row in the sheet — the sheet is
   // capped at 55vh and a reviewed day is the longest thing this app renders, and the
@@ -113,9 +133,13 @@ if (container) {
   planHint.className = 'siyur-plan-panel__hint'
   planHint.textContent =
     'Delimit an area first — a day is planned only from the cited places researched there.'
+  // "Your plans" sits above the request form, because it answers the question a returning
+  // user has first — *where is the day I already made?* — and until Phase A there was no
+  // answer at all: every plan id lived only in the response that created it.
+  const libraryHost = document.createElement('div')
   const formHost = document.createElement('div')
   const reviewHost = document.createElement('div')
-  planPanel.append(planTitle, planHint, formHost, reviewHost)
+  planPanel.append(planTitle, planHint, libraryHost, formHost, reviewHost)
 
   document.body.append(controls, sheet, planPanel)
 
@@ -267,10 +291,84 @@ if (container) {
     onSubmitFailure: onError,
   })
 
+  /**
+   * Open a plan the user made earlier — the Phase A journey, end to end: make a plan,
+   * close the tab, come back, find it in the list, open it.
+   *
+   * `GET /plans/{id}` and the **existing** review panel do all the work. There is no
+   * second renderer for a day, and the read-back is what puts the aggregate credit on
+   * screen (`PlanDetail.attribution` comes from nowhere else).
+   *
+   * The row is marked on the way in, so the tap is acknowledged before the request
+   * returns — and **un-marked if the read fails**. Leaving the highlight on a row whose
+   * plan never loaded would be the list claiming one day while the panel below still
+   * shows another, which is the same shape of lie as a state message contradicting its
+   * own attribute.
+   */
+  const openPlan = async (planId: string): Promise<void> => {
+    library.select(planId)
+    try {
+      review.applyDetail(planId, await fetchPlan(planId, { token: getToken() }))
+    } catch (error) {
+      library.select(null)
+      onError(error)
+      return
+    }
+    // Collapse the list once its job is done: the panel is capped at 40vh on a phone, and
+    // the day the user just asked for should not open below twenty rows of index.
+    library.setOpen(false)
+  }
+
+  const library = mountPlanLibrary(
+    libraryHost,
+    {
+      loadPlans: () => fetchPlanList({ token: getToken() }),
+      // Best-effort: area names only label the rows. A failure here must not turn a good
+      // list of plans into an error — `PlanLibrarySurface` keeps `areas` null and the
+      // rows then say nothing about their area rather than guessing.
+      loadAreas: () => fetchAreaList({ token: getToken() }),
+    },
+    { onSelect: (planId) => openPlan(planId) },
+  )
+
+  /**
+   * The disambiguation picker for a name that matched several places.
+   *
+   * Picking re-enters {@link delimit} with **that candidate's bbox**, which is the one
+   * request the server cannot misread — a second search by the same ambiguous name would
+   * come back ambiguous again.
+   */
+  const disambiguation = mountDisambiguation(disambiguationHost, {
+    onPick: (candidate) => (candidate.bbox ? delimit({ bbox: candidate.bbox }) : undefined),
+    onDismiss: () => disambiguation.clear(),
+  })
+
   // --- The delimit step (US1's "delimit the area"). The bbox comes from the
   // map, the name from the user; nothing here is bound to a place.
   const delimit = async (area: AreaRequest): Promise<void> => {
-    const resolution = await resolveAndApply(reuse, { area, token: getToken() })
+    /**
+     * **A `404` carrying candidates is an answer, not a failure.** The server could not
+     * decide between (up to) twenty places with that name and sent them all; the old path
+     * kept the status, dropped the body into a `console.warn`, and told the user "not
+     * found" while the answer sat in the response they had waited 60 s for.
+     *
+     * Rendered rather than re-thrown, because it is a handled outcome: re-throwing would
+     * put it back through `onError` and into the console it just came out of. Every other
+     * error still propagates to the delimit control, which states it on the search pill.
+     */
+    const resolution = await resolveAndApply(reuse, { area, token: getToken() }).catch(
+      (error: unknown) => {
+        if (error instanceof AreaNotResolvedError) {
+          disambiguation.show(error)
+          return null
+        }
+        throw error
+      },
+    )
+    if (!resolution) return
+    // A resolve that worked answers the question the picker was asking, so the picker
+    // goes: a stale candidate list is an invitation to delimit the wrong place.
+    disambiguation.clear()
     // Bind the form to what was just resolved. The field is read-only in the form
     // because an area id is a UUID, not something a person types — and the plan must be
     // for the area on screen, not for whatever was typed last.
