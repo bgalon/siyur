@@ -88,7 +88,14 @@
    the same remedy: let the track reach zero and let the control fill it. */
 .siyur-plan-form {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  /* `minmax(0, …)`, not `1fr`. A bare `1fr` track is `minmax(auto, 1fr)`, and an
+     `<input>`'s automatic minimum is its default `size` (~20 characters) — so the
+     tracks refuse to shrink below the text they could hold and the whole form keeps
+     a hard floor (340px on macOS, 388px on CI's Linux fonts) no matter how narrow
+     the viewport is. Found by DU-06a's per-element overflow check, which sees what
+     `scrollWidth === clientWidth` cannot: every panel here is `position: fixed`, so
+     an overflowing form never reaches the document's scroll width. */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 8px;
   padding-block-end: 12px;
   border-block-end: 1px solid var(--siyur-border);
@@ -119,8 +126,10 @@
 
 .siyur-plan-form__input {
   min-block-size: 44px; /* tap-target floor — not decoration */
-  /* A control's own intrinsic width is ~20 characters and would otherwise be the floor
-     the whole two-column grid is sized from — see the grid note above. */
+  /* Two separate floors have to be released, not one. The *track* can shrink now (see the
+     grid note above), but the control inside it still would not: an input's intrinsic width
+     comes from its `size`, and `.siyur-plan-form__field` is a flex column whose automatic
+     minimum is that width. Releasing only the track leaves the form at its old floor. */
   min-inline-size: 0;
   inline-size: 100%;
   padding-inline: 9px;
@@ -260,7 +269,9 @@
    independent numbering that can disagree with it. */
 .siyur-plan-timeline {
   margin: 0;
-  padding: 0 0 0 14px;
+  /* Indents away from the rule below, which is already inline-start. */
+  padding-block: 0;
+  padding-inline: 14px 0;
   border-inline-start: 2px solid var(--siyur-border);
   list-style: none;
 }
@@ -362,7 +373,12 @@
   margin-block-start: 12px;
   padding: 9px 11px;
   border-inline-start: 4px solid var(--siyur-stone);
-  border-radius: 0 8px 8px 0;
+  /* Square against its own accent bar, rounded away from it — which only stays true
+     in RTL if the corners are named logically, like the bar above them already is. */
+  border-start-start-radius: 0;
+  border-start-end-radius: 8px;
+  border-end-end-radius: 8px;
+  border-end-start-radius: 0;
   background: var(--siyur-paper-deep);
 }
 

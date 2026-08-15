@@ -285,7 +285,9 @@ body {
   gap: 8px;
   flex: 1 1 240px;
   min-inline-size: 0;
-  min-block-size: 48px;
+  min-block-size: 48px; /* tap-target floor — the search pill is the only way in on a phone */
+  /* The extra inline-start room is for the ⌕ glyph, so it must follow the text
+     direction — a 4-value shorthand would pin it to the left in RTL. */
   padding-inline: 14px 8px;
   padding-block: 2px;
   border: 1px solid var(--siyur-border);
