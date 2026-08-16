@@ -71,6 +71,21 @@ const CHIP_ALLOWLIST = [
  */
 const NOT_A_CONTROL = ['.siyur-marker', '.siyur-marker__pin', '.maplibregl-canvas'] as const
 
+/**
+ * **Tap-target exemptions — WCAG 2.5.5's explicit "inline" case:** a target inside a
+ * sentence or block of text. Deliberately separate from {@link CHIP_ALLOWLIST}, which is a
+ * *type-size* exemption — one list meaning two things is how an allowlist stops being read.
+ *
+ * One entry, with its reason, so widening it is a visible diff:
+ *
+ * `.maplibregl-ctrl-attrib a` — the ODbL credit is inline prose with a link in it (~78×12).
+ * A 44px credit strip would consume the map it credits. The obligation this carries is that
+ * the credit is **legible and unoccluded**, and that is asserted separately and strictly by
+ * T-05 at four widths including 1440 — so the link is exempt from *being 44px*, and from
+ * nothing else. It must still pass T-02 (reachable) and T-02b (not clipped).
+ */
+const INLINE_TEXT_TARGETS = ['.maplibregl-ctrl-attrib a'] as const
+
 const INTERACTIVE = 'button, [role="button"], a[href], input, select, textarea, summary'
 
 const PHONES = [
@@ -136,7 +151,7 @@ async function measure(page: Page): Promise<Report> {
   await page.waitForFunction(() => document.fonts.status === 'loaded').catch(() => undefined)
 
   return page.evaluate(
-    ({ interactive, notControl, chips, tapMin, bodyMin, chipMin }) => {
+    ({ interactive, notControl, inlineTargets, chips, tapMin, bodyMin, chipMin }) => {
       const describe = (el: Element): string => {
         const tag = el.tagName.toLowerCase()
         const raw = typeof el.className === 'string' ? el.className.trim() : ''
@@ -295,6 +310,10 @@ async function measure(page: Page): Promise<Report> {
       for (const el of controls) {
         const r = el.getBoundingClientRect()
         if (r.width >= tapMin && r.height >= tapMin) continue
+        // WCAG 2.5.5 inline exception — and *only* the size check. These elements are still
+        // required to be reachable (T-02) and unclipped (T-02b); they are simply allowed to
+        // be the size of the text they sit in.
+        if (inlineTargets.some((sel) => el.matches(sel))) continue
         undersized.push({
           label: describe(el),
           width: Math.round(r.width * 10) / 10,
@@ -419,6 +438,7 @@ async function measure(page: Page): Promise<Report> {
     {
       interactive: INTERACTIVE,
       notControl: NOT_A_CONTROL as readonly string[],
+      inlineTargets: INLINE_TEXT_TARGETS as readonly string[],
       chips: CHIP_ALLOWLIST as readonly string[],
       tapMin: TAP_TARGET_MIN,
       bodyMin: BODY_TYPE_MIN,
@@ -474,7 +494,11 @@ const KNOWN_RED: Readonly<Record<string, readonly string[]>> = {
   //   · `textarea.siyur-plan-form__input` — 342×50, which clears it by accident of
   //     `rows="2"` × inherited line-height. Worth naming, because a later
   //     `line-height` tweak would move that number with nothing to explain why.
-  'T-03-tap': ['375×667', '390×844', '430×932'],
+  // T-03-tap is GREEN at every width. Every control now clears 44px except the ODbL
+  // credit link, which is exempt under WCAG 2.5.5's inline case via
+  // INLINE_TEXT_TARGETS — and exempt from the SIZE check only; T-02, T-02b and T-05
+  // still hold it to being reachable, unclipped and unoccluded. Row deleted.
+
   'T-03-type': ['375×667', '390×844', '430×932'],
   // T-12 (F-03) deletes these four. `.siyur-sheet` is bottom-anchored with
   // `inset-inline: 0` at EVERY width, so the ODbL credit is painted underneath it on
@@ -630,9 +654,9 @@ for (const phone of PHONES) {
       await page.waitForSelector('.siyur-delimit__viewport', { state: 'attached' })
       await page.waitForSelector('.maplibregl-ctrl-attrib', { state: 'attached' })
 
-      const share = await page.evaluate(() => {
+      const { mounted, share } = await page.evaluate(() => {
         const map = document.getElementById('map')
-        if (!map) return 0
+        if (!map) return { mounted: false, share: 0 }
         const box = map.getBoundingClientRect()
         let reachable = 0
         const step = 8
@@ -640,8 +664,13 @@ for (const phone of PHONES) {
           const top = document.elementFromPoint(Math.min(box.x + box.width / 2, innerWidth - 1), y)
           if (top && map.contains(top)) reachable += step
         }
-        return reachable / innerHeight
+        return { mounted: true, share: reachable / innerHeight }
       })
+      // A blank page yields 0.0%, which reads as a plausible layout regression rather than
+      // "nothing rendered" — this test shipped that way for one run and was caught only
+      // because the number was implausible. Assert the page is actually there first, so the
+      // two failures are never confused again.
+      expect(mounted, 'the map element never mounted — this is a harness failure, not a layout one').toBe(true)
       expect(
         share,
         `the map is reachable across only ${(share * 100).toFixed(1)}% of the viewport height`,
