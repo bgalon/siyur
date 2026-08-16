@@ -22,6 +22,7 @@
  */
 
 import { researchPath, type ResearchRequest } from './areas'
+import { ElapsedTimer, type ElapsedOptions } from './elapsed'
 import {
   sanitiseResearchDone,
   sanitiseResearchStatus,
@@ -247,6 +248,12 @@ export async function streamResearch(
  * `partial` and `incomplete` exist so a degraded or truncated pass can never be
  * displayed as `complete` (FR-012); `empty` is the honest zero-result state
  * (SC-006).
+ *
+ * `cancelled` is a **fifth non-success**, and separate from `error` on purpose: the user
+ * stopped it, nothing failed, and — because `api/areas.py` commits only *after* the
+ * stream completes and rolls back otherwise — nothing was written either. Folding it
+ * into `error` would report the user's own decision as a fault, and would leave them
+ * unsure whether a half-written pass is now in the commons.
  */
 export type ResearchState =
   | 'idle'
@@ -256,6 +263,22 @@ export type ResearchState =
   | 'incomplete'
   | 'empty'
   | 'error'
+  | 'cancelled'
+
+/**
+ * Did this rejection come from an abort?
+ *
+ * Structural, not `instanceof DOMException`: a `fetch` implementation injected by a
+ * caller (or a test) rejects with whatever it likes, and the one thing every abort in
+ * the platform agrees on is `name === 'AbortError'`.
+ */
+function isAbortError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { name?: unknown }).name === 'AbortError'
+  )
+}
 
 /** One progress line, built only from the fields the frame actually carried. */
 export function describeStatus(status: ResearchStatus): string {
@@ -267,7 +290,7 @@ export function describeStatus(status: ResearchStatus): string {
   return parts.join(' · ')
 }
 
-export interface ResearchProgressOptions {
+export interface ResearchProgressOptions extends ElapsedOptions {
   /** Forwarded for every stamped `site` frame, so a caller can render early. */
   readonly onSite?: (site: SiteRecordV1) => void
 }
@@ -284,11 +307,16 @@ export interface ResearchProgressOptions {
 export class ResearchProgressSurface {
   private readonly root: HTMLElement
   private readonly chip: HTMLParagraphElement
+  private readonly elapsedLine: HTMLParagraphElement
   private readonly status: HTMLParagraphElement
   private readonly count: HTMLParagraphElement
   private readonly sources: HTMLUListElement
   private readonly result: HTMLParagraphElement
+  private readonly cancelButton: HTMLButtonElement
   private readonly sourceRows = new Map<string, HTMLLIElement>()
+  private readonly elapsed: ElapsedTimer
+  /** What {@link cancel} aborts. Set per pass by {@link start}; `null` = not cancellable. */
+  private canceller: (() => void) | null = null
 
   private state: ResearchState = 'idle'
   private siteCount = 0
@@ -308,6 +336,21 @@ export class ResearchProgressSurface {
     this.chip.className = 'siyur-research__chip'
     this.chip.textContent = 'RESEARCHING…'
 
+    /**
+     * The elapsed line (UX-13). `aria-hidden`, deliberately: the whole surface is an
+     * `aria-live="polite"` region, so a figure that changes every second would have a
+     * screen reader announcing a number over the phase changes that actually carry the
+     * news. It is a *reassurance* for someone watching a slow pass, and the phase line
+     * beside it is the announcement.
+     */
+    this.elapsedLine = document.createElement('p')
+    this.elapsedLine.className = 'siyur-research__elapsed'
+    this.elapsedLine.setAttribute('aria-hidden', 'true')
+    this.elapsedLine.hidden = true
+    this.elapsed = new ElapsedTimer((text) => {
+      this.elapsedLine.textContent = `${text} elapsed`
+    }, options)
+
     this.status = document.createElement('p')
     this.status.className = 'siyur-research__status'
 
@@ -320,7 +363,32 @@ export class ResearchProgressSurface {
     this.result = document.createElement('p')
     this.result.className = 'siyur-research__result'
 
-    this.root.append(this.chip, this.status, this.count, this.sources, this.result)
+    /**
+     * Stop it. A pass can run for minutes against a single-worker API, and until this
+     * button existed the only ways out were reloading the tab or waiting.
+     *
+     * The listener is bound once and reads {@link canceller} at click time, so a surface
+     * whose pass is not cancellable (a caller that supplied its own `signal`) fires
+     * nothing — the button is hidden in that case, and hidden **and** inert rather than
+     * hidden alone.
+     */
+    this.cancelButton = document.createElement('button')
+    this.cancelButton.type = 'button'
+    this.cancelButton.className = 'siyur-research__cancel'
+    this.cancelButton.dataset.action = 'cancel-research'
+    this.cancelButton.textContent = 'Stop this research pass'
+    this.cancelButton.hidden = true
+    this.cancelButton.addEventListener('click', () => this.cancel())
+
+    this.root.append(
+      this.chip,
+      this.elapsedLine,
+      this.status,
+      this.count,
+      this.sources,
+      this.result,
+      this.cancelButton,
+    )
     this.container.append(this.root)
   }
 
@@ -334,8 +402,15 @@ export class ResearchProgressSurface {
     return this.state
   }
 
-  /** Begin a pass: clear the previous result so nothing stale is left on screen. */
-  start(): void {
+  /**
+   * Begin a pass: clear the previous result so nothing stale is left on screen.
+   *
+   * @param cancel - how to abort the request behind this pass. Given one, the surface
+   * offers a cancel control; without one it offers none, because a "stop" that only
+   * changes the screen while the server keeps working is the same class of lie as a
+   * state message that contradicts its own attribute.
+   */
+  start(cancel?: () => void): void {
     this.setState('running')
     this.root.hidden = false
     this.chip.hidden = false
@@ -347,6 +422,27 @@ export class ResearchProgressSurface {
     this.count.textContent = ''
     this.result.textContent = ''
     delete this.root.dataset.phase
+    this.canceller = cancel ?? null
+    this.cancelButton.hidden = !cancel
+    this.cancelButton.disabled = false
+    this.cancelButton.textContent = 'Stop this research pass'
+    this.elapsedLine.hidden = false
+    this.elapsed.start()
+  }
+
+  /**
+   * Ask for the pass to stop.
+   *
+   * The **screen does not jump to "cancelled" here.** Aborting rejects the in-flight
+   * `fetch`, which lands in {@link fail}, which is where the terminal state is set — one
+   * place, so the surface cannot report a cancellation that did not happen. Until then
+   * the button says what it is doing, which is `Stopping…`, not nothing.
+   */
+  cancel(): void {
+    if (this.state !== 'running' || !this.canceller) return
+    this.cancelButton.disabled = true
+    this.cancelButton.textContent = 'Stopping…'
+    this.canceller()
   }
 
   /** Handlers to hand to {@link streamResearch}. */
@@ -402,6 +498,7 @@ export class ResearchProgressSurface {
   finish(): void {
     if (this.state !== 'running') return
     this.chip.hidden = true
+    this.stopCounting()
 
     const summary = this.summary
     if (!summary) {
@@ -447,13 +544,35 @@ export class ResearchProgressSurface {
     this.result.textContent = totals
   }
 
-  /** The pass failed outright (transport, `401`, `409`). */
+  /** The pass failed outright (transport, `401`, `409`) — or the user stopped it. */
   fail(error: unknown): void {
     this.chip.hidden = true
     this.root.hidden = false
+    this.stopCounting()
+    if (isAbortError(error)) {
+      // Not a failure, and specifically not a half-written commons: `api/areas.py` commits
+      // **after** the stream completes and rolls back otherwise, so a client that stops
+      // mid-stream leaves the data exactly as it was. Saying so is the difference between
+      // a user who tries again and one who wonders what they broke.
+      this.setState('cancelled')
+      this.result.textContent =
+        'Research stopped at your request. Nothing from this pass was saved, so the ' +
+        'commons is unchanged.'
+      return
+    }
     this.setState('error')
     const reason = error instanceof Error ? error.message : String(error)
     this.result.textContent = `Research could not complete: ${reason}`
+  }
+
+  /** Freeze the elapsed figure and retire the cancel control. */
+  private stopCounting(): void {
+    this.elapsed.stop()
+    // Repainted once on the way out so the final figure is the pass's real duration and
+    // not whatever the last one-second tick happened to show.
+    this.elapsed.paint()
+    this.canceller = null
+    this.cancelButton.hidden = true
   }
 
   private setState(state: ResearchState): void {
@@ -462,6 +581,8 @@ export class ResearchProgressSurface {
   }
 
   destroy(): void {
+    // An interval on a removed surface repaints a detached node once a second, forever.
+    this.elapsed.stop()
     this.root.remove()
   }
 }
@@ -477,14 +598,26 @@ export function mountResearchProgress(
 /**
  * Run a pass and drive a surface with it — the whole of "trigger research" in
  * one call, always ending in a terminal state (`finish` on any exit path).
+ *
+ * **The pass gets an `AbortController` unless the caller brought its own signal.** That
+ * is what makes the surface's cancel control real rather than cosmetic: the button
+ * aborts the `fetch`, the rejection lands in `surface.fail`, and the server sees the
+ * disconnect and rolls its transaction back. A caller that supplies `options.signal`
+ * keeps ownership of cancellation and the surface offers no button, because two things
+ * cancelling one request is a race with a wrong answer available.
  */
 export async function runResearch(
   surface: ResearchProgressSurface,
   options: StreamResearchOptions,
 ): Promise<ResearchSummary | null> {
-  surface.start()
+  const controller = options.signal ? null : new AbortController()
+  surface.start(controller ? () => controller.abort() : undefined)
   try {
-    const summary = await streamResearch({ ...options, handlers: surface.handlers() })
+    const summary = await streamResearch({
+      ...options,
+      ...(controller ? { signal: controller.signal } : {}),
+      handlers: surface.handlers(),
+    })
     surface.finish()
     return summary
   } catch (error) {

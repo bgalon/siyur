@@ -43,6 +43,13 @@ export {
   type ResolveAreaOptions,
 } from './areas'
 export {
+  ElapsedTimer,
+  formatElapsed,
+  monotonicNow,
+  type ElapsedOptions,
+  type MonotonicClock,
+} from './elapsed'
+export {
   DelimitControl,
   isUsableBbox,
   mountDelimitControl,

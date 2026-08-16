@@ -3,6 +3,7 @@
 :root {
   --siyur-paper: #f4efe4;
   --siyur-paper-deep: #efe7d5;
+  --siyur-desk: #e7e2d5;
   --siyur-ink: #2b2117;
   --siyur-ink-soft: #5c503f;
   --siyur-stone: #8a7a63;
@@ -13,10 +14,26 @@
   --siyur-shadow: 0 2px 8px rgb(43 33 23 / 12%);
 }
 
+/* **Border-box, globally — measured, not conventional.**
+   A form control is the one element whose `width: auto` does not mean "fill the space":
+   stretched as a grid item under `content-box`, an `<input>` sets its **content** box to
+   the column and then adds its own padding and border on top. With the plan form's 9px
+   inline padding that is 20px of overflow per control, and it rendered
+   **398px inside a 390px viewport** — the first horizontal overflow this app has had
+   (the audit measured `scrollWidth === clientWidth` at 375, 390, 430 and 1440, and that
+   record is worth keeping). `.siyur-marker__pin` had already been spot-fixed this way;
+   this generalises it instead of waiting for the next control to hit it. */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
 html,
 body {
   margin: 0;
   height: 100%;
+  background: var(--siyur-desk);
 }
 
 #map {
@@ -37,7 +54,11 @@ body {
   background: #efe9dc; /* paper-deep */
   color: #2b2117; /* ink */
   font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 8.5px;
+  /* 11px, not the mock's 8–8.5px. The mock's figure is quoted at a 340px design width;
+     rendered at a real 375–430px it measured 8.5px and the UX audit (2026-08-15, UX-15)
+     read it as illegible. A stamp nobody can read discharges ADR-0019 on paper only, so
+     the chip floor is 11px and the body floor 14px — the audit's F-02 numbers. */
+  font-size: 11px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
   white-space: nowrap;
@@ -60,7 +81,7 @@ body {
   margin-inline-end: 0.45em;
   color: #6f6558;
   font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 8.5px;
+  font-size: 11px; /* the chip floor — see `.siyur-chip` */
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
@@ -122,7 +143,7 @@ body {
   border-radius: 99px;
   background: rgb(239 233 220 / 92%);
   color: #2b2117;
-  font-size: 12px;
+  font-size: 14px;
   white-space: nowrap;
   pointer-events: none; /* the label must never steal the dot's hover/click */
 }
@@ -132,7 +153,7 @@ body {
   display: flex;
   align-items: baseline;
   padding: 0.2em 0;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .siyur-popup__name .siyur-value__text {
@@ -143,9 +164,21 @@ body {
   color: #6f6558;
 }
 
-/* --- Attribution control (ODbL always visible — Constitution Article V) --- */
+/* --- Attribution control (ODbL always visible — Constitution Article V) ---
+   **The one control deliberately below the 44px tap floor, and why.** ODbL requires the
+   credit to be *visible and its licence reachable*, not that it be a comfortable button:
+   a 44px-tall credit strip on a 390px phone would occupy the map it is crediting, which
+   is how it came to be hidden under the sheet in the first place (UX-11). So the text
+   goes to the 12px legible floor and the links get a ~26px target — enlarged, and
+   honestly short of 44. `test/mobile-layout.test.ts` records this as an exception by
+   name rather than letting it pass unremarked. */
 .siyur-attrib {
-  font-size: 11px;
+  font-size: 12px;
+}
+
+.siyur-attrib a {
+  display: inline-block;
+  padding-block: 6px;
 }
 
 /* --- Commons coverage card (T052 / US2) — reuse instead of re-researching --- */
@@ -154,7 +187,7 @@ body {
   border-radius: 10px;
   background: #fff;
   box-shadow: 0 2px 10px rgb(0 0 0 / 12%);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.45;
 }
 
@@ -166,23 +199,34 @@ body {
 .siyur-coverage__staleness {
   margin: 0.2em 0 0;
   color: #6f6558;
-  font-size: 11px;
+  font-size: 14px;
 }
 
 .siyur-coverage__action {
+  min-block-size: 44px; /* tap-target floor — not decoration */
   margin-block-start: 0.8em;
-  padding: 0.5em 1em;
+  padding-inline: 1.1em;
+  padding-block: 0.5em;
   border: 0;
   border-radius: 999px;
   background: #1b6b4f;
   color: #fff;
   font: inherit;
+  font-size: 15px;
   cursor: pointer;
 }
 
 .siyur-coverage__action:disabled {
   background: #b8b2a8;
   cursor: not-allowed;
+}
+
+/* A pass in flight is a third state, not "disabled". The button says what it is doing
+   and refuses a second tap — the API's `409` guard is the last line of defence against a
+   doubled pass, not the first (UX-08). */
+.siyur-coverage__action[data-pending='true'] {
+  background: var(--siyur-stone);
+  cursor: progress;
 }
 
 /* --- Phase 1 shell: floating controls over the map + bottom sheet ---
@@ -196,16 +240,23 @@ body {
   font-family: 'Work Sans', system-ui, sans-serif;
 }
 
+/* **The sheet clears the bottom edge, because the ODbL attribution paints there.**
+   Measured at 375/390/430 **and 1440**: `document.elementFromPoint` over the attribution's
+   centre returned `.siyur-sheet` — the credit was covered at every width the app has ever
+   been looked at (UX-11). That is a **licence** failure (Constitution Article V), not a
+   layout one, so the sheet is anchored above a reserved 28px strip rather than flush.
+   28px, not 24: the control measures 24px tall and the extra 4px is the margin MapLibre
+   gives it. Below 760px the sheet leaves the overlay entirely (see the shell block at the
+   end of this file) and the question stops arising. */
 .siyur-sheet {
   position: fixed;
   z-index: 2;
-  inset-block-end: 0;
+  inset-block-end: 28px;
   inset-inline: 0;
   max-height: 55vh;
   overflow-y: auto;
   padding: 10px 18px 16px;
-  border-start-start-radius: 18px;
-  border-start-end-radius: 18px;
+  border-radius: 18px;
   background: var(--siyur-paper);
   box-shadow: 0 -8px 30px rgb(43 33 23 / 22%);
   font-family: 'Work Sans', system-ui, sans-serif;
@@ -233,11 +284,12 @@ body {
   align-items: center;
   gap: 8px;
   flex: 1 1 240px;
-  min-width: 0;
+  min-inline-size: 0;
+  min-block-size: 48px; /* tap-target floor — the search pill is the only way in on a phone */
   /* The extra inline-start room is for the ⌕ glyph, so it must follow the text
      direction — a 4-value shorthand would pin it to the left in RTL. */
-  padding-block: 6px;
   padding-inline: 14px 8px;
+  padding-block: 2px;
   border: 1px solid var(--siyur-border);
   border-radius: 99px;
   background: #fff;
@@ -245,17 +297,24 @@ body {
 }
 
 .siyur-delimit__glyph {
+  /* Still `--siyur-stone`, still 4.16:1 — the audit's one contrast failure (UX-16) is
+     F-13, Tier 3, and is deliberately NOT fixed here so this pass stays the Tier-1 diff
+     it claims to be. One token, whenever F-13 is scheduled. */
   color: var(--siyur-stone);
 }
 
 .siyur-delimit__input {
   flex: 1;
-  min-width: 0;
+  min-inline-size: 0;
+  min-block-size: 44px;
   border: 0;
   background: none;
   color: var(--siyur-ink);
   font: inherit;
-  font-size: 14px;
+  /* 16px, above the 14px floor on purpose: iOS Safari zooms the whole page in when a
+     text input smaller than 16px takes focus, and a map app that zooms on every search
+     is unusable in a different way than the one this pass is fixing. */
+  font-size: 16px;
 }
 
 .siyur-delimit__input:focus {
@@ -264,14 +323,15 @@ body {
 
 .siyur-delimit__submit,
 .siyur-delimit__viewport {
-  min-height: 34px;
-  padding: 0.5em 1em;
+  min-block-size: 44px; /* tap-target floor — not decoration */
+  padding-inline: 1.1em;
+  padding-block: 0.5em;
   border: 1px solid var(--siyur-border);
   border-radius: 99px;
   background: var(--siyur-paper);
   color: var(--siyur-ink);
   font: inherit;
-  font-size: 13px;
+  font-size: 15px;
   cursor: pointer;
 }
 
@@ -288,14 +348,34 @@ body {
   cursor: progress;
 }
 
-.siyur-delimit__hint {
+.siyur-delimit__hint,
+.siyur-delimit__busy {
   flex-basis: 100%;
   margin: 0;
-  padding: 6px 12px;
+  padding-inline: 12px;
+  padding-block: 6px;
   border-radius: 8px;
   background: var(--siyur-paper);
+  font-size: 14px;
+}
+
+.siyur-delimit__hint {
   color: var(--siyur-route);
-  font-size: 12px;
+}
+
+/* **A name search takes up to a minute** (`resolve_area.py`: 73 s unwindowed, measured
+   61.6 s end to end in the audit) and the old control said nothing at all for the whole
+   of it — the reachable path "appears to do nothing for a minute". So the busy line
+   states what is running and counts, in its own element rather than in the hint's, so a
+   degenerate-viewport message and a running search cannot overwrite each other. */
+.siyur-delimit__busy {
+  color: var(--siyur-ink-soft);
+}
+
+.siyur-delimit__elapsed {
+  margin-inline-start: 0.4em;
+  font-family: var(--siyur-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 /* --- Research progress (ux-handoff § Screens 2 "Research & collect") ---
@@ -303,7 +383,7 @@ body {
    controls; the hand-drawn schematic strip is M2 per INTEGRATION.md. */
 .siyur-research {
   margin-block-start: 12px;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.45;
 }
 
@@ -311,9 +391,50 @@ body {
   margin: 0 0 4px;
   color: var(--siyur-route);
   font-family: var(--siyur-mono);
-  font-size: 8.5px;
+  font-size: 11px; /* the chip floor — see `.siyur-chip` */
   letter-spacing: 0.12em;
   animation: siyur-pulse 2s infinite;
+}
+
+/* --- Elapsed time and cancel (UX-13) ---
+   A research pass sat on one frozen label for over nine minutes with no way to tell
+   working from hung and no way to stop it. The elapsed line is a **monotonic duration**,
+   never a clock reading: `performance.now()` deltas, formatted as m/s, so there is no
+   date, no zone and nothing for a device timezone to shift. */
+.siyur-research__elapsed {
+  margin: 0 0 4px;
+  color: var(--siyur-ink-soft);
+  font-family: var(--siyur-mono);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+}
+
+.siyur-research__cancel {
+  min-block-size: 44px; /* tap-target floor — not decoration */
+  margin-block-start: 8px;
+  padding-inline: 1.1em;
+  padding-block: 0.5em;
+  border: 1px solid var(--siyur-border);
+  border-radius: 999px;
+  background: var(--siyur-paper-deep);
+  color: var(--siyur-ink);
+  font: inherit;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.siyur-research__cancel:disabled {
+  color: var(--siyur-ink-soft);
+  cursor: progress;
+}
+
+/* Cancelled is its own outcome: nothing was found, nothing failed, and — because the API
+   commits only after the stream completes (`api/areas.py` § transaction boundary) —
+   nothing was written either. */
+.siyur-research[data-state='cancelled'] .siyur-research__result {
+  color: var(--siyur-ink-soft);
+  font-weight: 600;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -359,7 +480,7 @@ body {
   border-radius: 99px;
   background: var(--siyur-paper-deep);
   font-family: var(--siyur-mono);
-  font-size: 9px;
+  font-size: 11px; /* the chip floor — see `.siyur-chip` */
   letter-spacing: 0.1em;
   text-transform: uppercase;
 }
@@ -391,4 +512,84 @@ body {
 .siyur-research[data-state='complete'] .siyur-research__result {
   color: var(--siyur-park);
   font-weight: 600;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════════
+   The phone shell — below 760px nothing overlays anything (F-01)
+   ══════════════════════════════════════════════════════════════════════════════════
+
+   **The change this pass exists for.** The desktop shell above floats three fixed
+   layers over a full-bleed map, and on a phone they land on top of each other and on
+   the map. Measured at 390 × 844 before this rule, against the live app:
+
+     - `Use this view` (the **0.18 s** delimit path) was painted under
+       `.siyur-plan-panel__title`. There was no scroll position at which it was hittable.
+     - The ODbL attribution hit-tested to `.siyur-sheet` — a licence failure.
+     - The plan panel's own `max-height: 40vh` clipped `Plan this day →`, `Approve this
+       day` and both validation messages below an inner scroller with no affordance.
+     - **0 of 957** site markers hit-tested to themselves: the map was 100% covered.
+
+   All four are one bug — *overlay on a screen with no room to overlay* — so this is one
+   fix: below 760px the layers stop being layers and become a document. Map first
+   (55svh of it, sized so a thumb can still pan), then the delimit controls, then the
+   sheet, then the plan panel, in DOM order, all in normal flow. The page scrolls; no
+   inner scroller clips anything; the map's own attribution scrolls with the map it
+   credits and nothing is painted over it.
+
+   The mock's floating search pill (ux-handoff § Screens 1) becomes an in-flow row
+   directly under the map. That is a deliberate deviation: the pill is only "floating"
+   in a design where the map fills the screen, and the reachable form of the same
+   control on a 390px phone is one that nothing can be painted over.
+
+   `svh` (small viewport height) rather than `vh`: on mobile Safari `vh` is the
+   URL-bar-collapsed height, so `55vh` of map plus the rest overflows the first paint by
+   the bar's height. The plain `vh` line above it is the fallback for anything without
+   `svh`, which is the same number those browsers were already using. */
+@media (width <= 760px) {
+  html,
+  body {
+    height: auto;
+    min-height: 100%;
+  }
+
+  #map {
+    position: relative;
+    inset: auto;
+    block-size: 55vh;
+    block-size: 55svh;
+    /* A map smaller than this is a decoration, not a map — the audit measured 154px. */
+    min-block-size: 300px;
+  }
+
+  /* Only the two surfaces whose `position: fixed` is declared *in this file*. The plan
+     panel's base rule lives in `plan.css`, which the bundler concatenates after this
+     one, so its override has to live there too — see the note above that rule. A media
+     query adds no specificity; only order decides. */
+  .siyur-controls,
+  .siyur-sheet {
+    position: static;
+  }
+
+  .siyur-controls {
+    padding-inline: 12px;
+    padding-block: 12px 0;
+  }
+
+  .siyur-sheet {
+    /* No cap and no inner scroller: the page is the scroller now. A `max-height` here
+       is what put two of the audit's findings below a fold nobody could see. */
+    max-height: none;
+    overflow-y: visible;
+    padding-inline: 12px;
+    padding-block: 12px 16px;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  /* The grip is the mock's drag affordance for a sheet that floats. Docked in flow it
+     would advertise a gesture that does nothing, which is the same class of untruth as
+     a state message that contradicts its own attribute. */
+  .siyur-sheet__grip {
+    display: none;
+  }
 }

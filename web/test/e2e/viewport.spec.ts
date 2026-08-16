@@ -71,6 +71,21 @@ const CHIP_ALLOWLIST = [
  */
 const NOT_A_CONTROL = ['.siyur-marker', '.siyur-marker__pin', '.maplibregl-canvas'] as const
 
+/**
+ * **Tap-target exemptions — WCAG 2.5.5's explicit "inline" case:** a target inside a
+ * sentence or block of text. Deliberately separate from {@link CHIP_ALLOWLIST}, which is a
+ * *type-size* exemption — one list meaning two things is how an allowlist stops being read.
+ *
+ * One entry, with its reason, so widening it is a visible diff:
+ *
+ * `.maplibregl-ctrl-attrib a` — the ODbL credit is inline prose with a link in it (~78×12).
+ * A 44px credit strip would consume the map it credits. The obligation this carries is that
+ * the credit is **legible and unoccluded**, and that is asserted separately and strictly by
+ * T-05 at four widths including 1440 — so the link is exempt from *being 44px*, and from
+ * nothing else. It must still pass T-02 (reachable) and T-02b (not clipped).
+ */
+const INLINE_TEXT_TARGETS = ['.maplibregl-ctrl-attrib a'] as const
+
 const INTERACTIVE = 'button, [role="button"], a[href], input, select, textarea, summary'
 
 const PHONES = [
@@ -136,7 +151,7 @@ async function measure(page: Page): Promise<Report> {
   await page.waitForFunction(() => document.fonts.status === 'loaded').catch(() => undefined)
 
   return page.evaluate(
-    ({ interactive, notControl, chips, tapMin, bodyMin, chipMin }) => {
+    ({ interactive, notControl, inlineTargets, chips, tapMin, bodyMin, chipMin }) => {
       const describe = (el: Element): string => {
         const tag = el.tagName.toLowerCase()
         const raw = typeof el.className === 'string' ? el.className.trim() : ''
@@ -295,6 +310,10 @@ async function measure(page: Page): Promise<Report> {
       for (const el of controls) {
         const r = el.getBoundingClientRect()
         if (r.width >= tapMin && r.height >= tapMin) continue
+        // WCAG 2.5.5 inline exception — and *only* the size check. These elements are still
+        // required to be reachable (T-02) and unclipped (T-02b); they are simply allowed to
+        // be the size of the text they sit in.
+        if (inlineTargets.some((sel) => el.matches(sel))) continue
         undersized.push({
           label: describe(el),
           width: Math.round(r.width * 10) / 10,
@@ -419,6 +438,7 @@ async function measure(page: Page): Promise<Report> {
     {
       interactive: INTERACTIVE,
       notControl: NOT_A_CONTROL as readonly string[],
+      inlineTargets: INLINE_TEXT_TARGETS as readonly string[],
       chips: CHIP_ALLOWLIST as readonly string[],
       tapMin: TAP_TARGET_MIN,
       bodyMin: BODY_TYPE_MIN,
@@ -455,11 +475,17 @@ const KNOWN_RED: Readonly<Record<string, readonly string[]>> = {
   //        wraps under the panel once it runs out of inline space, so the audit's
   //        headline defect is genuinely width-dependent and a single marker across
   //        all three widths would have hidden that.
-  'T-02': ['375×667', '390×844', '430×932'],
+  // F-01 (ADR-0035 flow column) cleared 375 and 390. **430 did not flip**: the control
+  // row only wraps under the panel once it runs out of inline space, so at 430 the
+  // occlusion survives the flow column. Keyed per width, which is what made that
+  // visible — a single marker across all three would have been deleted wholesale here.
+  'T-02': ['430×932'],
   // T-02b, clipped out of `.siyur-plan-panel`'s 40vh `overflow-y: auto` box:
   //   375: 5 of 13 · 390: 4 of 13 · 430: 2 of 13 — `Plan this day →` and
   //   `Approve this day` are below the fold of an inner scroller at every width.
-  'T-02b': ['375×667', '390×844', '430×932'],
+  // T-02b is GREEN at every width: the 40vh `overflow-y: auto` box is gone, so nothing
+  // is clipped out of an inner scroller any more. Row deleted rather than emptied.
+
   // T-11 (F-02) deletes these six. 11 of 13 controls under 44px at every width, and
   // 17 text elements below their floor (9px form labels through 13.5px buttons).
   //
@@ -468,12 +494,18 @@ const KNOWN_RED: Readonly<Record<string, readonly string[]>> = {
   //   · `textarea.siyur-plan-form__input` — 342×50, which clears it by accident of
   //     `rows="2"` × inherited line-height. Worth naming, because a later
   //     `line-height` tweak would move that number with nothing to explain why.
-  'T-03-tap': ['375×667', '390×844', '430×932'],
+  // T-03-tap is GREEN at every width. Every control now clears 44px except the ODbL
+  // credit link, which is exempt under WCAG 2.5.5's inline case via
+  // INLINE_TEXT_TARGETS — and exempt from the SIZE check only; T-02, T-02b and T-05
+  // still hold it to being reachable, unclipped and unoccluded. Row deleted.
+
   'T-03-type': ['375×667', '390×844', '430×932'],
   // T-12 (F-03) deletes these four. `.siyur-sheet` is bottom-anchored with
   // `inset-inline: 0` at EVERY width, so the ODbL credit is painted underneath it on
   // desktop too — the only finding in the audit that also fails at 1440.
-  'T-05': ['375×667', '390×844', '430×932', '1440×900'],
+  // T-05 is GREEN at all four widths including 1440, so the ODbL obligation is now
+  // discharged everywhere it is displayed. Row deleted.
+
 }
 
 /**
@@ -597,8 +629,102 @@ for (const phone of PHONES) {
         `horizontal overflow: scrollWidth ${report.scrollWidth} > clientWidth ${report.clientWidth}`,
       ).toBe(report.clientWidth)
     })
+
+    /**
+     * **T-06 — a map product gives the map a usable share of the screen.**
+     *
+     * Ported from `mobile-layout.spec.ts`, which this gate otherwise superseded; it was
+     * the one assertion that suite made and this one did not. UX-10 measured the map at
+     * **154 px — 18.3 %** of a 390×844 screen with **0 of 957** markers reachable.
+     *
+     * Deliberately NOT "the element is 844 px tall". The old full-bleed map *did* measure
+     * 390×844 and was still unusable, because three layers were painted over all of it —
+     * so element size answers a different question from the one that matters. What is
+     * measured is the band a tap actually lands on: sample down the map's centre line and
+     * count the rows where `elementFromPoint` returns the map itself.
+     *
+     * The floor is 40 %, not the 55 % the flow column currently achieves. A gate should
+     * fail when the product becomes unusable, not whenever a layout is retuned.
+     */
+    test('T-06 · the map gets a usable share of the screen', async ({ page }) => {
+      // Same navigation and waits `measure()` performs. Without them this evaluated
+      // against a blank page and reported 0.0% — which the gate caught on its first run,
+      // and which is exactly the vacuous pass a weaker assertion would have shipped.
+      await page.goto('/')
+      await page.waitForSelector('.siyur-delimit__viewport', { state: 'attached' })
+      await page.waitForSelector('.maplibregl-ctrl-attrib', { state: 'attached' })
+
+      const { mounted, share } = await page.evaluate(() => {
+        const map = document.getElementById('map')
+        if (!map) return { mounted: false, share: 0 }
+        const box = map.getBoundingClientRect()
+        let reachable = 0
+        const step = 8
+        for (let y = Math.max(0, box.y); y < Math.min(box.bottom, innerHeight); y += step) {
+          const top = document.elementFromPoint(Math.min(box.x + box.width / 2, innerWidth - 1), y)
+          if (top && map.contains(top)) reachable += step
+        }
+        return { mounted: true, share: reachable / innerHeight }
+      })
+      // A blank page yields 0.0%, which reads as a plausible layout regression rather than
+      // "nothing rendered" — this test shipped that way for one run and was caught only
+      // because the number was implausible. Assert the page is actually there first, so the
+      // two failures are never confused again.
+      expect(mounted, 'the map element never mounted — this is a harness failure, not a layout one').toBe(true)
+      expect(
+        share,
+        `the map is reachable across only ${(share * 100).toFixed(1)}% of the viewport height`,
+      ).toBeGreaterThanOrEqual(0.4)
+    })
   })
 }
+
+/**
+ * **T-07 — a control that issues a request must visibly say something.**
+ *
+ * FAIL-013's guardrail (2), which that entry does not close without. It could only ever go
+ * green once the pending states of F-05 existed, which is why it lands here rather than with
+ * the entry itself.
+ *
+ * The defect it catches: *the app knew something and did not say it.* `Find` issued a request,
+ * the server answered `404` with twenty disambiguation candidates, and the UI stayed exactly as
+ * it was — so a user could not distinguish "still working" from "failed" from "ignored me".
+ * UX-02, UX-06, UX-07 and UX-13 are that same defect wearing different clothes.
+ *
+ * Deliberately weak about *what* appears and strict about *something* happening. A result, a
+ * rendered error, or an explicit pending indicator all pass; **unchanged is a failure**.
+ * Anything stronger would pin one design, and this has to survive the surface being redesigned.
+ *
+ * It passes here on the *error* path: with no session the request 401s, and saying so is the
+ * correct behaviour. A gate needing a happy path would need a fixture, and would then be
+ * testing the fixture.
+ */
+test.describe('T-07 · a request-triggering control reaches a terminal visible state', () => {
+  test.use({ viewport: { width: 390, height: 844 } })
+
+  test('activating `Find` changes the DOM within a bounded time', async ({ page }) => {
+    await page.goto('/')
+    await page.waitForSelector('.siyur-delimit__search', { state: 'attached' })
+
+    const region = '.siyur-delimit'
+    const before = await page.locator(region).innerHTML()
+
+    await page.locator('.siyur-delimit__input').fill('an area that does not exist anywhere')
+    await page.locator('.siyur-delimit__submit').click()
+
+    // 10s: long enough for a slow answer, short enough that "nothing happened" is a
+    // conclusion rather than impatience.
+    await expect
+      .poll(async () => (await page.locator(region).innerHTML()) !== before, {
+        timeout: 10_000,
+        message:
+          'the delimit region was byte-identical 10s after activating `Find` — no pending ' +
+          'state, no result, no error. The app either knew something and did not say it, ' +
+          'or issued no request at all.',
+      })
+      .toBe(true)
+  })
+})
 
 /**
  * **T-05 — the ODbL attribution, at every width including desktop.**

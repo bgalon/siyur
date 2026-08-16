@@ -1,9 +1,8 @@
 # 0035 — Below 760 px the app is one scroll column, not floating panels
 
-- Status: proposed
+- Status: accepted
 - Decision Maker(s): Ben
-- drafted-by: claude-code (Opus 5) · approved-by: — · Date: 2026-08-15
-
+- drafted-by: claude-code (Opus 5) · approved-by: Ben · Date: 2026-08-15 · accepted: 2026-08-15
 ## Context and Problem Statement
 
 `docs/design/ux-handoff/README.md` leads with a mobile-first contract: 375–430 px, tap targets

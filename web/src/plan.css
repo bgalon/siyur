@@ -10,12 +10,13 @@
    pass needs no new rules. */
 
 /* --- The panel itself ---
-   Beside the map, not over the bottom sheet: the sheet is capped at 55vh and holds
-   the research surfaces, and a reviewed day is the longest thing this app renders. */
+   On a wide screen: beside the map, not over the bottom sheet — the sheet is capped at
+   55vh and holds the research surfaces, and a reviewed day is the longest thing this app
+   renders. */
 .siyur-plan-panel {
   position: fixed;
   z-index: 3;
-  inset-block: 58px 12px;
+  inset-block: 58px 40px; /* 40px: clears the 28px attribution strip the sheet leaves */
   inset-inline-end: 12px;
   width: min(400px, 92vw);
   overflow-y: auto;
@@ -25,31 +26,53 @@
   box-shadow: var(--siyur-shadow), 0 10px 34px rgb(43 33 23 / 22%);
   color: var(--siyur-ink);
   font-family: 'Work Sans', system-ui, sans-serif;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.45;
 }
 
-/* Narrow screens: the map keeps the top half, the panel takes the bottom — above
-   the sheet's own 55vh so the two never overlap. */
+/* **Below 760px this panel is a document section, not a layer** — the last of the four
+   surfaces `style.css`'s shell block un-stacks (F-01). What was here before was
+   `inset-block: 58px auto; max-height: 40vh` over the map, and it produced three of the
+   audit's findings on its own: it covered `Use this view` at y=66 (UX-01, unreachable in
+   *every* scroll state), it clipped 294px of its own content at 390px — including both
+   primary CTAs (UX-05) — and it rendered validation errors at y≈412 outside its own
+   visible band without scrolling them into view (UX-06). A cap plus an overlay on a
+   375px screen cannot be made to work; the cap and the overlay both go. */
+/* **`position: static` is declared HERE, in the file that declares `position: fixed`,
+   and that is not a style preference — it is the difference between working and not.**
+   A media query adds no specificity, so an override only wins by coming later in the
+   *concatenated* stylesheet. This rule first lived in `style.css`'s shell block; both
+   files ship, `main.ts` imports `style.css` before `plan.css`, and the bundler
+   concatenates in that order — so `plan.css`'s base `position: fixed` came **after** the
+   override and won. Measured in the **built** app (`dist/assets/index-*.css`, Chromium
+   at 375 × 667): the panel stayed `fixed` with `inset: auto`, which makes a fixed box
+   shrink-to-fit — it rendered **398px wide inside a 375px viewport**, the first
+   horizontal overflow this app has ever had, and dragged seven descendants past the edge
+   with it. The dev server applied it and the build did not: a stylesheet scan asserting
+   "the declaration exists in a `<= 760px` block" was true of both.
+   `test/e2e/mobile-layout.spec.ts` measures the artifact, which is what caught it. */
 @media (width <= 760px) {
   .siyur-plan-panel {
-    inset-block: 58px auto;
-    inset-inline: 8px;
+    position: static;
+    inset: auto;
     width: auto;
-    max-height: 40vh;
+    max-height: none;
+    overflow-y: visible;
+    margin-inline: 12px;
+    margin-block: 0 20px;
   }
 }
 
 .siyur-plan-panel__title {
   margin: 0 0 2px;
-  font-size: 15px;
+  font-size: 17px;
   letter-spacing: 0.01em;
 }
 
 .siyur-plan-panel__hint {
   margin: 0 0 10px;
   color: var(--siyur-ink-soft);
-  font-size: 12px;
+  font-size: 14px;
 }
 
 /* --- The request form ---
@@ -57,6 +80,12 @@
    one row, the date and the day start on the next — and the reviewed day is visible
    without scrolling past the form that produced it. The pairing falls out of the
    field order `src/plan/form.ts` already mounts; nothing here reorders it. */
+/* `minmax(0, 1fr)`, not `1fr`. A bare `1fr` is `minmax(auto, 1fr)`, and `auto` floors the
+   track at its content's **min-content** width — which for an `<input>` is its default
+   `size` (about 20 characters), not zero. Measured in the built app: the two-column grid
+   refused to go below **398px inside a 375px viewport**, taking every full-width item
+   (`grid-column: 1 / -1`) with it. Same failure `library.css` records for a flex row, and
+   the same remedy: let the track reach zero and let the control fill it. */
 .siyur-plan-form {
   display: grid;
   /* `minmax(0, …)`, not `1fr`. A bare `1fr` track is `minmax(auto, 1fr)`, and an
@@ -84,30 +113,35 @@
   display: flex;
   flex-direction: column;
   gap: 3px;
+  min-inline-size: 0; /* see the grid note above — the field must be allowed to shrink */
 }
 
 .siyur-plan-form__label {
   color: var(--siyur-ink-soft);
   font-family: var(--siyur-mono);
-  font-size: 9px;
+  font-size: 11px; /* the chip floor — see `style.css` § .siyur-chip */
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
 
 .siyur-plan-form__input {
-  /* The track can shrink now; the control inside it still would not. An input's
-     intrinsic width comes from its `size`, and `.siyur-plan-form__field` is a flex
-     column whose automatic minimum is that width — so both the track and the item
-     need releasing or the form keeps its floor. */
-  min-width: 0;
-  min-height: 30px;
-  padding: 5px 9px;
+  min-block-size: 44px; /* tap-target floor — not decoration */
+  /* Two separate floors have to be released, not one. The *track* can shrink now (see the
+     grid note above), but the control inside it still would not: an input's intrinsic width
+     comes from its `size`, and `.siyur-plan-form__field` is a flex column whose automatic
+     minimum is that width. Releasing only the track leaves the form at its old floor. */
+  min-inline-size: 0;
+  inline-size: 100%;
+  padding-inline: 9px;
+  padding-block: 5px;
   border: 1px solid var(--siyur-border);
   border-radius: 7px;
   background: #fff;
   color: var(--siyur-ink);
   font: inherit;
-  font-size: 13px;
+  /* 16px for the same reason `.siyur-delimit__input` is: below 16px, focusing a text
+     input zooms the page on iOS Safari. */
+  font-size: 16px;
 }
 
 .siyur-plan-form__input:focus-visible {
@@ -120,7 +154,7 @@
   background: var(--siyur-paper-deep);
   color: var(--siyur-ink-soft);
   font-family: var(--siyur-mono);
-  font-size: 11px;
+  font-size: 14px;
 }
 
 .siyur-plan-form__problems {
@@ -136,32 +170,34 @@
 /* A named field to fix, not a general complaint — coloured like every other
    "needs your attention" surface in the app. */
 .siyur-plan-form__problem {
-  padding: 3px 0;
+  padding-block: 3px;
   color: var(--siyur-route);
-  font-size: 12px;
+  font-size: 14px;
 }
 
 /* A transport failure is not a bad field: its own block, alarm-coloured, and it
    stays visible until the next submit clears it. */
 .siyur-plan-form__failure {
   margin: 0;
-  padding: 7px 9px;
+  padding-inline: 9px;
+  padding-block: 7px;
   border: 1px solid var(--siyur-route);
   border-radius: 7px;
   background: #fbeee6;
   color: #8c3a12;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .siyur-plan-form__submit {
-  min-height: 36px;
-  padding: 0.5em 1em;
+  min-block-size: 44px; /* tap-target floor — not decoration */
+  padding-inline: 1em;
+  padding-block: 0.5em;
   border: 0;
   border-radius: 999px;
   background: var(--siyur-ink);
   color: var(--siyur-paper);
   font: inherit;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 600;
   cursor: pointer;
 }
@@ -169,6 +205,30 @@
 .siyur-plan-form__submit:disabled {
   background: var(--siyur-stone);
   cursor: progress;
+}
+
+/* --- A proposal in flight (UX-07) ---
+   The audit's emblematic defect was an element carrying `data-plan-state="proposing"`
+   while rendering *"No day has been proposed yet."* — the attribute a test asserts being
+   right and the sentence a human reads being the opposite. `render.ts` now says the true
+   thing in that branch; this is the visual half, because `grep "plan-state" plan.css`
+   returned **nothing**: the state had no treatment at all, so even the correct sentence
+   would have looked like the panel's resting state. */
+.siyur-plan[data-plan-state='proposing'] .siyur-plan__empty {
+  border-style: solid;
+  border-color: var(--siyur-route);
+  color: var(--siyur-ink);
+  font-weight: 600;
+  /* `siyur-pulse` is declared in style.css and already respects
+     `prefers-reduced-motion` there; this is the same live-work signal the research
+     chip uses, so the two in-flight surfaces read as one language. */
+  animation: siyur-pulse 2s infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .siyur-plan[data-plan-state='proposing'] .siyur-plan__empty {
+    animation: none;
+  }
 }
 
 /* --- The reviewed day --- */
@@ -187,7 +247,7 @@
 .siyur-plan__budgets {
   margin: 0 0 8px;
   color: var(--siyur-ink-soft);
-  font-size: 12px;
+  font-size: 14px;
 }
 
 /* "No day has been proposed yet" / "not enough in the commons here" — stated, not
@@ -200,7 +260,7 @@
   border-radius: 8px;
   background: var(--siyur-paper-deep);
   color: var(--siyur-ink-soft);
-  font-size: 12px;
+  font-size: 14px;
 }
 
 /* --- The timeline. Read in stop order, with the wall clock always visible. ---
@@ -245,7 +305,7 @@
   margin: 0 0 3px;
   color: var(--siyur-ink);
   font-family: var(--siyur-mono);
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
   letter-spacing: 0.06em;
 }
@@ -255,7 +315,7 @@
 .siyur-plan-stop__note {
   margin: 0;
   color: var(--siyur-stone);
-  font-size: 11.5px;
+  font-size: 14px;
   font-style: italic;
 }
 
@@ -271,12 +331,12 @@
 }
 
 .siyur-plan-stop__name .siyur-value__text {
-  font-size: 13.5px;
+  font-size: 15px;
   font-weight: 700;
 }
 
 .siyur-plan-stop .siyur-value__text {
-  font-size: 12px;
+  font-size: 14px;
 }
 
 /* Each stamped value on its own line, so a chip is unambiguously next to the value
@@ -294,7 +354,7 @@
   margin: -2px 0 8px;
   padding: 2px 10px;
   color: var(--siyur-ink-soft);
-  font-size: 11.5px;
+  font-size: 14px;
 }
 
 .siyur-plan-leg::before {
@@ -341,7 +401,7 @@
 
 .siyur-plan-feasibility__title {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 15px;
   font-weight: 700;
 }
 
@@ -373,7 +433,7 @@
   background: #fff;
   color: #8c3a12;
   font-family: var(--siyur-mono);
-  font-size: 11.5px;
+  font-size: 14px;
   overflow-wrap: anywhere;
 }
 
@@ -403,7 +463,7 @@
 .siyur-plan-warnings__title {
   margin: 0;
   color: #664400;
-  font-size: 12.5px;
+  font-size: 15px;
   font-weight: 600;
 }
 
@@ -421,7 +481,7 @@
   background: #fffaf0;
   color: #664400;
   font-family: var(--siyur-mono);
-  font-size: 11.5px;
+  font-size: 14px;
   overflow-wrap: anywhere;
 }
 
@@ -438,11 +498,12 @@
   border: 1px dashed var(--siyur-stone);
   border-radius: 6px;
   color: var(--siyur-ink-soft);
-  font-size: 11.5px;
+  font-size: 14px;
 }
 
 /* --- The two credits. ADR-0030 A1 / ADR-0019: these are requirements. ---
-   They are captions, so they are quiet — but "quiet" here is 11px `--siyur-ink-soft`,
+   They are captions, so they are quiet — but "quiet" here is 14px `--siyur-ink-soft`
+   (11px until the 2026-08-15 mobile pass; the colour, and so the ratio, is unchanged),
    measured in Chromium at **6.85:1** on paper and **6.91:1** on the failed-verdict
    background, not 8px grey-on-grey. An illegible caption discharges nothing. Both are
    given room and a rule above so they read as a statement about the block they
@@ -451,7 +512,7 @@
 .siyur-plan-verdict-credit {
   margin: 6px 0 0;
   color: var(--siyur-ink-soft);
-  font-size: 11px;
+  font-size: 14px;
   line-height: 1.4;
 }
 
@@ -477,15 +538,16 @@
 }
 
 .siyur-plan-approve__button {
-  width: 100%;
-  min-height: 38px;
-  padding: 0.55em 1em;
+  inline-size: 100%;
+  min-block-size: 44px; /* tap-target floor — not decoration */
+  padding-inline: 1em;
+  padding-block: 0.55em;
   border: 0;
   border-radius: 999px;
   background: var(--siyur-park);
   color: #fff;
   font: inherit;
-  font-size: 13.5px;
+  font-size: 15px;
   font-weight: 700;
   cursor: pointer;
 }
@@ -520,7 +582,7 @@
 .siyur-plan-approve__blocked {
   margin: 6px 0 0;
   color: var(--siyur-ink-soft);
-  font-size: 12px;
+  font-size: 14px;
 }
 
 /* --- A refused approval, where the click happened --- */
@@ -535,7 +597,7 @@
 .siyur-plan-approve-failure__message {
   margin: 0;
   color: #8c3a12;
-  font-size: 12.5px;
+  font-size: 15px;
   font-weight: 600;
 }
 
@@ -544,7 +606,7 @@
 .siyur-plan-approve-failure__superseded {
   margin: 5px 0 0;
   font-family: var(--siyur-mono);
-  font-size: 11px;
+  font-size: 14px;
   overflow-wrap: anywhere;
   user-select: all;
 }
@@ -555,5 +617,5 @@
   padding-block-start: 7px;
   border-block-start: 1px solid var(--siyur-border);
   color: var(--siyur-ink-soft);
-  font-size: 11px;
+  font-size: 14px;
 }
