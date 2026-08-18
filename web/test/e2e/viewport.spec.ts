@@ -283,7 +283,16 @@ async function measure(page: Page): Promise<Report> {
           continue
         }
 
-        const offscreen = before.bottom < 0 || before.top >= innerHeight
+        // **Decided on the CENTRE, not the top — because the hit test probes the centre.**
+        // The first version asked `before.top >= innerHeight`, which is false for an
+        // element that *starts* on screen and whose centre falls below the fold. At
+        // 430x932 the interests textarea sits at top=922 in a 932-tall viewport: not
+        // off-screen by that test, so it was never scrolled to, and the hit test then
+        // probed y=951 and got `null`. The page scrolls fine — `scrollIntoView` moves it
+        // from 922 to 437. See the KNOWN_RED note: that false positive was carried as a
+        // real defect for two days.
+        const centreY = before.top + before.height / 2
+        const offscreen = centreY < 0 || centreY >= innerHeight
         if (offscreen) {
           el.scrollIntoView({ block: 'center', inline: 'nearest' })
           scrolledIntoView += 1
@@ -466,20 +475,19 @@ const list = (rows: readonly string[]): string => rows.map((r) => `  · ${r}`).j
  * Recorded per (assertion, width) so that a partial fix shows up as a partial pass.
  */
 const KNOWN_RED: Readonly<Record<string, readonly string[]>> = {
-  // T-10 (F-01, ADR-0035 flow column) deletes these six — three T-02 and three T-02b.
+  // T-02 is GREEN at every width. F-01 (the ADR-0035 flow column) cleared 375 and 390.
   //
-  // T-02, true occlusion (something painted on top):
-  //   375 & 390: 2 of 13 — the ODbL link under `.siyur-sheet`, and
-  //        `Use this view` under the plan panel's own `Plan a day` heading
-  //   430: 1 of 13 — **`Use this view` is REACHABLE here.** The control row only
-  //        wraps under the panel once it runs out of inline space, so the audit's
-  //        headline defect is genuinely width-dependent and a single marker across
-  //        all three widths would have hidden that.
-  // F-01 (ADR-0035 flow column) cleared 375 and 390. **430 did not flip**: the control
-  // row only wraps under the panel once it runs out of inline space, so at 430 the
-  // occlusion survives the flow column. Keyed per width, which is what made that
-  // visible — a single marker across all three would have been deleted wholesale here.
-  'T-02': ['430×932'],
+  // **430 was never a real defect — it was this suite's own bug**, and it sat here for two
+  // days with a confident wrong explanation attached ("the control row wraps under the
+  // panel at 430"). The off-screen test asked `before.top >= innerHeight` while the hit
+  // test probes the centre, so an element starting at top=922 in a 932-tall viewport was
+  // never scrolled to and was then probed at y=951, below the fold, where
+  // `elementFromPoint` returns `null`. It was reported as "covered by (nothing painted
+  // there)" — which is what an unreachable control and a mis-probed one both look like.
+  //
+  // Kept in the file rather than the git log, because a red row is evidence and this one
+  // was evidence of the wrong thing. **"(nothing painted there)" should have read as a
+  // probe smell**: nothing in a rendered page is genuinely painted by nobody.
   // T-02b, clipped out of `.siyur-plan-panel`'s 40vh `overflow-y: auto` box:
   //   375: 5 of 13 · 390: 4 of 13 · 430: 2 of 13 — `Plan this day →` and
   //   `Approve this day` are below the fold of an inner scroller at every width.
