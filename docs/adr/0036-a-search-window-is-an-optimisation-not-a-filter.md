@@ -1,8 +1,8 @@
 # 0036 — A search window is an optimisation, so it may never turn a hit into a miss
 
-- Status: proposed
+- Status: accepted
 - Decision Maker(s): Ben
-- drafted-by: claude-code (Opus 5) · approved-by: — · Date: 2026-08-15
+- drafted-by: claude-code (Opus 5) · approved-by: Ben · Date: 2026-08-15 · accepted 2026-08-18
 
 ## Context and Problem Statement
 
@@ -155,6 +155,11 @@ window stops being load-bearing at all).
 TODO on implementation: (1) and (3) land with **T-15**; (2) lands with **T-16**, which is what
 makes the pending state exist at all. The entry does not become `accepted` until Ben confirms
 the shape.
+
+**Accepted by Ben on 2026-08-18**, by the act of merging this record — which is how ADR-0035 was
+ratified too. The three questions it was opened on stand as written: (b) is the shape, the ~91 s
+worst case is an accepted trade because the wait is visible, and (d) is the right long-term
+answer once a cached divisions extract makes the window stop being load-bearing.
 
 **Until the client half lands, nothing sends a `window`, so no behaviour changes.** The server
 accepts the parameter and nobody passes it — deliberately, because a client that sent one
