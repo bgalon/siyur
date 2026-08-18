@@ -40,6 +40,17 @@ DB_PORT="${SIYUR_DB_PORT:-5432}"
 # Real credentials never live in a file (AGENTS.md / Constitution Article V).
 export SIYUR_SESSION_SECRET="${SIYUR_SESSION_SECRET:-devsecret}"
 export SIYUR_DATABASE_URL="${SIYUR_DATABASE_URL:-postgresql+psycopg://siyur:siyur@localhost:${DB_PORT}/siyur}"
+# The web tier does not talk to the API directly — it goes through vite's dev proxy,
+# whose target defaults to :8000 (`web/vite.config.ts`). Deriving it from API_PORT is
+# what makes `SIYUR_API_PORT=8001 scripts/dev.sh start` actually work: without it the
+# API moves and the proxy does not follow, so every `/areas`, `/sites` and `/plans`
+# call 502s while `status` cheerfully reports both tiers up.
+#
+# That combination is the isolation recipe AGENTS.md gives for working alongside
+# another session (FAIL-011), so the one workflow most likely to hit this was the
+# documented one — and the symptom is an empty map, which `vite.config.ts` already
+# warns "reads as 'the backend is broken' when it is not".
+export SIYUR_API_ORIGIN="${SIYUR_API_ORIGIN:-http://127.0.0.1:${API_PORT}}"
 
 bold() { printf '\033[1m%s\033[0m\n' "$*"; }
 warn() { printf '\033[33m%s\033[0m\n' "$*" >&2; }
