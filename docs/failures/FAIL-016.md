@@ -63,6 +63,34 @@ above — which is what makes this an oversight rather than a design.
 Same shape as **FAIL-009**: a status command that was truthful about the thing it measured and
 silent about the thing that was wrong.
 
+## A second instance, found in the same hour
+
+With the ports fixed, the walkthrough reached the plan step and failed minutes in:
+
+```
+litellm.exceptions.AuthenticationError: Missing Anthropic API Key —
+  A call is being made to anthropic but no key is set
+```
+
+AGENTS.md says, in the section telling agents how to handle credentials:
+
+> **`scripts/dev.sh` already loads the model key from the Keychain**, so the normal answer is
+> *run `scripts/dev.sh start`* and stop thinking about it.
+
+`grep -ci anthropic scripts/dev.sh` → **0**. Nothing in the repo read the Keychain. The stored
+item existed; nothing looked for it.
+
+**Same root cause, one field over:** the script's environment setup was incomplete and the
+documentation asserted otherwise. It is arguably the worse of the two, because that sentence
+explicitly instructs the reader to *stop thinking about it* — so the one check that would have
+caught it is the one the docs told you to skip. And the failure is maximally delayed: the stack
+starts, `status` is green, delimiting works, the map fills with 748 cited places, and the gap
+surfaces several minutes into the first plan, inside a third-party library's error.
+
+Fixed alongside, and deliberately non-fatal: a machine without the stored item still gets a
+useful stack, because everything except research and planning works without a model. Refusing to
+start would trade a late clear failure for an early one that blocks more.
+
 ## Guardrail
 
 `tests/test_dev_script_ports.py` — **executes** the script's configuration prologue under a
@@ -77,6 +105,11 @@ given environment and reads the exported variables back:
 Run rather than grepped, deliberately: a grep passes on a line that is commented out, mistyped
 or shadowed later, and this entry exists because a variable was not set. **Mutation-proved** —
 deleting the export turns two of the five red.
+
+For the credential half: a value already present in the environment must survive untouched (CI
+and cloud secret injection both set it, and this script must not fight them), the Keychain
+lookup must still be present, and **`dev.sh` must never print it** — the script already prints a
+session cookie and a page of guidance, so that one is pinned rather than assumed.
 
 ## What it cost, stated plainly
 
