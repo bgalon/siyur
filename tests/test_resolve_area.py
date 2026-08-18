@@ -85,14 +85,21 @@ class FakeLookup:
 
     results: tuple[AreaCandidate, ...] = ()
     calls: list[str] = field(default_factory=list)
+    #: The `window=` each call carried — so a test can assert it was passed through, or not.
+    windows: list[tuple[float, float, float, float] | None] = field(default_factory=list)
 
-    def search(self, name: str) -> Sequence[AreaCandidate]:
+    def search(
+        self, name: str, *, window: tuple[float, float, float, float] | None = None
+    ) -> Sequence[AreaCandidate]:
         self.calls.append(name)
+        self.windows.append(window)
         return self.results
 
 
 class ExplodingLookup:
-    def search(self, name: str) -> Sequence[AreaCandidate]:
+    def search(
+        self, name: str, *, window: tuple[float, float, float, float] | None = None
+    ) -> Sequence[AreaCandidate]:
         raise AssertionError(f"this source must not be consulted (was asked for {name!r})")
 
 
@@ -443,13 +450,14 @@ def test_a_caller_supplied_window_bounds_the_search_without_naming_a_place(
     around = (min_lon - 0.5, min_lat - 0.5, min_lon + 1.5, min_lat + 1.5)
     elsewhere = (other[1] - 0.5, other[2] - 0.5, other[1] + 1.5, other[2] + 1.5)
 
-    inside = OvertureDivisions(parquet=divisions_parquet, window=around).search(name)
+    lookup = OvertureDivisions(parquet=divisions_parquet)
+    inside = lookup.search(name, window=around)
     assert [hit.polygon.bounds for hit in inside] == [square(min_lon, min_lat).bounds]
-    assert OvertureDivisions(parquet=divisions_parquet, window=elsewhere).search(name) == ()
+    assert lookup.search(name, window=elsewhere) == ()
     # …and the unwindowed lookup still finds it: the window bounds the read, not the meaning.
     assert [hit.source.id for hit in inside] == [
         hit.source.id
-        for hit in OvertureDivisions(parquet=divisions_parquet).search(name)
+        for hit in lookup.search(name)
         if hit.polygon.bounds == square(min_lon, min_lat).bounds
     ]
 
@@ -692,3 +700,207 @@ def test_the_two_arms_of_the_fold_agree_on_the_names_in_the_parquet(
         connection.close()
     assert row is not None
     assert row[0] == node._normalize(stored)
+
+
+# ── ADR-0036 · the search window is an optimisation, never a filter on intent ──────
+
+
+class RecordingLookup:
+    """Captures **whether** `window` was passed, not just its value.
+
+    `FakeLookup` cannot tell `search(name)` from `search(name, window=None)` — both record
+    `None` — so a test built on it stays green under exactly the mutation that matters:
+    dropping the keyword and letting a default win. This one takes `**kwargs`.
+    """
+
+    def __init__(self, results: tuple[AreaCandidate, ...] = ()) -> None:
+        self.results = results
+        self.calls: list[dict[str, Any]] = []
+
+    def search(self, name: str, **kwargs: Any) -> Sequence[AreaCandidate]:
+        self.calls.append({"name": name, **kwargs})
+        return self.results
+
+
+def test_the_window_is_forwarded_to_divisions_as_an_explicit_keyword() -> None:
+    """Passed by keyword every time, so the unwindowed re-ask is distinguishable here.
+
+    Asserted on the captured kwargs rather than on a recorded value: `window=None` and a
+    missing `window` are the same recorded value and very different calls, and which one
+    this node makes is what decides whether a default can leak into ADR-0036's second pass.
+    """
+    divisions = RecordingLookup((candidate("Anywhere", square(27.0, 35.0)),))
+    window = (27.0, 35.0, 29.0, 37.0)
+
+    resolve_area(AreaRequest(name="Anywhere", window=window), divisions=divisions)
+
+    assert divisions.calls == [{"name": "Anywhere", "window": window}]
+
+
+def test_an_absent_window_is_still_passed_explicitly_as_none() -> None:
+    """`window` must appear in the call even when there is none.
+
+    Mutating the node to `search(name) if window is None else search(name, window=window)`
+    turns this red — and that mutation is the one that would let an instance-level default
+    survive the re-ask.
+    """
+    divisions = RecordingLookup((candidate("Anywhere", square(27.0, 35.0)),))
+
+    resolve_area(AreaRequest(name="Anywhere"), divisions=divisions)
+
+    assert divisions.calls == [{"name": "Anywhere", "window": None}]
+
+
+def test_a_windowed_miss_never_consults_the_geocoder() -> None:
+    """**The one that stops a window changing which source answers.**
+
+    Nominatim is a fallback for divisions' *silence*. A windowed empty is not silence — it
+    is "not in that box" — so consulting an unwindowed geocoder there answers a different
+    question and answers it confidently: viewport over Rhodes, user types "Paris", divisions
+    finds nothing in the window, Nominatim returns the Paris relation at EXACT_CONFIDENCE,
+    and the caller gets a `200` carrying an OSM ring instead of the Overture division that
+    exists. Worse, the caller never sees the empty result ADR-0036 requires it to re-ask on,
+    so the unwindowed pass never happens and nothing ever says "widening the search".
+
+    The bug hides because it succeeds, which is why this is asserted rather than reasoned
+    about. Delete the `and window is None` guard in `resolve_area` and this goes red.
+    """
+    divisions = FakeLookup(results=())
+    geocoder = FakeLookup(results=(candidate("Somewhere Far Away", square(10.0, 20.0)),))
+
+    with pytest.raises(AreaUnresolvable):
+        resolve_area(
+            AreaRequest(name="Somewhere Far Away", window=(27.0, 35.0, 29.0, 37.0)),
+            divisions=divisions,
+            geocoder=geocoder,
+        )
+
+    assert geocoder.calls == []
+
+
+def test_an_unwindowed_miss_still_consults_the_geocoder() -> None:
+    """The other half, so the guard above cannot be 'fixed' by disabling the fallback.
+
+    Without a window, an empty divisions result *is* silence, and disambiguating it is what
+    the geocoder is for — including on ADR-0036's second pass, which is unwindowed by
+    definition.
+    """
+    divisions = FakeLookup(results=())
+    geocoder = FakeLookup(results=(candidate("Somewhere Far Away", square(10.0, 20.0)),))
+
+    resolved = resolve_area(
+        AreaRequest(name="Somewhere Far Away"), divisions=divisions, geocoder=geocoder
+    )
+
+    assert geocoder.calls == ["Somewhere Far Away"]
+    assert resolved.source.kind == "overture"  # from the fake's stamp, not invented here
+
+
+def test_this_node_never_retries_an_empty_windowed_lookup() -> None:
+    """**The retry belongs to the caller, and this asserts the node does not steal it.**
+
+    ADR-0036 puts the unwindowed fallback in the client for one reason: only the client can
+    render "widening the search…", and a silent retry here would hide ~73 s instead of
+    explaining it. If this node ever grows a helpful second pass, the visible-state
+    requirement dies quietly and this test is what notices.
+    """
+    divisions = FakeLookup(results=())
+    geocoder = FakeLookup(results=())
+    window = (27.0, 35.0, 29.0, 37.0)
+
+    with pytest.raises(node.AreaUnresolvable):
+        node.resolve_area(
+            node.AreaRequest(name="Nowhere In View", window=window),
+            divisions=divisions,
+            geocoder=geocoder,
+        )
+
+    # Exactly one divisions call, and it kept the window. No unwindowed retry happened here.
+    assert divisions.windows == [window]
+
+
+@pytest.mark.parametrize(
+    "window",
+    [
+        (29.0, 35.0, 27.0, 37.0),  # lon decreases
+        (27.0, 37.0, 29.0, 35.0),  # lat decreases
+        (27.0, 95.0, 29.0, 100.0),  # latitude out of range — a transposed lon/lat pair
+        (27.0, 35.0, 27.0, 37.0),  # degenerate: zero width
+    ],
+)
+def test_a_malformed_window_is_refused_not_silently_dropped(
+    window: tuple[float, float, float, float],
+) -> None:
+    """Dropping it would turn an 18 s lookup back into 73 s with nothing to say why."""
+    divisions = ExplodingLookup()
+
+    with pytest.raises(node.AreaInvalid, match="window"):
+        node.resolve_area(node.AreaRequest(name="Anywhere", window=window), divisions=divisions)
+
+
+def test_an_explicit_geometry_ignores_the_window_entirely() -> None:
+    """``polygon``/``bbox`` need no lookup, so there is nothing for a scan hint to prune."""
+    divisions = ExplodingLookup()
+
+    resolved = node.resolve_area(
+        node.AreaRequest(bbox=(27.0, 35.0, 27.5, 35.5), window=(0.0, 0.0, 1.0, 1.0)),
+        divisions=divisions,
+    )
+
+    assert resolved.polygon.bounds == (27.0, 35.0, 27.5, 35.5)
+
+
+def test_a_transposed_window_that_stays_in_range_is_undetectable_and_accepted() -> None:
+    """**A limitation, asserted so it is known rather than discovered.**
+
+    ``(35, 27, 37, 29)`` is a lat/lon transposition of ``(27, 35, 29, 37)``, but every slot is
+    in range on the axis it landed in and both axes increase — so it is a *legitimate* box
+    somewhere else on Earth, and no amount of validation can tell it from one the caller
+    meant. It is caught only when a value leaves its axis range (the ``95.0`` case above).
+
+    The consequence is bounded precisely because ADR-0036 forbids trusting a windowed miss:
+    a transposed window yields an empty first pass, the caller re-asks unwindowed, and the
+    user gets their area — slowly. That is the whole reason the fallback is mandatory rather
+    than an optimisation of an optimisation.
+    """
+    divisions = FakeLookup(results=(candidate("Anywhere", square(27.0, 35.0)),))
+    transposed = (35.0, 27.0, 37.0, 29.0)
+
+    resolve_area(AreaRequest(name="Anywhere", window=transposed), divisions=divisions)
+
+    assert divisions.windows == [transposed]
+
+
+def test_an_antimeridian_viewport_is_refused_and_the_client_must_widen_on_that_too() -> None:
+    """**A limitation with a client-side consequence, so it is asserted, not assumed.**
+
+    MapLibre's `getBounds()` near the dateline reports either a decreasing pair
+    (`west=178, east=-178`) or an unwrapped `east=181`. Both are refused here — a single
+    `[minLon, minLat, maxLon, maxLat]` box cannot express a range that wraps, and inventing
+    a split silently would make the window mean something the contract does not say.
+
+    The consequence is that ADR-0036's client rule cannot key on an empty result alone: a
+    user searching from Fiji or the Aleutians gets a `422`, not an empty answer, and a client
+    that only widens on empty would show them a flat rejection of a perfectly good name.
+    The contract therefore requires widening on a `422` naming `window` as well.
+    """
+    for viewport in [(178.0, -18.0, -178.0, -16.0), (178.0, -18.0, 181.0, -16.0)]:
+        with pytest.raises(AreaInvalid, match="window"):
+            resolve_area(AreaRequest(name="Anywhere", window=viewport), divisions=ExplodingLookup())
+
+
+def test_an_explicit_geometry_does_not_validate_the_window_at_all() -> None:
+    """`bbox`/`polygon` return before the window is looked at, so a bad one is *dropped*.
+
+    Stated because the contract's "a malformed window is a 422, never silently dropped" is
+    true only of the name path, and an unqualified rule that the code does not hold is worse
+    than a narrower one it does. There is nothing here for a scan hint to prune, so the
+    window has no way to cause harm on this path — which is why dropping it is acceptable
+    here and is not acceptable on the path where it changes what gets read.
+    """
+    resolved = resolve_area(
+        AreaRequest(bbox=(27.0, 35.0, 27.5, 35.5), window=(99.0, 99.0, 1.0, 1.0)),
+        divisions=ExplodingLookup(),
+    )
+
+    assert resolved.polygon.bounds == (27.0, 35.0, 27.5, 35.5)

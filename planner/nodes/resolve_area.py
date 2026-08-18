@@ -40,7 +40,7 @@ usage policy in `DATA-LICENSES.md`).
 ``bbox`` and nothing else, so a name lookup that projects geometry reads the entire global
 theme to answer "which rows match?" — measured at 212 s. Matching now reads only the narrow
 columns and the polygons of the survivors are fetched afterwards, by id. That is still not
-interactive on its own; a caller-supplied :attr:`OvertureDivisions.window` is what makes it
+interactive on its own; a caller-supplied :meth:`OvertureDivisions.search` window is what makes it
 so, and :data:`DIVISIONS_TIMEOUT` is what stops the rest becoming an open-ended hang. See
 the block comment above :data:`_DIVISIONS_QUERY` for the measurements.
 
@@ -396,6 +396,17 @@ class AreaRequest:
     bbox: tuple[float, float, float, float] | None = None
     #: GeoJSON ``Polygon``/``MultiPolygon`` in EPSG:4326.
     polygon: Mapping[str, Any] | None = None
+    #: Optional ``[minLon, minLat, maxLon, maxLat]`` scan hint for the **name** path only
+    #: (ADR-0036). It bounds which row groups the divisions lookup reads — 73 s → 18 s — and
+    #: it is applied as a ``WHERE`` clause, so a name outside it resolves to **nothing**.
+    #:
+    #: That makes it an optimisation that can produce a false "no such area", which is why
+    #: ADR-0036 forbids sending it unconditionally: the caller must re-ask **without** a
+    #: window when a windowed pass comes back empty, and must say so on screen while it does.
+    #: This node deliberately does not retry on the caller's behalf — the caller is the only
+    #: party that can render "widening the search…", and a silent retry here would hide the
+    #: extra ~73 s rather than explain it.
+    window: tuple[float, float, float, float] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -475,9 +486,16 @@ class AreaLookupTimeout(TimeoutError):
 
 @runtime_checkable
 class DivisionsLookup(Protocol):
-    """Authoritative name → administrative area lookup (Overture divisions)."""
+    """Authoritative name → administrative area lookup (Overture divisions).
 
-    def search(self, name: str) -> Sequence[AreaCandidate]: ...
+    ``window`` is a per-call scan hint, keyword-only and optional so an implementation is
+    free to ignore it — it is a performance lever over a bbox-clustered theme, never part of
+    what the caller is asking for. See :attr:`AreaRequest.window` and ADR-0036.
+    """
+
+    def search(
+        self, name: str, *, window: tuple[float, float, float, float] | None = None
+    ) -> Sequence[AreaCandidate]: ...
 
 
 @runtime_checkable
@@ -675,9 +693,37 @@ def resolve_area(
     if request.name is None or not request.name.strip():
         raise AreaInvalid("an area needs a name, a bbox or a polygon — none was given")
     name = request.name
-    # Overture divisions is authoritative; the geocoder only disambiguates its silence.
-    candidates = tuple((divisions or OvertureDivisions()).search(name))
-    if not candidates:
+    # Validated even though it only bounds a scan: a malformed window is a caller bug, and
+    # silently dropping it would turn an 18 s lookup back into a 73 s one with nothing
+    # anywhere to say why. Reuses the bbox validator, so a lat/lon-transposed window fails
+    # on the same per-axis check a transposed bbox does.
+    window = request.window
+    if window is not None:
+        try:
+            _polygon_from_bbox(window)
+        except (AreaInvalid, GeometryError) as error:
+            raise AreaInvalid(
+                f"window is [minLon, minLat, maxLon, maxLat] in {CRS} and must be a usable "
+                f"box — {error}"
+            ) from error
+    # Overture divisions is authoritative; the geocoder only disambiguates its **silence**.
+    # The window reaches divisions only: it is a row-group prune over a bbox-clustered
+    # Parquet theme, and it has no meaning for the geocoder's own index.
+    candidates = tuple((divisions or OvertureDivisions()).search(name, window=window))
+    # **A windowed empty is not silence, so it must not reach the geocoder.**
+    #
+    # Without this guard a window quietly changes *which source answers*: viewport over
+    # Rhodes, user types "Paris", the windowed divisions pass finds nothing, and an
+    # unwindowed Nominatim answers with the OSM relation at EXACT_CONFIDENCE. The caller
+    # gets a confident `200` carrying a geocoder ring instead of the Overture division that
+    # exists — and, worse, never sees the empty result that ADR-0036 requires it to re-ask
+    # on, so the unwindowed pass never happens and nothing ever says "widening the search".
+    # The bug hides *because* it succeeds.
+    #
+    # So a windowed miss stays a miss. The caller re-asks without a window, and on that pass
+    # an empty divisions result really does mean divisions has nothing — which is the only
+    # condition under which consulting the geocoder was ever correct.
+    if not candidates and window is None:
         candidates = tuple((geocoder or NominatimGeocoder()).search(name))
     return _choose(name, candidates)
 
@@ -808,17 +854,17 @@ class OvertureDivisions:
     timeout: float = DIVISIONS_TIMEOUT
     #: Request concurrency for the hosted release; ignored for a local ``parquet``.
     read_threads: int = DIVISIONS_READ_THREADS
-    #: Optional caller-supplied ``(minLon, minLat, maxLon, maxLat)`` search window.
-    window: tuple[float, float, float, float] | None = None
 
-    def search(self, name: str) -> Sequence[AreaCandidate]:
+    def search(
+        self, name: str, *, window: tuple[float, float, float, float] | None = None
+    ) -> Sequence[AreaCandidate]:
         needle = _normalize(name)
         if not needle:
             return ()
         clock = _Countdown.of(self.timeout)
         connection = self._connect()
         try:
-            matches = self._match(connection, _collapse(name), needle, clock)
+            matches = self._match(connection, _collapse(name), needle, clock, window)
             if not matches:
                 return ()
             polygons = self._polygons(connection, matches, clock)
@@ -848,13 +894,19 @@ class OvertureDivisions:
         raw: str,
         needle: str,
         clock: _Countdown,
+        window: tuple[float, float, float, float] | None = None,
     ) -> list[_DivisionMatch]:
         """Pass 1 — *which* divisions match, re-scored in Python. No geometry is read."""
         params: dict[str, Any] = {"src": self._source, "needle": raw}
         sql = _DIVISIONS_QUERY
-        if self.window is not None:
+        # **Per-call only — there is deliberately no instance-level window.** An instance
+        # default could not be turned off by a caller passing `window=None`, so ADR-0036's
+        # mandatory unwindowed re-ask would silently stay windowed against a pre-configured
+        # lookup: the user would watch "widening the search…", wait the extra ~73 s, and
+        # still get a false "no such area". One way to say it, and `None` means none.
+        if window is not None:
             sql = _DIVISIONS_QUERY_IN_WINDOW
-            params |= self._window_params(self.window)
+            params |= self._window_params(window)
         rows = _bounded(
             connection, f"{sql} LIMIT {int(self.limit)}", params, clock, "matching the name"
         )

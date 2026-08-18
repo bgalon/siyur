@@ -122,6 +122,16 @@ class AreaRequestBody(BaseModel):
     bbox: tuple[float, float, float, float] | None = None
     #: GeoJSON ``Polygon``/``MultiPolygon``, EPSG:4326.
     polygon: dict[str, Any] | None = None
+    #: Optional ``[minLon, minLat, maxLon, maxLat]`` scan hint for the ``name`` path only
+    #: (ADR-0036) — normally the caller's map viewport. Cuts the divisions lookup from
+    #: ~73 s to ~18 s by pruning row groups on the one column the theme indexes.
+    #:
+    #: **It is applied as a filter, so a name outside it resolves to nothing.** A caller
+    #: that gets an empty/``404`` answer to a windowed request MUST re-ask without the
+    #: window before telling anyone the area does not exist, and MUST show that it is
+    #: widening the search while it does. Ignored when ``bbox`` or ``polygon`` is given,
+    #: which need no lookup at all.
+    window: tuple[float, float, float, float] | None = None
 
 
 class CoverageResponse(BaseModel):
@@ -406,7 +416,7 @@ def create_area(
     """
     try:
         resolved = resolve_area(
-            AreaRequest(name=body.name, bbox=body.bbox, polygon=body.polygon),
+            AreaRequest(name=body.name, bbox=body.bbox, polygon=body.polygon, window=body.window),
             divisions=divisions,
             geocoder=geocoder,
         )
