@@ -98,7 +98,8 @@ The discovery spike (`tech-design.md` §7) precedes DU-00 and hardens the schema
 - **Scope:** the phone pass over DU-01…DU-05 (F-01…F-07) — the flow column below 760 px (ADR-0035), tap targets and type floor, the sheet off the attribution, search-glyph contrast, the coverage card reading `known_site_count` in both branches, honest pending/empty states, a visible signed-out state.
 - **Demo:** **a human completes delimit → research → read a site → plan a day → approve at 390 px**, recorded as a GIF. Not "the suite is green" — that phrase is what produced the audit.
 - **EARS:** "WHILE on a 390 px viewport, a user SHALL complete the research-and-plan journey without a desktop, devtools, or a remembered UUID."
-- **Tests:** each task deletes a named `test.fail()` from DU-06a; nothing is "done" on description. **Artifacts:** ADR-0035, `exhibit/U2-the-assertion-that-was-three-lines`.
+- **Tests:** each task deletes a named `test.fail()` from DU-06a; nothing is "done" on description. **Artifacts:** ADR-0035, `docs/design/media/du06b-journey-390px.gif`, `exhibit/U2-the-assertion-that-was-three-lines`.
+- **Demo performed 2026-08-18 at a real 390 × 844** (Playwright sets the viewport at browser level, so no iframe workaround): delimit via `Use this view` → reuse 748 cited places → open a site → plan a day → **approve**. Recorded as `docs/design/media/du06b-journey-390px.gif`. Two things the run is worth citing for: the first proposal came back **`hours 4.97 > budget 4.00`** and the approve control was correctly **disabled** — the HITL gate refusing an over-budget day — and widening the budget to 6 h produced a feasible day that approved. The journey therefore exercises the gate *and* the recovery, not just the happy path.
 
 ### DU-06 · Offline render — **M1 done**
 - **Scope:** PWA reads the bundle from OPFS; the full offline experience (map, itinerary, timeline, narration, off-route recovery).
