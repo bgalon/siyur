@@ -197,9 +197,14 @@ class FakeLookup:
     candidates: tuple[AreaCandidate, ...] = ()
     #: Every name it was asked about, so a test can assert the fallback was (not) consulted.
     asked: list[str] = field(default_factory=list)
+    #: The `window=` each call carried (ADR-0036) — `None` when the caller sent none.
+    windows: list[tuple[float, float, float, float] | None] = field(default_factory=list)
 
-    def search(self, name: str) -> Sequence[AreaCandidate]:
+    def search(
+        self, name: str, *, window: tuple[float, float, float, float] | None = None
+    ) -> Sequence[AreaCandidate]:
         self.asked.append(name)
+        self.windows.append(window)
         return self.candidates
 
 
@@ -316,6 +321,79 @@ def test_a_bbox_with_the_wrong_number_of_ordinates_is_422() -> None:
 def test_an_unknown_field_in_the_body_is_refused() -> None:
     app = build_app(divisions_lookup=FakeLookup(), geocoder=FakeLookup())
     response = signed_in_client(app).post("/areas", json={"bbox": BBOX, "force": True})
+    assert response.status_code == 422
+
+
+# ── ADR-0036 · the search window reaches the divisions lookup ──────────────────────
+
+
+def test_a_window_is_accepted_and_reaches_the_divisions_lookup() -> None:
+    """The 73 s → 18 s lever, plumbed.
+
+    `AreaRequestBody` is `extra="forbid"`, so before this field existed a client sending its
+    viewport got a `422` rather than a fast answer. Asserted on the ambiguous-candidates
+    `404` rather than a `200` so it stays a Tier-1 test: a `200` persists an `Area` and would
+    drag a database into a question that is purely about request plumbing. A `422` here would
+    mean the field was refused, which is precisely the regression being guarded.
+    """
+    divisions = FakeLookup((candidate("Old Town", 0.6), candidate("Old Town", 0.6, at=28.30)))
+    app = build_app(divisions_lookup=divisions, geocoder=FakeLookup())
+
+    response = signed_in_client(app).post(
+        "/areas", json={"name": "Old Town", "window": [28.0, 36.0, 28.5, 36.5]}
+    )
+
+    assert response.status_code == 404  # ambiguous, not rejected
+    assert divisions.windows == [(28.0, 36.0, 28.5, 36.5)]
+
+
+def test_without_a_window_the_lookup_is_told_so_explicitly() -> None:
+    """The unwindowed re-ask in ADR-0036 has to be distinguishable from the first pass."""
+    divisions = FakeLookup((candidate("Old Town", 0.6), candidate("Old Town", 0.6, at=28.30)))
+    app = build_app(divisions_lookup=divisions, geocoder=FakeLookup())
+
+    signed_in_client(app).post("/areas", json={"name": "Old Town"})
+
+    assert divisions.windows == [None]
+
+
+def test_a_windowed_miss_is_a_plain_404_that_the_client_must_not_trust() -> None:
+    """**The endpoint does not retry, and this is the assertion that keeps it that way.**
+
+    A windowed `404` means "not in that box", not "no such area" — and only the caller can
+    say "widening the search…" while it re-asks. If this endpoint ever grows a helpful
+    server-side retry, ADR-0036's visible-state requirement dies silently and this fails.
+    """
+    divisions, geocoder = FakeLookup(), FakeLookup()
+    app = build_app(divisions_lookup=divisions, geocoder=geocoder)
+
+    response = signed_in_client(app).post(
+        "/areas", json={"name": "Somewhere Else", "window": [28.0, 36.0, 28.5, 36.5]}
+    )
+
+    assert response.status_code == 404
+    # Exactly one windowed divisions call. No second, unwindowed pass happened here.
+    assert divisions.windows == [(28.0, 36.0, 28.5, 36.5)]
+    # And the geocoder was not consulted: a windowed empty is "not in that box", not the
+    # silence Nominatim exists to disambiguate. Were it consulted, an unwindowed hit would
+    # turn this into a confident 200 and the client would never widen.
+    assert geocoder.asked == []
+
+
+@pytest.mark.parametrize(
+    "window",
+    [
+        [28.5, 36.0, 28.0, 36.5],  # longitude decreases
+        [28.0, 36.5, 28.5, 36.0],  # latitude decreases
+        [28.0, 36.0, 28.0, 36.5],  # degenerate: zero width
+        [28.0, 95.0, 28.5, 100.0],  # latitude out of range
+        [28.0, 36.0, 28.5],  # not four ordinates
+    ],
+)
+def test_a_malformed_window_is_422(window: list[float]) -> None:
+    """Refused rather than dropped: a silently-ignored window is a silent 55 s regression."""
+    app = build_app(divisions_lookup=FakeLookup(), geocoder=FakeLookup())
+    response = signed_in_client(app).post("/areas", json={"name": "Old Town", "window": window})
     assert response.status_code == 422
 
 

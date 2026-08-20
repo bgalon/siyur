@@ -11,9 +11,17 @@ Resolve a user-delimited area to a polygon and report existing commons coverage 
 {
   "name":   "Rhodes medieval old town",          // optional — resolved via Overture divisions (+ Nominatim disambig)
   "bbox":   [28.216, 36.440, 28.232, 36.451],    // optional — [minLon,minLat,maxLon,maxLat] EPSG:4326
-  "polygon": { "type": "Polygon", "coordinates": [ /* … */ ] }  // optional — GeoJSON, EPSG:4326
+  "polygon": { "type": "Polygon", "coordinates": [ /* … */ ] },  // optional — GeoJSON, EPSG:4326
+  "window": [28.0, 36.0, 28.5, 36.5]             // optional — scan hint for the `name` path only (ADR-0036)
 }
 ```
+
+- **`window` is an optimisation, and it is applied as a filter — so it can produce a false "no such area".** It bounds which Parquet row groups the Overture divisions lookup reads, on `bbox`, the one column the theme indexes. Measured against the release: **212 s → 73 s unwindowed → 18 s windowed**, and it typically returns one precise candidate instead of twenty to disambiguate between. Normally the caller's map viewport.
+- **A `404` to a windowed request means "not in that box", never "no such area".** ADR-0036 therefore **requires** the caller to re-ask **without** `window` before reporting that an area does not exist, and to show that it is widening the search while it does — searching "Paris" while looking at Rhodes must not come back empty. The endpoint deliberately does **not** retry on the caller's behalf: only the caller can render the widening state, and a silent server-side retry would hide the extra ~73 s rather than explain it. Worst case is therefore ~91 s, on the query the user was least sure about, and that cost is accepted precisely because it is visible.
+- **Widen on a `422` naming `window` too, not only on an empty result.** A viewport crossing the antimeridian cannot be expressed as one `[minLon, minLat, maxLon, maxLat]` box — MapLibre reports either a decreasing pair (`west=178, east=-178`) or an unwrapped `east=181` — and both are refused. A client that widens only on empty would show a user in Fiji or the Aleutians a flat rejection of a perfectly good name.
+- **A windowed request never reaches the Nominatim fallback.** Nominatim disambiguates *divisions' silence*, and a windowed empty is not silence. Without that rule a window would change **which source answers**: the windowed divisions pass finds nothing, an unwindowed Nominatim returns a confident `200` carrying an OSM ring instead of the Overture division that exists, and the caller never sees the empty result it is required to widen on. On the unwindowed re-ask the fallback behaves exactly as it always did.
+- Validated on the same per-axis rules as `bbox` (lon against ±180, lat against ±90, both increasing, non-degenerate). **On the `name` path a malformed `window` is a `422`, never silently dropped** — dropping it is an invisible 55-second regression. **A transposed window whose ordinates stay in range is undetectable** and resolves to nothing; the mandatory unwindowed fallback is what keeps that recoverable.
+- **Ignored when `bbox` or `polygon` is given** — those need no lookup at all, so the window is not even validated on that path. Harmless there precisely because there is no scan for it to bound.
 
 **Response `200`**:
 ```jsonc
