@@ -40,6 +40,36 @@ DB_PORT="${SIYUR_DB_PORT:-5432}"
 # Real credentials never live in a file (AGENTS.md / Constitution Article V).
 export SIYUR_SESSION_SECRET="${SIYUR_SESSION_SECRET:-devsecret}"
 export SIYUR_DATABASE_URL="${SIYUR_DATABASE_URL:-postgresql+psycopg://siyur:siyur@localhost:${DB_PORT}/siyur}"
+# The web tier does not talk to the API directly — it goes through vite's dev proxy,
+# whose target defaults to :8000 (`web/vite.config.ts`). Deriving it from API_PORT is
+# what makes `SIYUR_API_PORT=8001 scripts/dev.sh start` actually work: without it the
+# API moves and the proxy does not follow, so every `/areas`, `/sites` and `/plans`
+# call 502s while `status` cheerfully reports both tiers up.
+#
+# That combination is the isolation recipe AGENTS.md gives for working alongside
+# another session (FAIL-011), so the one workflow most likely to hit this was the
+# documented one — and the symptom is an empty map, which `vite.config.ts` already
+# warns "reads as 'the backend is broken' when it is not".
+export SIYUR_API_ORIGIN="${SIYUR_API_ORIGIN:-http://127.0.0.1:${API_PORT}}"
+
+# Model access for the research and plan nodes. AGENTS.md tells every agent that "`scripts/
+# dev.sh` already loads `ANTHROPIC_API_KEY` from the Keychain, so the normal answer is *run
+# `scripts/dev.sh start`* and stop thinking about it" — and until now it did not load it at
+# all. The stack started, `status` reported healthy, delimiting and reuse worked, and the
+# failure arrived minutes later inside a plan as a litellm `AuthenticationError`.
+#
+# Non-fatal on purpose: a machine with no Keychain item still gets a useful stack (delimit,
+# coverage, reuse, `GET /sites` and the whole map need no model), so refusing to start would
+# trade a late clear failure for an early one that blocks more.
+#
+# The value is read straight into the exported variable and never echoed, never written to a
+# file, and never placed in a variable this script prints (Constitution Article V).
+if [[ -z "${ANTHROPIC_API_KEY:-}" ]] && command -v security >/dev/null 2>&1; then
+  if key="$(security find-generic-password -a "$USER" -s siyur-anthropic-api-key -w 2>/dev/null)"; then
+    export ANTHROPIC_API_KEY="$key"
+  fi
+  unset key
+fi
 
 bold() { printf '\033[1m%s\033[0m\n' "$*"; }
 warn() { printf '\033[33m%s\033[0m\n' "$*" >&2; }
