@@ -55,10 +55,23 @@ const candidate = (over: Partial<AreaCandidate> = {}): AreaCandidate => ({
   ...over,
 })
 
-/** The `404` body the contract describes: a message plus the options. */
+/**
+ * The `404` body **the server actually sends** — nested under `detail`.
+ *
+ * This fixture used to send `{message, candidates}` at the root, which is what
+ * `areas.ts` used to read, so the suite was green while the feature had never once worked
+ * in production (FAIL-017). Both halves of the test shared one wrong assumption and
+ * neither was ever compared to a real response.
+ *
+ * FastAPI serialises `HTTPException(detail=X)` as `{"detail": X}`. If this shape is ever
+ * "simplified" back to the root, `test_the_404_body_is_nested_under_detail` in
+ * `tests/test_api_areas.py` is the thing that will still disagree.
+ */
 const notResolved = (candidates: readonly unknown[]): typeof fetch =>
   vi.fn(async () =>
-    new Response(JSON.stringify({ message: 'several places match that name', candidates }), {
+    new Response(
+      JSON.stringify({ detail: { message: 'several places match that name', candidates } }),
+      {
       status: 404,
       headers: { 'Content-Type': 'application/json' },
     }),
