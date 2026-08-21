@@ -114,8 +114,10 @@ saved plans read "For an area you delimited on the map".
   `tests/test_dev_script_ports.py` — *executes* the script's configuration prologue and reads the
   exported variables back, rather than grepping for a line; mutation-proved, 2 of 5 go red when the
   export is removed).
-- **The fix for FAIL-013 has never worked** → **FAIL-017** (guardrail specified, lands with Wave A
-  task A-1: pin the fixture to `_unresolved_detail`'s output, plus one Tier-2 test that crosses the
+- **The fix for FAIL-013 has never worked** → **FAIL-017** — reported here, **fixed and merged the
+  same day in #139** by the session that owned the code, and verified here rather than taken on
+  trust. Its guardrail asserts the *negative* (nothing at the root), which is better than the one
+  this entry originally specified. ~~(guardrail specified, lands with Wave A task A-1: pin the fixture to `_unresolved_detail`'s output, plus one Tier-2 test that crosses the
   wire. **Does not close until the second one is in CI** — more unit tests on the same double catch
   nothing).
 - Not a catalogued failure but worth the line: **a red `KNOWN_RED` row carried a wrong explanation

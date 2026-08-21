@@ -78,8 +78,33 @@ have caught nothing.
    the running API and asserts the *client parser* accepts the real body. It is the only assertion
    in the set that could have failed.
 
-Both land with **Wave A / task A-1** (`docs/design/ux-review-2026-08-21.md`). **This entry does not
-close until (2) is in CI** — (1) alone re-creates the failure with an extra step.
+### What actually landed — #139, 2026-08-21
+
+Fixed by the session that wrote it, within hours of the report, and **verified here rather than
+taken on trust**:
+
+- `areas.ts` reads `detail.candidates` / `detail.message`, and **the root is deliberately not read
+  as a fallback**. That is the right call and worth keeping: a fallback would let the two shapes
+  drift apart again silently, and this failure is only visible when client and server are *forced*
+  to agree.
+- The TS fixture now sends the nested body **and names the server-side test in a comment**, so the
+  two halves are coupled by something a reader will follow.
+- `tests/test_api_areas.py::test_the_404_body_is_nested_under_detail_and_not_at_the_root` asserts
+  the half the client got wrong, in the terms it got it wrong in: the payload is under `detail`,
+  **and there is nothing at the root to read**. Flattening the body is now a visible breaking
+  change. Mutation-proved: revert the client → 1 fails.
+
+**This is a better guardrail than the one specified above**, because it asserts the *negative* —
+the absence of anything at the root — which is the specific drift that caused the failure. Both
+directions are covered: flatten the server and the Python test fails; point the client back at the
+root and the TS test fails.
+
+**Closed.** One residual, named rather than implied: **nothing still executes the client parser
+against a real server response.** The two halves are now coupled by two tests and a comment, not by
+a round trip, so a change in how FastAPI *serialises* `HTTPException` — as opposed to a change in
+what this repo puts inside it — would pass both. That is a dependency-upgrade risk rather than a
+drift risk, and it is the residue the Tier-2 test in (2) would have removed. Worth one integration
+test the next time anything touches this envelope.
 
 ## What it cost, stated plainly
 
@@ -92,6 +117,24 @@ The cheaper lesson is the one FAIL-015 already paid for and this repeats in a ne
 artifact under test was not the artifact that ships.** There it was a stylesheet in `dist/`; here
 it is a JSON envelope. In both cases every source-level check was green and one minute of driving
 the real thing was decisive.
+
+### The variant worth naming
+
+This repo has catalogued several failures where a check was green for the wrong reason. **This one
+is a distinct shape, and the sharpest statement of the family so far:**
+
+> The test was green because **its fixture and its code shared one wrong assumption** — both halves
+> wrong in the same direction, agreeing with each other, and neither ever compared to the thing
+> they model.
+
+That is not "green for the wrong reason" in the usual sense of a weak assertion. The assertion was
+fine. The *model* was wrong, symmetrically, so no amount of adding assertions on the same double
+could have found it — and adding them is exactly what a diligent author would have done. Only
+crossing the boundary finds it: to a real server, a real browser, a real bundle.
+
+Which is the general answer this entry argues for, and the reason the finding came from **driving
+the product rather than testing it**. Every automated check in the repo was green when it was
+found. *(Framing contributed by the peer session that owned and fixed the code.)*
 
 ## Related
 
