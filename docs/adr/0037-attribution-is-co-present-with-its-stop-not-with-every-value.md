@@ -1,8 +1,8 @@
 # 0037 — Attribution is co-present with its *stop*, not with every value
 
-- Status: **proposed** — drafted for ratification, no code may rely on it yet
+- Status: **accepted**
 - Decision Maker(s): Ben
-- drafted-by: claude-code (Opus 5) · approved-by: *pending* · Date: 2026-08-21
+- drafted-by: claude-code (Opus 5) · approved-by: Ben · Date: 2026-08-21 · accepted 2026-08-21
 - **Amends ADR-0019.** This narrows the co-presence invariant's *scope*; it does not repeal it.
   ADR-0019 stays in force everywhere this ADR does not name.
 

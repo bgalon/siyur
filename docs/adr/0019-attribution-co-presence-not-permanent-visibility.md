@@ -4,6 +4,11 @@
 - Decision Maker(s): Ben
 - drafted-by: claude-code · approved-by: Ben · Date: 2026-08-06 · accepted: 2026-08-08
 
+> **Amended 2026-08-21 by [ADR-0037](0037-attribution-is-co-present-with-its-stop-not-with-every-value.md)**,
+> which moves the unit of co-presence from the *element* to the smallest block that owns the
+> value — a stop in an itinerary. The invariant below still governs everywhere ADR-0037 does not
+> name, and every prohibition in it except the first survives verbatim. Read them together.
+
 > **Ratified 2026-08-08 on the value-scoped reading of FR-004**, with option F as an **explicitly
 > interim** state rather than the destination. One consequence below is discharged, three items
 > are pulled forward, and one contradiction is flagged rather than settled. See the amendment at
