@@ -414,6 +414,38 @@ def test_an_ambiguous_name_is_404_with_the_candidates_to_choose_from() -> None:
         assert len(option["bbox"]) == 4
 
 
+def test_the_404_body_is_nested_under_detail_and_not_at_the_root() -> None:
+    """FAIL-017: the client read the root, found nothing, and said nothing for 65 seconds.
+
+    The server was always right and always tested — `test_an_ambiguous_name_is_404_…` has
+    read `["detail"]["candidates"]` since it was written. What was missing was anything
+    forcing the *client* to agree: `web/src/map/areas.ts` read `candidates` from the root,
+    and `web/test/area-disambiguation.test.ts` sent a fixture that also put it at the root.
+    Both halves shared one wrong assumption, so the suite was green while the feature had
+    never once worked against a real response.
+
+    This asserts the half the client got wrong, in the terms it got it wrong in: the payload
+    is under `detail`, and there is **nothing** at the root to read. If somebody ever
+    flattens this body, that is a breaking change for the client and this test is what says
+    so — the TS fixture names this test for exactly that reason.
+    """
+    divisions = FakeLookup((candidate("Old Town", 0.6), candidate("Old Town", 0.6, at=28.30)))
+    app = build_app(divisions_lookup=divisions, geocoder=FakeLookup())
+    response = signed_in_client(app).post("/areas", json={"name": "Old Town"})
+
+    assert response.status_code == 404
+    body = response.json()
+
+    # FastAPI serialises `HTTPException(detail=X)` as `{"detail": X}`. The client must read
+    # one level down; a client reading the root sees neither key.
+    assert "candidates" not in body, (
+        "the payload moved to the root — this breaks web/src/map/areas.ts"
+    )
+    assert "message" not in body, "the payload moved to the root — this breaks web/src/map/areas.ts"
+    assert set(body) == {"detail"}, f"unexpected top-level keys: {sorted(body)}"
+    assert body["detail"]["candidates"], "candidates must survive inside `detail`"
+
+
 def test_an_unresolvable_name_is_404_and_the_geocoder_was_the_fallback() -> None:
     divisions, geocoder = FakeLookup(), FakeLookup()
     app = build_app(divisions_lookup=divisions, geocoder=geocoder)

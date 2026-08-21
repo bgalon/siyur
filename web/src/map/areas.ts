@@ -172,15 +172,31 @@ export async function resolveArea(options: ResolveAreaOptions): Promise<AreaReso
     // the response they had already waited for.
     if (response.status === 404) {
       const body = await readJsonBody(response)
-      const record =
+      const envelope =
         typeof body === 'object' && body !== null && !Array.isArray(body)
           ? (body as Record<string, unknown>)
           : {}
-      const candidates = sanitiseAreaCandidates(record.candidates)
+      // **The payload is nested under `detail`, and reading the root is FAIL-017.**
+      // FastAPI serialises `HTTPException(detail=X)` as `{"detail": X}`, so the message and
+      // candidates arrive one level down. Reading `envelope.candidates` found nothing on
+      // every real response, and the client fell through to the status-only error that
+      // FAIL-013 exists to prevent — a 65-second name search that then said nothing at all.
+      //
+      // The unit test agreed with the bug because its fixture also sent the body un-nested:
+      // both halves shared one assumption and neither was ever compared to the server. The
+      // root is NOT read as a fallback — a fallback would let the two shapes drift apart
+      // again silently, and this failure is only visible when they are forced to agree.
+      const detail =
+        typeof envelope.detail === 'object' &&
+        envelope.detail !== null &&
+        !Array.isArray(envelope.detail)
+          ? (envelope.detail as Record<string, unknown>)
+          : {}
+      const candidates = sanitiseAreaCandidates(detail.candidates)
       if (candidates.length > 0) {
         throw new AreaNotResolvedError(
-          typeof record.message === 'string' && record.message.trim() !== ''
-            ? record.message
+          typeof detail.message === 'string' && detail.message.trim() !== ''
+            ? detail.message
             : null,
           candidates,
         )
