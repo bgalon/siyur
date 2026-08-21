@@ -345,7 +345,19 @@ if (container) {
 
   // --- The delimit step (US1's "delimit the area"). The bbox comes from the
   // map, the name from the user; nothing here is bound to a place.
+  /**
+   * Which delimit is the live one.
+   *
+   * `Use this view` now pre-empts an in-flight name search (R-02), so two delimits can be
+   * in flight at once **and the slow one can land last**. Only the newest may touch
+   * anything: a 65 s search returning after the user escaped would otherwise re-point the
+   * reuse surface, the form and the map at an area they had already walked away from —
+   * turning the escape hatch into a delayed hijack.
+   */
+  let liveDelimit = 0
   const delimit = async (area: AreaRequest): Promise<void> => {
+    const generation = ++liveDelimit
+    const superseded = (): boolean => generation !== liveDelimit
     /**
      * **A `404` carrying candidates is an answer, not a failure.** The server could not
      * decide between (up to) twenty places with that name and sent them all; the old path
@@ -356,16 +368,21 @@ if (container) {
      * put it back through `onError` and into the console it just came out of. Every other
      * error still propagates to the delimit control, which states it on the search pill.
      */
-    const resolution = await resolveAndApply(reuse, { area, token: getToken() }).catch(
-      (error: unknown) => {
-        if (error instanceof AreaNotResolvedError) {
-          disambiguation.show(error)
-          return null
-        }
-        throw error
-      },
-    )
-    if (!resolution) return
+    const resolution = await resolveAndApply(
+      reuse,
+      { area, token: getToken() },
+      () => !superseded(),
+    ).catch((error: unknown) => {
+      // A superseded request's outcome is nobody's business — not the picker's, not the
+      // error pill's. It answers a question the user has already stopped asking.
+      if (superseded()) return null
+      if (error instanceof AreaNotResolvedError) {
+        disambiguation.show(error)
+        return null
+      }
+      throw error
+    })
+    if (!resolution || superseded()) return
     // A resolve that worked answers the question the picker was asking, so the picker
     // goes: a stale candidate list is an invitation to delimit the wrong place.
     disambiguation.clear()

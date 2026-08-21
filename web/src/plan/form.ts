@@ -137,6 +137,9 @@ export interface PlanFormOptions {
   readonly lang?: string
 }
 
+/** What the read-only AREA field says once an area is bound — see {@link PlanRequestForm.setArea}. */
+const AREA_BOUND = 'The area shown on the map'
+
 function field(
   form: HTMLFormElement,
   name: keyof PlanFormValues,
@@ -178,6 +181,13 @@ export class PlanRequestForm {
    */
   private readonly failure: HTMLParagraphElement
   private pending = false
+  /**
+   * The resolved area's id, held here rather than read back out of the field.
+   *
+   * The field is what the user *sees*; this is what the request carries. They stopped
+   * being the same string when the field stopped showing a UUID (R-09).
+   */
+  private areaId = ''
 
   constructor(
     container: HTMLElement,
@@ -237,13 +247,23 @@ export class PlanRequestForm {
 
   /** Bind the form to a resolved area (`AreaResolution.area_id`). */
   setArea(areaId: string): void {
-    this.setValue('area_id', areaId)
+    this.areaId = areaId
+    // **A UUID is not an answer to "which area?"** (R-09). It occupied a full-width 44px
+    // row of a six-field form and told the user nothing they could check the plan against.
+    // What the area is *called* is a separate, unmade decision (D-2 / C-2): until it is
+    // made, say plainly that an area is bound rather than printing its primary key at
+    // someone. The id stays on the element for support and for tests — out of the way.
+    this.setValue('area_id', areaId === '' ? '' : AREA_BOUND)
+    const control = this.control('area_id')
+    if (control) control.title = areaId
+    this.form.dataset.areaId = areaId
   }
 
   /** The raw strings currently in the DOM. */
   values(): PlanFormValues {
     return {
-      area_id: this.read('area_id'),
+      // Not `read('area_id')`: that field shows a sentence now, not the id.
+      area_id: this.areaId,
       hours: this.read('hours'),
       walking_m: this.read('walking_m'),
       interests: this.read('interests'),

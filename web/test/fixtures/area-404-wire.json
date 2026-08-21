@@ -1,0 +1,41 @@
+{
+  "detail": {
+    "candidates": [
+      {
+        "bbox": [
+          28.22,
+          36.44,
+          28.23,
+          36.45
+        ],
+        "confidence": 0.6,
+        "name": "Old Town",
+        "source": {
+          "attribution": null,
+          "id": "division:Old Town",
+          "kind": "overture",
+          "license": "CDLA-Permissive-2.0",
+          "url": null
+        }
+      },
+      {
+        "bbox": [
+          28.3,
+          36.44,
+          28.310000000000002,
+          36.45
+        ],
+        "confidence": 0.6,
+        "name": "Old Town",
+        "source": {
+          "attribution": null,
+          "id": "division:Old Town",
+          "kind": "overture",
+          "license": "CDLA-Permissive-2.0",
+          "url": null
+        }
+      }
+    ],
+    "message": "2 plausible areas match 'Old Town'; ask the user which one"
+  }
+}

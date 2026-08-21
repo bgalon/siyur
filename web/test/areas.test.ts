@@ -284,6 +284,29 @@ describe('AreaReuseSurface', () => {
     expect(requestResearch).not.toHaveBeenCalled()
   })
 
+  it('resolveAndApply applies nothing once the caller has moved on', async () => {
+    // `Use this view` can pre-empt a 65s name search (R-02), so two resolutions can be racing
+    // and the slow one can land LAST. The apply is the first irreversible step, so it is the
+    // one that has to ask. Without this the escape hatch becomes a delayed hijack: the area
+    // the user abandoned quietly overwrites the one they chose.
+    const requestResearch = vi.fn()
+    const showExistingSites = vi.fn()
+    const { container, surface } = mount({ showExistingSites, requestResearch })
+
+    const resolution = await resolveAndApply(
+      surface,
+      { area: { name: 'Rhodes medieval old town' }, fetchImpl: okFetch(COVERED_BODY) },
+      () => false, // superseded while the request was in flight
+    )
+
+    // The answer still comes back — the caller decides what to do with it…
+    expect(resolution.area_id).toBe('9c1e-uuid')
+    // …but nothing was written to the surface on its behalf.
+    expect(showExistingSites).not.toHaveBeenCalled()
+    expect(requestResearch).not.toHaveBeenCalled()
+    expect(container.querySelector('[data-action="refresh"]')).toBeNull()
+  })
+
   it('resolveAndApply reuses a covered area end to end without researching', async () => {
     const requestResearch = vi.fn()
     const showExistingSites = vi.fn()

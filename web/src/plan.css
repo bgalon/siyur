@@ -119,7 +119,12 @@
 .siyur-plan-form__label {
   color: var(--siyur-ink-soft);
   font-family: var(--siyur-mono);
-  font-size: 11px; /* the chip floor — see `style.css` § .siyur-chip */
+  /* **Body, not chip** (D-4, R-20). These six read as chips because they are uppercase
+     mono, but a chip is *metadata about a value* — `.siyur-value__label` stamps a
+     rendered value under ADR-0019. A form label is the instruction telling someone what
+     to type, which is body copy wearing the house's mono motif. Measured at 375/390/430:
+     no overflow and no clipping at 14px. */
+  font-size: 14px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }

@@ -20,6 +20,7 @@ The harness at the top is shared with `test_api_sites.py` / `test_api_research.p
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -455,6 +456,43 @@ def test_an_unresolvable_name_is_404_and_the_geocoder_was_the_fallback() -> None
     assert response.json()["detail"]["candidates"] == []
     # Overture divisions is authoritative; the geocoder is consulted only on its silence.
     assert divisions.asked == geocoder.asked == ["Nowhere At All"]
+
+
+#: The `404` body, captured from this endpoint and doubled verbatim by
+#: `web/test/area-disambiguation.test.ts`. Generated, never hand-edited — regenerate with
+#: `SIYUR_UPDATE_WIRE_CAPTURES=1 uv run pytest tests/test_api_areas.py -k wire_capture`.
+WIRE_CAPTURE = Path(__file__).resolve().parents[1] / "web/test/fixtures/area-404-wire.json"
+
+
+def test_the_wire_capture_the_web_suite_doubles_is_the_body_this_endpoint_sends() -> None:
+    """The one assertion that would have caught FAIL-017.
+
+    `web/test/area-disambiguation.test.ts` cannot reach this app, so it doubles the `404`. A
+    double is a guardrail only while something proves it matches the original: that suite built
+    `{message, candidates}` un-nested, passed all 265 lines of itself, and the chooser had never
+    once worked against the real API — the client read `candidates` from a root that never
+    carried it.
+
+    So the double *is* this response, byte for byte. A change to `_unresolved_detail`, or to
+    FastAPI's `detail` nesting, now fails here in Tier 1 rather than silently un-fixing the
+    client behind a green web suite.
+    """
+    divisions = FakeLookup((candidate("Old Town", 0.6), candidate("Old Town", 0.6, at=28.30)))
+    app = build_app(divisions_lookup=divisions, geocoder=FakeLookup())
+    response = signed_in_client(app).post("/areas", json={"name": "Old Town"})
+    assert response.status_code == 404
+
+    body = response.json()
+    if os.environ.get("SIYUR_UPDATE_WIRE_CAPTURES"):
+        WIRE_CAPTURE.write_text(json.dumps(body, indent=2, sort_keys=True) + "\n")
+
+    assert body == json.loads(WIRE_CAPTURE.read_text()), (
+        "web/test/fixtures/area-404-wire.json no longer matches this endpoint. Regenerate it "
+        "with SIYUR_UPDATE_WIRE_CAPTURES=1 and fix whatever on the web side read the old shape."
+    )
+    # The nesting, named — this is the fact the web client was wrong about.
+    assert body["detail"]["candidates"], "a capture with no candidates is not worth doubling"
+    assert "candidates" not in body, "candidates live under `detail`, never at the root"
 
 
 # ── Tier 2: coverage over real PostGIS ───────────────────────────────────────

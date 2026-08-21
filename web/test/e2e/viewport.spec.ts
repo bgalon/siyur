@@ -62,6 +62,27 @@ const CHIP_ALLOWLIST = [
 ] as const
 
 /**
+ * **Type-size exemption for the map credit — a third list, deliberately.**
+ *
+ * `.siyur-attrib` is 12px: ODbL requires the credit to be visible and its licence
+ * reachable, and a 14px strip on a 390px phone occupies the map it is crediting, which is
+ * how it came to be hidden under the sheet in the first place (UX-11). `style.css` already
+ * argues this for the *tap* floor; this is the same trade for the *type* floor.
+ *
+ * Not folded into {@link CHIP_ALLOWLIST}: that list means "provenance micro-stamp, 11px",
+ * and this is neither a stamp nor 11px. Its own name and its own number, so the exemption
+ * states what it actually exempts (D-4).
+ */
+const CREDIT_TYPE_MIN = 12
+const CREDIT_ALLOWLIST = [
+  '.siyur-attrib', // the control `attribution.ts` builds…
+  '.siyur-attrib *', // …and the inner div + licence link MapLibre renders inside it, which
+  //   are the elements that actually carry the text. Matched through *our* class rather
+  //   than by `.maplibregl-ctrl-attrib-inner`, so a MapLibre upgrade that renames its
+  //   internals narrows this exemption to nothing instead of silently keeping it.
+] as const
+
+/**
  * Controls excluded from the tap-target and reachability rules, each with a reason.
  *
  * - `.siyur-marker` — 1,914 map dots. Marker density is **F-11, deferred to M2**;
@@ -151,7 +172,7 @@ async function measure(page: Page): Promise<Report> {
   await page.waitForFunction(() => document.fonts.status === 'loaded').catch(() => undefined)
 
   return page.evaluate(
-    ({ interactive, notControl, inlineTargets, chips, tapMin, bodyMin, chipMin }) => {
+    ({ interactive, notControl, inlineTargets, chips, credits, tapMin, bodyMin, chipMin, creditMin }) => {
       const describe = (el: Element): string => {
         const tag = el.tagName.toLowerCase()
         const raw = typeof el.className === 'string' ? el.className.trim() : ''
@@ -346,7 +367,11 @@ async function measure(page: Page): Promise<Report> {
           (n) => n.nodeType === Node.TEXT_NODE && (n.textContent ?? '').trim().length > 0,
         )
         if (!ownText) continue
-        const floor = chips.some((sel) => el.matches(sel)) ? chipMin : bodyMin
+        const floor = credits.some((sel) => el.matches(sel))
+          ? creditMin
+          : chips.some((sel) => el.matches(sel))
+            ? chipMin
+            : bodyMin
         const fontSize = Number.parseFloat(getComputedStyle(el).fontSize)
         if (fontSize >= floor) continue
         const r = el.getBoundingClientRect()
@@ -449,9 +474,11 @@ async function measure(page: Page): Promise<Report> {
       notControl: NOT_A_CONTROL as readonly string[],
       inlineTargets: INLINE_TEXT_TARGETS as readonly string[],
       chips: CHIP_ALLOWLIST as readonly string[],
+      credits: CREDIT_ALLOWLIST as readonly string[],
       tapMin: TAP_TARGET_MIN,
       bodyMin: BODY_TYPE_MIN,
       chipMin: CHIP_TYPE_MIN,
+      creditMin: CREDIT_TYPE_MIN,
     },
   )
 }
@@ -507,7 +534,11 @@ const KNOWN_RED: Readonly<Record<string, readonly string[]>> = {
   // INLINE_TEXT_TARGETS — and exempt from the SIZE check only; T-02, T-02b and T-05
   // still hold it to being reachable, unclipped and unoccluded. Row deleted.
 
-  'T-03-type': ['375×667', '390×844', '430×932'],
+  // T-03-type is GREEN at every width. The six uppercase mono form labels went to 14px —
+  // they are the *instruction* telling someone what to type, not metadata about a rendered
+  // value, so the chip floor never applied to them (D-4). The ODbL credit stays at 12px
+  // under CREDIT_ALLOWLIST, which is its own named exemption with its own number rather
+  // than a seat on the chip list. Row deleted rather than emptied.
   // T-12 (F-03) deletes these four. `.siyur-sheet` is bottom-anchored with
   // `inset-inline: 0` at EVERY width, so the ODbL credit is painted underneath it on
   // desktop too — the only finding in the audit that also fails at 1440.

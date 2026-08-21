@@ -598,7 +598,7 @@ describe('F-06 — a name search says what it is doing for the minute it takes (
     return { container, control, root: control.element }
   }
 
-  it('states the wait, counts it, and disables both paths while it runs', async () => {
+  it('states the wait, counts it, and locks only the path that is running', async () => {
     let release: (() => void) | undefined
     let now = 0
     const { root } = mount(
@@ -619,9 +619,13 @@ describe('F-06 — a name search says what it is doing for the minute it takes (
     expect(busy.getAttribute('role')).toBe('status')
     expect(root.querySelector<HTMLElement>('.siyur-delimit__elapsed')?.textContent).toBe('0s')
     expect(root.querySelector<HTMLButtonElement>('.siyur-delimit__submit')!.disabled).toBe(true)
-    expect(
-      root.querySelector<HTMLButtonElement>('.siyur-delimit__viewport')!.getAttribute('aria-busy'),
-    ).toBe('true')
+    // **`Use this view` stays live** (R-02). It used to be disabled for the whole minute —
+    // the 0.18 s route locked by the 65 s one — which left a page reload as the only way
+    // out of a search that was slow or about to fail. It is not busy, so it does not say
+    // it is; it is the way out, so it stays pressable.
+    const viewport = root.querySelector<HTMLButtonElement>('.siyur-delimit__viewport')!
+    expect(viewport.disabled).toBe(false)
+    expect(viewport.getAttribute('aria-busy')).toBe('false')
 
     now = 42_000
     release?.()
@@ -629,6 +633,91 @@ describe('F-06 — a name search says what it is doing for the minute it takes (
     await Promise.resolve()
     expect(busy.hidden).toBe(true)
     expect(root.dataset.busy).toBe('false')
+  })
+
+  it('lets `Use this view` pre-empt a name search that is still running', async () => {
+    // The recovery R-02 says does not exist. A search that has run for 40 s and may yet
+    // fail must be escapable without reloading the page, so the click has to *do* something
+    // — an enabled button that the double-submit guard silently swallows is the same
+    // dead end with better styling.
+    const delimited: unknown[] = []
+    let releaseSearch: (() => void) | undefined
+    const { root } = mount((area) => {
+      delimited.push(area)
+      return delimited.length === 1
+        ? new Promise<void>((resolve) => {
+            releaseSearch = resolve
+          })
+        : Promise.resolve()
+    })
+
+    root.querySelector<HTMLInputElement>('.siyur-delimit__input')!.value = 'somewhere'
+    root.querySelector<HTMLFormElement>('.siyur-delimit__search')!.dispatchEvent(
+      new Event('submit'),
+    )
+    expect(delimited).toHaveLength(1)
+
+    root.querySelector<HTMLButtonElement>('.siyur-delimit__viewport')!.click()
+    expect(delimited).toHaveLength(2)
+    expect(delimited[1]).toMatchObject({ bbox: expect.any(Array) })
+
+    // The pre-empted search finishing later must not tear down the delimit that replaced
+    // it — the busy line belongs to whoever owns the control now.
+    await Promise.resolve()
+    await Promise.resolve()
+    releaseSearch?.()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(root.dataset.busy).toBe('false')
+  })
+
+  it('an abandoned search landing later does not tear down a newer one', async () => {
+    // The regression test for the ownership check. Pre-emption is what makes a request able
+    // to outlive its own ownership, so comparing the *kind* in the finally block let an
+    // orphaned 65s search match `'search' === 'search'` against a **different, still-running**
+    // search — hiding a live busy line, stopping a running counter, and re-opening the
+    // double-submit guard so the next tap started a third concurrent Overture scan. That is
+    // the "nothing seems to be happening, tap again" failure `COPY.searching` exists to stop.
+    const release: Array<() => void> = []
+    const delimited: unknown[] = []
+    const { root } = mount((area) => {
+      delimited.push(area)
+      // The 0.18s route resolves; name searches stay pending until released by hand.
+      if ((area as { name?: string }).name === undefined) return Promise.resolve()
+      return new Promise<void>((resolve) => release.push(resolve))
+    })
+    const input = root.querySelector<HTMLInputElement>('.siyur-delimit__input')!
+    const form = root.querySelector<HTMLFormElement>('.siyur-delimit__search')!
+    const submit = root.querySelector<HTMLButtonElement>('.siyur-delimit__submit')!
+
+    input.value = 'first'
+    form.dispatchEvent(new Event('submit')) // search A — will be abandoned
+    root.querySelector<HTMLButtonElement>('.siyur-delimit__viewport')!.click() // pre-empts it
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(root.dataset.busy).toBe('false') // the viewport delimit owned the control and cleared it
+
+    input.value = 'second'
+    form.dispatchEvent(new Event('submit')) // search B — the live one
+    expect(delimited).toHaveLength(3)
+    expect(root.dataset.busy).toBe('true')
+
+    release[0]?.() // search A lands, 55s late, owning nothing
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // B is still running, and the control must still say so.
+    expect(root.dataset.busy).toBe('true')
+    expect(submit.disabled).toBe(true)
+    // …and the guard must still be closed: a tap now must not start a third search.
+    form.dispatchEvent(new Event('submit'))
+    expect(delimited).toHaveLength(3)
+
+    release[1]?.() // B finishes — the request that actually owns the control
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(root.dataset.busy).toBe('false')
+    expect(submit.disabled).toBe(false)
   })
 
   it('says something different for the 0.18s path than for the 61s one', async () => {
@@ -640,5 +729,50 @@ describe('F-06 — a name search says what it is doing for the minute it takes (
     const busy = root.querySelector<HTMLElement>('.siyur-delimit__busy')!
     expect(busy.textContent).toMatch(/Reading the area shown on the map/)
     expect(busy.textContent).not.toMatch(/up to a minute/)
+  })
+})
+
+/* ══════════════════════════ R-18 — the search glyph clears AA (F-13, at last) ═══ */
+
+describe('R-18 — the search glyph is legible against its pill', () => {
+  /** WCAG 2.1 relative luminance, from the hex the stylesheet actually declares. */
+  const luminance = (hex: string): number => {
+    const full =
+      hex.length === 4
+        ? [...hex.slice(1)].map((ch) => Number.parseInt(ch + ch, 16))
+        : [1, 3, 5].map((i) => Number.parseInt(hex.slice(i, i + 2), 16))
+    const [r, g, b] = full.map((v) => {
+      const c = v / 255
+      return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+    }) as [number, number, number]
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+  }
+  const contrast = (a: string, b: string): number => {
+    const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x) as [number, number]
+    return (hi + 0.05) / (lo + 0.05)
+  }
+
+  it('computes ≥ 4.5:1 from the declared tokens, not from a promise in a comment', async () => {
+    // **This finding was deferred once and then not done.** It was F-13/T-13 in the
+    // 2026-08-15 plan, carried a comment saying "one token, whenever F-13 is scheduled",
+    // and was still 4.16:1 four days later when the product was driven again (R-18).
+    // A number a test computes cannot be deferred by leaving a comment in place.
+    const css = strip(await readCss('style.css'))
+    const token = (name: string): string => {
+      const found = new RegExp(`--siyur-${name}:\\s*(#[0-9a-f]{3,6})`, 'i').exec(css)
+      if (!found?.[1]) throw new Error(`--siyur-${name} is not declared in style.css`)
+      return found[1]
+    }
+    const glyphVar = /\.siyur-delimit__glyph\s*{[^}]*color:\s*var\(--siyur-([a-z-]+)\)/i.exec(css)
+    expect(glyphVar?.[1], 'the glyph must take its colour from a token').toBeTruthy()
+
+    const pill = /\.siyur-delimit__search\s*{[^}]*background:\s*(#[0-9a-f]{3,6})/i.exec(css)
+    expect(pill?.[1], 'the search pill must declare its own background').toBeTruthy()
+
+    const ratio = contrast(token(glyphVar![1]!), pill![1]!)
+    expect(
+      Math.round(ratio * 100) / 100,
+      `search glyph on the pill is ${ratio.toFixed(2)}:1 — WCAG AA needs 4.5:1`,
+    ).toBeGreaterThanOrEqual(4.5)
   })
 })

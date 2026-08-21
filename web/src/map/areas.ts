@@ -167,9 +167,11 @@ export async function resolveArea(options: ResolveAreaOptions): Promise<AreaReso
   })
   if (!response.ok) {
     // **The body of a `404` is the answer, not noise.** It carries `{message, candidates}`
-    // — up to twenty places the name could have meant. Keeping only `response.status`
-    // here was the whole defect: the user was told "not found" while the answer was in
-    // the response they had already waited for.
+    // — up to twenty places the name could have meant — **nested under `detail`**. Keeping
+    // only `response.status` here was the original defect; reading `candidates` from the
+    // *root* of the body was the same defect wearing the fix's clothes (FAIL-017). Either
+    // way the user was told "not found" while the answer sat in the response they had
+    // already waited a minute for.
     if (response.status === 404) {
       const body = await readJsonBody(response)
       const envelope =
@@ -643,8 +645,17 @@ export class AreaReuseSurface {
 export async function resolveAndApply(
   surface: AreaReuseSurface,
   options: ResolveAreaOptions,
+  /**
+   * Whether this resolution is still the one the caller wants, checked **after** the
+   * network and immediately before the surface is written to.
+   *
+   * `Use this view` may pre-empt an in-flight name search (R-02), so two resolutions can be
+   * racing and the slow one can land last. The apply is the first irreversible step, so it
+   * is the one that has to ask. Omitted means "always" — the single-flight case.
+   */
+  stillWanted: () => boolean = () => true,
 ): Promise<AreaResolution> {
   const resolution = await resolveArea(options)
-  await surface.apply(resolution)
+  if (stillWanted()) await surface.apply(resolution)
   return resolution
 }
