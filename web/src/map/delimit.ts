@@ -116,10 +116,18 @@ export class DelimitControl {
   private readonly busyElapsed: HTMLSpanElement
   private readonly elapsed: ElapsedTimer
   /**
-   * Which request is in flight, or `null`. Not a boolean, because the two routes are
-   * 0.18 s and ~65 s apart and the slow one must never lock the fast one (R-02).
+   * **Which request** is in flight, or `null` — an identity, not a kind.
+   *
+   * Not a boolean, because the two routes are 0.18 s and ~65 s apart and the slow one must
+   * never lock the fast one (R-02). And not the *kind* either, because pre-emption is
+   * precisely what lets a request outlive its own ownership: an abandoned 65 s search that
+   * lands while a second search is running would match `'search' === 'search'` and tear
+   * down a request that is not it — hiding a live busy line, stopping a running counter and
+   * re-opening the double-submit guard for a third concurrent Overture scan.
+   *
+   * The token is the request. `kind` rides along for the label and the pre-emption rule.
    */
-  private inFlight: 'search' | 'viewport' | null = null
+  private inFlight: { readonly token: symbol; readonly kind: 'search' | 'viewport' } | null = null
 
   constructor(
     private readonly container: HTMLElement,
@@ -225,8 +233,9 @@ export class DelimitControl {
     // delimit during a name search is the escape hatch (R-02) and **pre-empts** it: the
     // name search is a minute long and could fail, and reloading the page was the only
     // way out of it. The reverse is not allowed — nothing needs escaping from 0.18 s.
-    if (this.inFlight !== null && !(this.inFlight === 'search' && kind === 'viewport')) return
-    this.inFlight = kind
+    if (this.inFlight !== null && !(this.inFlight.kind === 'search' && kind === 'viewport')) return
+    const token = Symbol('delimit')
+    this.inFlight = { token, kind }
     // Which request is running decides what the busy line says, and the two answers are
     // 0.18 s and a minute apart — see `COPY.searching`.
     this.setBusy(true, kind === 'search' ? COPY.searching : COPY.delimiting)
@@ -236,9 +245,10 @@ export class DelimitControl {
     } catch (error) {
       this.options.onError?.(error)
     } finally {
-      // Only the request that still owns the control clears it. A pre-empted name search
-      // finishing later must not tear down the busy line of the delimit that replaced it.
-      if (this.inFlight === kind) {
+      // Only the request that still owns the control clears it — compared by identity, so
+      // a pre-empted search finishing later cannot tear down the busy line of the delimit
+      // that replaced it, nor of any request that came after that one.
+      if (this.inFlight?.token === token) {
         this.inFlight = null
         this.setBusy(false)
       }
@@ -258,7 +268,7 @@ export class DelimitControl {
     // **`Use this view` is never disabled by a name search** (R-02). It is disabled only
     // while it is itself running — which is 0.18 s — so the fast, always-available route
     // out of a slow search stays available for the whole slow search.
-    const ownsControl = busy && this.inFlight === 'viewport'
+    const ownsControl = busy && this.inFlight?.kind === 'viewport'
     this.viewport.disabled = ownsControl
     this.submit.setAttribute('aria-busy', String(busy))
     this.viewport.setAttribute('aria-busy', String(ownsControl))

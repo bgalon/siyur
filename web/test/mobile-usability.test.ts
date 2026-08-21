@@ -671,6 +671,55 @@ describe('F-06 — a name search says what it is doing for the minute it takes (
     expect(root.dataset.busy).toBe('false')
   })
 
+  it('an abandoned search landing later does not tear down a newer one', async () => {
+    // The regression test for the ownership check. Pre-emption is what makes a request able
+    // to outlive its own ownership, so comparing the *kind* in the finally block let an
+    // orphaned 65s search match `'search' === 'search'` against a **different, still-running**
+    // search — hiding a live busy line, stopping a running counter, and re-opening the
+    // double-submit guard so the next tap started a third concurrent Overture scan. That is
+    // the "nothing seems to be happening, tap again" failure `COPY.searching` exists to stop.
+    const release: Array<() => void> = []
+    const delimited: unknown[] = []
+    const { root } = mount((area) => {
+      delimited.push(area)
+      // The 0.18s route resolves; name searches stay pending until released by hand.
+      if ((area as { name?: string }).name === undefined) return Promise.resolve()
+      return new Promise<void>((resolve) => release.push(resolve))
+    })
+    const input = root.querySelector<HTMLInputElement>('.siyur-delimit__input')!
+    const form = root.querySelector<HTMLFormElement>('.siyur-delimit__search')!
+    const submit = root.querySelector<HTMLButtonElement>('.siyur-delimit__submit')!
+
+    input.value = 'first'
+    form.dispatchEvent(new Event('submit')) // search A — will be abandoned
+    root.querySelector<HTMLButtonElement>('.siyur-delimit__viewport')!.click() // pre-empts it
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(root.dataset.busy).toBe('false') // the viewport delimit owned the control and cleared it
+
+    input.value = 'second'
+    form.dispatchEvent(new Event('submit')) // search B — the live one
+    expect(delimited).toHaveLength(3)
+    expect(root.dataset.busy).toBe('true')
+
+    release[0]?.() // search A lands, 55s late, owning nothing
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // B is still running, and the control must still say so.
+    expect(root.dataset.busy).toBe('true')
+    expect(submit.disabled).toBe(true)
+    // …and the guard must still be closed: a tap now must not start a third search.
+    form.dispatchEvent(new Event('submit'))
+    expect(delimited).toHaveLength(3)
+
+    release[1]?.() // B finishes — the request that actually owns the control
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(root.dataset.busy).toBe('false')
+    expect(submit.disabled).toBe(false)
+  })
+
   it('says something different for the 0.18s path than for the 61s one', async () => {
     // Both are "delimit", and telling a user that a bbox resolve "can take up to a
     // minute" would be as much of an invention as saying nothing about the name search.
