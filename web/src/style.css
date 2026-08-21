@@ -297,10 +297,12 @@ body {
 }
 
 .siyur-delimit__glyph {
-  /* Still `--siyur-stone`, still 4.16:1 — the audit's one contrast failure (UX-16) is
-     F-13, Tier 3, and is deliberately NOT fixed here so this pass stays the Tier-1 diff
-     it claims to be. One token, whenever F-13 is scheduled. */
-  color: var(--siyur-stone);
+  /* F-13 / UX-16, scheduled at last as R-18 — deferred once in the 2026-08-15 plan and
+     then not done, which is why it was still 4.16:1 four days later.
+     `--siyur-stone` on the pill's `#fff` is 4.16:1 and fails AA; `--siyur-ink-soft` is
+     7.85:1. The existing token rather than an eighth colour: this palette already has
+     six type sizes and seven radii (R-14/R-15) and does not need help accreting. */
+  color: var(--siyur-ink-soft);
 }
 
 .siyur-delimit__input {

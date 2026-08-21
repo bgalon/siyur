@@ -375,6 +375,22 @@ export function renderPlanLeg(leg: RouteLegV1): HTMLElement {
  * precisely what the reviewer is being asked to judge. The stated reason is a fact
  * about an absence, never a stand-in for the value.
  */
+/**
+ * `10:00:00` → `10:00`. **A trim, not a parse** (R-19c).
+ *
+ * Seconds in an itinerary claim a precision no one planned to: nothing in this product
+ * decides that you arrive at 10:00:00 rather than 10:00. Still no `Date` and no locale —
+ * the module header's rule is that this string is the area's wall clock and is never
+ * converted, and a regex over a literal `:00` converts nothing.
+ *
+ * A non-zero seconds field is left exactly as it came. It would mean the server said
+ * something more specific than we expected, and hiding that would be the rounding this
+ * function exists to avoid.
+ */
+function wallClock(start: string): string {
+  return /^(\d{2}:\d{2}):00$/.exec(start)?.[1] ?? start
+}
+
 export function renderPlanStop(
   stop: Stop,
   start: string,
@@ -388,7 +404,7 @@ export function renderPlanStop(
   item.dataset.siteId = stop.site_id
 
   // Verbatim wall clock. No `Date`, no locale conversion — see the module header.
-  item.append(line('siyur-plan-stop__when', `${start} · ${durationMin} min`))
+  item.append(line('siyur-plan-stop__when', `${wallClock(start)} · ${durationMin} min`))
 
   if (!site) {
     item.dataset.place = 'unavailable'

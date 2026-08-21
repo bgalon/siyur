@@ -350,6 +350,34 @@ describe('the itinerary panel renders the proposed day', () => {
     expect(panel.querySelector('.siyur-plan__date')?.textContent).toBe('2026-08-14')
   })
 
+  it('shows a wall clock without seconds, and does not round one away (R-19c)', () => {
+    // `10:00:00` in an itinerary claims a precision nobody planned to: no part of this
+    // product decides you arrive at ten o'clock and zero seconds. The trim is a regex over
+    // a literal `:00` — still no `Date` and no locale, so the string stays the *area's*
+    // wall clock either way.
+    const withSeconds = renderPlanPanel(
+      model({
+        itinerary: readItineraryFrame({
+          ...ITINERARY,
+          timeline: { entries: [{ stop_order: 0, start: '10:00:00', duration_min: 60 }] },
+        }),
+      }),
+    )
+    expect(withSeconds.querySelector('.siyur-plan-stop__when')?.textContent).toBe('10:00 · 60 min')
+
+    // A non-zero seconds field is the server saying something more specific than we
+    // expected. Hiding it would be the rounding this trim exists to avoid.
+    const odd = renderPlanPanel(
+      model({
+        itinerary: readItineraryFrame({
+          ...ITINERARY,
+          timeline: { entries: [{ stop_order: 0, start: '10:00:30', duration_min: 60 }] },
+        }),
+      }),
+    )
+    expect(odd.querySelector('.siyur-plan-stop__when')?.textContent).toBe('10:00:30 · 60 min')
+  })
+
   it('falls back to stop order + the joining leg when the timeline is empty', () => {
     // The itinerary card's own INFEASIBLE example carries `timeline.entries: []` and the
     // 4200 m leg that caused the violation — the one thing the reviewer must see.

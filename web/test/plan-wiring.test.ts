@@ -300,9 +300,15 @@ describe('the plan surfaces are reachable in the app shell', () => {
     expect(query<HTMLInputElement>('.siyur-plan-form [name="area_id"]')?.value).toBe('')
     query<HTMLButtonElement>('[data-action="use-viewport"]')!.click()
     await settle()
-    expect(query<HTMLInputElement>('.siyur-plan-form [name="area_id"]')?.value).toBe(AREA_ID)
+    // **The binding, not the spelling.** The field used to print the UUID at the user in a
+    // full-width row of a six-field form (R-09); what has to survive is that the request
+    // is for the area on screen, which is now carried on the element rather than shown.
+    const field = query<HTMLInputElement>('.siyur-plan-form [name="area_id"]')
+    expect(query<HTMLElement>('.siyur-plan-form')?.dataset.areaId).toBe(AREA_ID)
+    expect(field?.value).not.toBe(AREA_ID)
+    expect(field?.value).toMatch(/area shown on the map/i)
     // Read-only: an area id is a UUID, not something a person types.
-    expect(query<HTMLInputElement>('.siyur-plan-form [name="area_id"]')?.readOnly).toBe(true)
+    expect(field?.readOnly).toBe(true)
   })
 })
 

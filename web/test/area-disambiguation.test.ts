@@ -25,6 +25,12 @@
 
 import { describe, expect, it, vi } from 'vitest'
 
+// The `404` this endpoint really sends, generated from the app itself by
+// `tests/test_api_areas.py::test_the_wire_capture_the_web_suite_doubles_is_the_body_this_endpoint_sends`
+// and asserted equal to a live response there. Every double below is shaped from it, so this
+// suite can no longer agree with itself about a body the server never sends (FAIL-017).
+import wireCapture from './fixtures/area-404-wire.json'
+
 import {
   AreaNotResolvedError,
   AreaRequestError,
@@ -71,7 +77,14 @@ const notResolved = (candidates: readonly unknown[]): typeof fetch =>
   vi.fn(async () =>
     new Response(
       JSON.stringify({ detail: { message: 'several places match that name', candidates } }),
-      {
+      { status: 404, headers: { 'Content-Type': 'application/json' } },
+    ),
+  ) as unknown as typeof fetch
+
+/** The captured body, replayed verbatim — no hand-written shape between it and the client. */
+const capturedNotResolved = (): typeof fetch =>
+  vi.fn(async () =>
+    new Response(JSON.stringify(wireCapture), {
       status: 404,
       headers: { 'Content-Type': 'application/json' },
     }),
@@ -98,6 +111,41 @@ describe('the 404 body is the answer, not noise', () => {
     expect(resolved.detail).toBe('several places match that name')
     expect(resolved.candidates).toHaveLength(20)
     expect(resolved.candidates.map((c) => c.name)).toEqual(twenty.map((c) => c.name))
+  })
+
+  it('parses the captured body of a real 404, byte for byte', async () => {
+    // The regression test for FAIL-017. It replays the generated capture rather than a
+    // hand-written body, so it fails if `_unresolved_detail` moves, if FastAPI stops nesting
+    // under `detail`, or if this client goes back to reading the root.
+    const error = await resolveArea({
+      area: { name: 'Old Town' },
+      fetchImpl: capturedNotResolved(),
+    }).catch((e: unknown) => e)
+
+    expect(error).toBeInstanceOf(AreaNotResolvedError)
+    const resolved = error as AreaNotResolvedError
+    expect(resolved.candidates).toHaveLength(wireCapture.detail.candidates.length)
+    expect(resolved.candidates.map((c) => c.name)).toEqual(
+      wireCapture.detail.candidates.map((c) => c.name),
+    )
+    expect(resolved.detail).toBe(wireCapture.detail.message)
+  })
+
+  it('does not honour candidates at the root of the body', async () => {
+    // The shape the old fixture invented. Accepting it too would keep this suite green
+    // against a server that never sends it — which is the trap, not the fix.
+    const rootShaped = vi.fn(async () =>
+      new Response(JSON.stringify({ message: 'several match', candidates: [wireCandidate('X', 1)] }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    ) as unknown as typeof fetch
+
+    const error = await resolveArea({ area: { name: 'x' }, fetchImpl: rootShaped }).catch(
+      (e: unknown) => e,
+    )
+    expect(error).toBeInstanceOf(AreaRequestError)
+    expect(error).not.toBeInstanceOf(AreaNotResolvedError)
   })
 
   it('leaves a 404 with no candidates an ordinary failure', async () => {
